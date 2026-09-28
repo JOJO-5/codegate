@@ -25,6 +25,12 @@ jobs:
         run: |
           npm install -g --allow-scripts=opencode-ai opencode-ai@1.18.33
           opencode --version
+      - name: Typecheck and build Web terminal
+        shell: bash
+        run: |
+          cd web
+          npm ci
+          npm run build
       - name: Build Server and Agent
         run: |
           New-Item -ItemType Directory -Force bin | Out-Null
