@@ -62,4 +62,23 @@ source `scripts/goenv.sh`。
 - Go module cache 的 rename 失败：`.mod` 从不落盘（118 个 `.mod*.tmp` 堆积），
   每次构建重新拉 `.mod`。`GOTMPDIR` 无效，可试 `GOMODCACHE` 指到 `%TEMP%`。
 - `SessionView.vue`（Vue 层）的帧循环 / attach 重放 / resize 防抖无自动化测试。
-- 项目**不在 git 仓库里**（`git status` → not a repository）。
+
+## 版本控制
+
+**已纳入 git**（2026-09-28 `git init -b main` + 首次提交 `604832e`）。
+分支名**不带 `/`**（本机 git 有「报成功但引用不落盘」的老毛病，见 skill
+`git-ops-locked-windows`；权威校验只用 `git ls-remote` / `cat .git/refs/heads/main`）。
+**尚未配置远端**，等 JOJO 给地址再 `git remote add`。
+
+`.gitattributes` 钉死 **仓库内一律 LF**，这不是洁癖：
+本机 `core.autocrlf=true`，靠它的话**下次 checkout** 会把 `scripts/*.sh`
+和 `Makefile` 写成 CRLF → bash 报 `$'\r': command not found`，
+而 `make e2e` / `make test` 是唯一验收入口，报错完全指不到换行符。
+`.gitattributes` 随仓库走，换机器不漂移。例外：`*.bat/*.cmd/*.ps1` 保持 CRLF。
+
+提交前自检（三条，都跑一遍）：
+```bash
+git ls-files --eol | awk '$1 != "i/lf" {print}'   # 应只输出 .bat/.cmd/.ps1
+git status --porcelain                             # 应为空
+git ls-files | grep -cE '\.exe$|node_modules'      # 应为 0
+```

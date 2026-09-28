@@ -18,8 +18,7 @@ SHELL := bash
 GO    ?= go
 PY    ?= python
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -s -w -X main.version=$(VERSION)
+# ⚠️ VERSION / LDFLAGS 刻意放在下面「shell 解析」块**之后**，原因见那一节末尾。
 
 # ---- shell 解析（Windows 上必须给绝对路径）----
 #
@@ -62,6 +61,29 @@ ifeq ($(OS),Windows_NT)
 Install Git for Windows, or run: make SHELL=<absolute path to bash>)
   endif
 endif
+
+# ---- 版本号：必须放在 SHELL 解析**之后** ----
+#
+# ★ 顺序陷阱，实测踩过（项目刚纳入 git 时暴露）：
+#
+#   `VERSION ?= $(shell git describe ...)` 里的 `$(shell)` 是**立即展开** ——
+#   `?=` / `:=` 都在解析期求值，用的是**那一刻**的 SHELL。
+#
+#   而上面 `SHELL := bash`（裸名字）在 Windows 上被静默忽略，所以在这一行
+#   展开时，make 用的还是它自己发现的 sh.exe（w64devkit 自带），
+#   那个 sh 的 PATH 里**没有 git** → `git describe` 失败 →
+#   `2>/dev/null` 把错误吞掉 → `|| echo "dev"`。
+#
+#   症状极具误导性：仓库明明有提交，`codegate-server version` 却一直打印 `dev`，
+#   看起来像「ldflags 没注入」或「main.version 没接上」，其实是求值顺序问题。
+#
+#   把这两行挪到 SHELL 解析块之后，VERSION 立刻变成 `604832e-dirty`。
+#
+#   `--always` 保证无 tag 时回落到短哈希（否则永远 `dev`）；
+#   `--dirty` 在工作区有未提交改动时加后缀 —— 正好提醒
+#   「这个二进制不是从干净提交构建出来的」。
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
 # ---- 中文提示：为什么 recipe 里不直接 echo ----
 #
