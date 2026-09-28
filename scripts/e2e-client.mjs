@@ -74,6 +74,7 @@ const TIMEOUT = Number(args.timeout || 20000)
 const STDIN_TEXT = args['stdin-text'] || ''
 const EXPECT = args.expect || ''
 const TUI = args.tui === '1'
+const OPENCODE = args.opencode === '1'
 
 for (const [k, v] of Object.entries({ base: BASE, token: TOKEN, marker: MARKER })) {
   if (!v) { console.error(`缺少必需参数 --${k}`); process.exit(2) }
@@ -233,7 +234,8 @@ function sendInput(input) {
   ws.send(frame)
   ok(`已向会话写入 ${payload.length} 字节输入`)
 }
-if (TUI) sendInput("codex --no-daemon\r")
+if (OPENCODE) sendInput("opencode\r")
+else if (TUI) sendInput("codex --no-daemon\r")
 else if (STDIN_TEXT) sendInput(STDIN_TEXT)
 if (attached.seq_from > 0) {
   bad(`seq_from=${attached.seq_from} > 0 —— 说明 ring buffer 已经丢过数据`)
@@ -244,13 +246,21 @@ if (attached.seq_from > 0) {
 // 等终端输出出现 marker，或者超时
 console.log('\n=== 收终端字节 ===')
 const deadline = Date.now() + TIMEOUT
-while (Date.now() < deadline && !(TUI ? received.length > 500 : received.includes(MARKER))) {
+while (Date.now() < deadline && !((TUI || OPENCODE) ? received.length > 500 : received.includes(MARKER))) {
   await new Promise((r) => setTimeout(r, 100))
 }
 
 info(`Stdout ${stdoutBytes} 字节 / Buffer ${bufferBytes} 字节`)
 
-if (TUI) {
+if (OPENCODE) {
+  info(`OpenCode raw prefix: ${JSON.stringify(received.slice(0, 3000))}`)
+  sendInput("\x1b[B")
+  await new Promise((r) => setTimeout(r, 2000))
+  info(`OpenCode after arrow: ${JSON.stringify(received.slice(-1800))}`)
+  if (received.length > 500 && !received.includes("Error:")) ok("OpenCode emitted interactive terminal output")
+  else bad("OpenCode did not emit interactive terminal output")
+  sendInput("\x03")
+} else if (TUI) {
   info(`TUI raw prefix: ${JSON.stringify(received.slice(0, 2000))}`)
   info(`Alternate screen: ${received.includes("\x1b[?1049h")}`)
   sendInput("\x1b[B")
@@ -267,7 +277,7 @@ if (TUI) {
     info(`收到的前 1800 字符：${JSON.stringify(received.slice(0, 1800))}`)
   }
 }
-if (TUI) {
+if (TUI || OPENCODE) {
   info("TUI mode: marker assertion skipped")
 } else if (received.includes(MARKER)) {
   ok(`终端输出里找到了标记「${MARKER}」—— Agent → Server → Client 全链路通`)
