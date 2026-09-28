@@ -36,3 +36,10 @@ jobs:
           E2E_CLI_CONTROL: '1'
           PORT: '18849'
         run: bash scripts/e2e-terminal.sh
+
+      - name: E2E Codex interactive TUI
+        shell: bash
+        env:
+          E2E_TUI_CONTROL: '1'
+          PORT: '18850'
+        run: bash scripts/e2e-terminal.sh
