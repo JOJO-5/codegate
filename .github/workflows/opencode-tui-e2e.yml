@@ -1,0 +1,51 @@
+name: OpenCode TUI e2e
+
+on:
+  push:
+    branches: [test/opencode-tui-e2e]
+  pull_request:
+    paths:
+      - 'scripts/e2e-*'
+      - '.github/workflows/opencode-tui-e2e.yml'
+
+jobs:
+  opencode:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install OpenCode CLI
+        run: |
+          npm install -g --allow-scripts=opencode-ai opencode-ai@1.18.33
+          opencode --version
+      - name: Typecheck and build Web terminal
+        shell: bash
+        run: |
+          cd web
+          npm ci
+          npm run build
+      - name: Build Server and Agent
+        run: |
+          New-Item -ItemType Directory -Force bin | Out-Null
+          go build -o bin/codegate-server.exe ./cmd/codegate-server
+          go build -o bin/codegate-agent.exe ./cmd/codegate-agent
+      - name: Probe free model without credentials
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $output = opencode run --model opencode/big-pickle 'Reply exactly CODEGATE_FREE_MODEL_OK' 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'CODEGATE_FREE_MODEL_OK') { throw 'Free model probe failed' }
+      - name: E2E OpenCode interactive TUI
+        shell: bash
+        env:
+          E2E_OPENCODE_CONTROL: '1'
+          PORT: '18851'
+        run: bash scripts/e2e-terminal.sh
