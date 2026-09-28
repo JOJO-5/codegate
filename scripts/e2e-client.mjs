@@ -249,7 +249,10 @@ info(`Stdout ${stdoutBytes} 字节 / Buffer ${bufferBytes} 字节`)
 
 if (EXPECT) {
   if (received.toLowerCase().includes(EXPECT.toLowerCase())) ok(`收到编程 CLI 输出：${EXPECT}`)
-  else bad(`未收到预期的编程 CLI 输出：${EXPECT}`)
+  else {
+    bad(`未收到预期的编程 CLI 输出：${EXPECT}`)
+    info(`收到的前 1800 字符：${JSON.stringify(received.slice(0, 1800))}`)
+  }
 }
 if (received.includes(MARKER)) {
   ok(`终端输出里找到了标记「${MARKER}」—— Agent → Server → Client 全链路通`)
