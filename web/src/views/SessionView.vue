@@ -348,6 +348,9 @@ onMounted(async () => {
     // 手机上软键盘需要它才能在输入时弹出
     allowTransparency: false,
     scrollback: 5000,
+    // OpenCode/OpenTUI queries CSI 14 t for pixel dimensions before its first frame.
+    // xterm disables window reports by default; without this reply OpenCode stays blank.
+    windowOptions: { getWinSizePixels: true },
     // ★ Unicode11Addon 需要这个开关（它用的是 proposed API）
     allowProposedApi: true,
     // 关掉 xterm 自己的右键菜单，远程场景里它只会碍事
