@@ -23,7 +23,7 @@ jobs:
           node-version: '24'
       - name: Install OpenCode CLI
         run: |
-          npm install -g opencode-ai
+          npm install -g --allow-scripts=opencode-ai opencode-ai@1.18.33
           opencode --version
       - name: Build Server and Agent
         run: |
