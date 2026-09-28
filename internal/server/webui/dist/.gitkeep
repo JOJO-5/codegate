@@ -1,0 +1,7 @@
+# 这个文件唯一的作用：让 //go:embed all:dist 在「前端未构建」时仍然成立。
+#
+# 目录为空（或只有被 embed 默认忽略的点文件）会让 embed pattern 匹配不到文件，
+# 整个项目编译失败 —— 而失败信息看起来和前端毫无关系。
+#
+# 所以用 all:dist 把点文件也纳入 embed，并保留这个文件。
+# 前端产物（index.html / assets/）由 `make web` 生成，不进版本库。

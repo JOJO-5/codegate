@@ -1,0 +1,54 @@
+# ---- Go 构建产物 ----
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.txt
+
+# ---- 前端 ----
+web/node_modules/
+web/dist/
+web/.vite/
+web/.build.log
+web/.tsc.log
+# 前端构建产物会被 go:embed 进 Server，不提交。
+#
+# ★ 但 dist/.gitkeep 必须提交：go:embed 的 pattern 在编译期求值，
+#   目录不存在、或里面一个可嵌入的文件都没有，会让**整个项目编译失败** ——
+#   而失败信息看起来和前端毫无关系，极难联想到是前端没构建。
+#
+#   注意 webui 用的是 `//go:embed all:dist`。embed 默认忽略以 `.` 或 `_`
+#   开头的文件，所以少了 `all:` 前缀，这个 .gitkeep 会被跳过、
+#   pattern 匹配不到任何文件，同样编译失败。
+#
+#   前端未构建时 webui 伺服内置说明页，Server 启动时也会打警告；
+#   构建后想恢复干净状态用 `make web-clean`。
+internal/server/webui/dist/*
+!internal/server/webui/dist/.gitkeep
+
+# ---- 敏感文件（绝对不进 Git）----
+*.key
+device.key
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+agent.yaml
+server.yaml
+
+# ---- 探针/调试产物 ----
+/captures/
+*.cap.bin
+
+# ---- 编辑器 ----
+.idea/
+.vscode/
+*.swp
+*~
+
+# ---- 系统 ----
+Thumbs.db
+.DS_Store

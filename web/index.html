@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover + 下面的 safe-area 变量：手机浏览器（尤其 iOS）
+         底部会有一条 home indicator，终端页是全屏的，不处理会被盖住输入行。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>CodeGate</title>
+  </head>
+  <body>
+    <!--
+      启动占位：在 JS 下载并执行完之前显示。
+      Vue 挂载时会把 #app 的内容整个替换掉，所以它不会残留。
+      没有它的话首屏是一段纯黑 —— 在手机上很容易被当成"页面挂了"。
+
+      它同时也是一个可验证的信号：DOM 里如果还残留这个启动占位元素，
+      就说明 Vue **没有**挂载成功（scripts/web-render-check.sh 依赖这一点）。
+
+      注意：那段注释里**刻意不写出这个 class 的字面值**。因为 `--dump-dom`
+      会连 HTML 注释一起 dump 出来，注释里一旦出现该字面值，
+      脚本的反向断言就会匹配到自己的注释，把"挂载成功"误判成"挂载失败"。
+      脚本匹配的是元素上的 class 属性（带引号），不是这里的散文。
+    -->
+    <div id="app">
+      <div class="boot-splash">CodeGate</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

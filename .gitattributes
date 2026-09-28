@@ -1,0 +1,62 @@
+# 换行符策略：仓库内一律 LF，不随各机器的 core.autocrlf 漂移。
+#
+# ★ 为什么必须显式钉死，而不是"靠 core.autocrlf 就行"：
+#
+#   本机 core.autocrlf=true。暂存时看不出问题（工作区本来就是 LF，
+#   blob 也存 LF），但**下一次 checkout / clone** 会把工作区写成 CRLF。
+#   这个项目有 6 个 shell 验证脚本和 Makefile，CRLF 会让它们当场崩：
+#
+#     bash scripts/e2e-terminal.sh   →  $'\r': command not found
+#     Makefile 里 `SHELL := bash`、GOENV 等变量的尾巴被塞进 \r
+#
+#   而且 `make e2e` / `make test` 是唯一的验收入口 —— 坏在这里等于
+#   整个验证链路失效，报错信息还完全指不到「换行符」。
+#
+#   .gitattributes 是**随仓库走**的，克隆到任何机器都一致；
+#   全局 core.autocrlf 只对本机生效，换台机器就翻车。
+
+* text=auto eol=lf
+
+# ---- 例外：Windows 原生批处理必须 CRLF ----
+# cmd.exe 对 LF-only 的 .bat 解析异常（尤其是多行 if/goto 块）。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# ---- 显式声明文本类型（防止被当成二进制而失去 diff）----
+*.go     text eol=lf
+*.md     text eol=lf
+*.sh     text eol=lf
+*.sql    text eol=lf
+*.json   text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.ts     text eol=lf
+*.vue    text eol=lf
+*.css    text eol=lf
+*.html   text eol=lf
+*.mjs    text eol=lf
+*.py     text eol=lf
+Makefile        text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# ---- 二进制：禁止任何行尾/编码转换 ----
+*.exe    binary
+*.dll    binary
+*.so     binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.db     binary
+*.bin    binary
+*.cap.bin binary
