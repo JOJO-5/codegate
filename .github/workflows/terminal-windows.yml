@@ -1,0 +1,24 @@
+name: Windows terminal tests
+
+on:
+  push:
+    branches: [fix/terminal-close-and-env]
+  pull_request:
+    paths:
+      - 'internal/terminal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/terminal-windows.yml'
+
+jobs:
+  terminal:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test terminal package
+        run: go test ./internal/terminal -count=1 -timeout=3m
