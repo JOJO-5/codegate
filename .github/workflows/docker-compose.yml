@@ -13,6 +13,7 @@ on:
       - 'go.sum'
       - 'internal/**'
       - '.github/workflows/docker-compose.yml'
+      - '.github/workflows/publish-image.yml'
 
 jobs:
   smoke:
@@ -20,6 +21,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Check installer syntax
+        run: sh -n deploy/install-compose.sh
       - name: Prepare local secrets
         run: |
           mkdir -p secrets
