@@ -234,7 +234,15 @@ function sendInput(input) {
   ws.send(frame)
   ok(`已向会话写入 ${payload.length} 字节输入`)
 }
-if (OPENCODE) { sendInput("opencode\r"); await new Promise((r) => setTimeout(r, 1500)); sendInput("\x1b[4;600;800t") }
+if (OPENCODE) {
+  sendInput("opencode\r")
+  const queryDeadline = Date.now() + 10000
+  while (!received.includes("\x1b[14t") && Date.now() < queryDeadline) await new Promise((r) => setTimeout(r, 100))
+  if (received.includes("\x1b[14t")) {
+    ok("OpenCode requested terminal pixel dimensions (CSI 14 t)")
+    sendInput("\x1b[4;600;800t")
+  } else bad("OpenCode did not request terminal pixel dimensions")
+}
 else if (TUI) sendInput("codex --no-daemon\r")
 else if (STDIN_TEXT) sendInput(STDIN_TEXT)
 if (attached.seq_from > 0) {
