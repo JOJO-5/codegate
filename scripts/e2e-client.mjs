@@ -71,6 +71,9 @@ const MARKER = args.marker
 const COMMAND_ID = args['command-id'] || 'e2e-echo'
 const CWD = args.cwd || ''
 const TIMEOUT = Number(args.timeout || 20000)
+const STDIN_TEXT = args['stdin-text'] || ''
+const EXPECT = args.expect || ''
+const TUI = args.tui === '1'
 
 for (const [k, v] of Object.entries({ base: BASE, token: TOKEN, marker: MARKER })) {
   if (!v) { console.error(`缺少必需参数 --${k}`); process.exit(2) }
@@ -216,6 +219,22 @@ ok(`会话已建立 id=${sessionId} status=${created.session.status}`)
 console.log('\n=== attach（含 ring buffer 重放）===')
 const attached = await send('session.attach', { session_id: sessionId, since: 0, cols: 100, rows: 30 }, sessionId)
 ok(`attach 成功 role=${attached.role} seq=${attached.seq_from}..${attached.seq_to}`)
+
+// Send user keystrokes as a real protocol STDIN frame (not a control JSON message).
+function sendInput(input) {
+  const payload = new TextEncoder().encode(input)
+  const frame = new Uint8Array(20 + payload.length)
+  frame[0] = 1
+  frame[1] = 1 // FrameStdin
+  const id = sessionId.replaceAll('-', '')
+  if (!/^[0-9a-f]{32}$/i.test(id)) throw new Error(`invalid session ID: ${sessionId}`)
+  for (let i = 0; i < 16; i++) frame[4 + i] = Number.parseInt(id.slice(i * 2, i * 2 + 2), 16)
+  frame.set(payload, 20)
+  ws.send(frame)
+  ok(`已向会话写入 ${payload.length} 字节输入`)
+}
+if (TUI) sendInput("codex --no-daemon\r")
+else if (STDIN_TEXT) sendInput(STDIN_TEXT)
 if (attached.seq_from > 0) {
   bad(`seq_from=${attached.seq_from} > 0 —— 说明 ring buffer 已经丢过数据`)
 } else {
@@ -225,13 +244,32 @@ if (attached.seq_from > 0) {
 // 等终端输出出现 marker，或者超时
 console.log('\n=== 收终端字节 ===')
 const deadline = Date.now() + TIMEOUT
-while (Date.now() < deadline && !received.includes(MARKER)) {
+while (Date.now() < deadline && !(TUI ? received.length > 500 : received.includes(MARKER))) {
   await new Promise((r) => setTimeout(r, 100))
 }
 
 info(`Stdout ${stdoutBytes} 字节 / Buffer ${bufferBytes} 字节`)
 
-if (received.includes(MARKER)) {
+if (TUI) {
+  info(`TUI raw prefix: ${JSON.stringify(received.slice(0, 2000))}`)
+  info(`Alternate screen: ${received.includes("\x1b[?1049h")}`)
+  sendInput("\x1b[B")
+  await new Promise((r) => setTimeout(r, 2000))
+  info(`After arrow: ${JSON.stringify(received.slice(-1200))}`)
+  sendInput("\x03")
+  if (received.includes("Error:") || received.includes("error:")) bad("Codex interactive startup reported an error")
+  else if (received.includes("\x1b[?1049h") && received.includes("OpenAI Codex") && received.includes("Sign in with ChatGPT")) ok("Codex TUI rendered and responded to arrow input with the sign-in menu")
+  else bad("Codex TUI did not render its interactive sign-in menu")
+} else if (EXPECT) {
+  if (received.toLowerCase().includes(EXPECT.toLowerCase())) ok(`收到编程 CLI 输出：${EXPECT}`)
+  else {
+    bad(`未收到预期的编程 CLI 输出：${EXPECT}`)
+    info(`收到的前 1800 字符：${JSON.stringify(received.slice(0, 1800))}`)
+  }
+}
+if (TUI) {
+  info("TUI mode: marker assertion skipped")
+} else if (received.includes(MARKER)) {
   ok(`终端输出里找到了标记「${MARKER}」—— Agent → Server → Client 全链路通`)
 } else {
   bad(`终端输出里没有标记「${MARKER}」`)
