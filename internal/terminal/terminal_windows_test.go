@@ -436,6 +436,7 @@ func TestConPTYPowerShell(t *testing.T) {
 	script := strings.Join([]string{
 		`$ErrorActionPreference = 'Stop'`,
 		`[Console]::OutputEncoding = [Text.Encoding]::UTF8`,
+		`[Console]::InputEncoding = [Text.Encoding]::UTF8`,
 		`[Console]::WriteLine('CG_READY')`,
 		`while ($true) {`,
 		`  $line = [Console]::ReadLine()`,
