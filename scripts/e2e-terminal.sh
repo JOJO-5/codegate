@@ -265,7 +265,7 @@ if [ "${E2E_CLI_CONTROL:-0}" = "1" ]; then
   # 只有 echo 真正执行后，终端输出才出现未拆开的标记。
   SPLIT_MARKER="${MARKER:0:12}^${MARKER:12}"
   INPUT_TEXT="$(printf 'codex --help\recho %s\r' "$SPLIT_MARKER")"
-  CLIENT_ARGS+=(--stdin-text "$INPUT_TEXT" --expect "Usage: codex")
+  CLIENT_ARGS+=(--stdin-text "$INPUT_TEXT" --expect "Codex CLI")
 fi
 node scripts/e2e-client.mjs "${CLIENT_ARGS[@]}"
 CLIENT_EXIT=$?
