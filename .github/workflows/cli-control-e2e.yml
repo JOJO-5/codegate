@@ -3,6 +3,10 @@ name: Programming CLI control e2e
 on:
   push:
     branches: [test/cli-control-e2e]
+  pull_request:
+    paths:
+      - 'scripts/e2e-*'
+      - '.github/workflows/cli-control-e2e.yml'
 
 jobs:
   codex:
