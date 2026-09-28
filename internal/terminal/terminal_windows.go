@@ -695,20 +695,10 @@ func (p *conPTY) Close() error {
 		return nil
 	}
 
-	// ---- 1) 关输入写端 ----
-	// 子进程会看到 stdin EOF。对交互式 shell 来说这常常能让它自己退出，
-	// 比直接 TerminateProcess 干净。
-	//
-	// 用 inMu 而不是 outMu：Read 正持有 outMu 的读锁阻塞着，
-	// 这一步必须能绕开它，否则整条关闭路径都动不了。
-	p.inMu.Lock()
-	if p.hInW != 0 {
-		syscall.CloseHandle(p.hInW)
-		p.hInW = 0
-	}
-	p.inMu.Unlock()
-
-	// ---- 2) 关伪控制台 ----
+	// ---- 1) 关伪控制台 ----
+	// 必须先于获取 inMu：Write 可能持有读锁阻塞在已写满的输入管道上。
+	// 先关闭伪控制台的读端，才能让该 Write 返回并释放读锁。
+	// 此时还不能关闭 hInW，因为另一个线程可能正用它执行同步 WriteFile。
 	// ★ 这一步会终止所有挂在伪控制台上的进程，并且关闭它内部的管道写端 ——
 	//   后者正是让阻塞中的 ReadFile 返回 ERROR_BROKEN_PIPE 的原因。
 	//   必须先做这一步，第 3 步才不会变成"关闭正在被阻塞读的句柄"这种未定义行为。
@@ -743,7 +733,16 @@ func (p *conPTY) Close() error {
 		}
 	}
 
-	// ---- 3) 关输出读端 ----
+	// ---- 3) 等待写入退出后关闭输入写端 ----
+	// 伪控制台与子进程已关闭，阻塞中的 WriteFile 应当返回。
+	p.inMu.Lock()
+	if p.hInW != 0 {
+		syscall.CloseHandle(p.hInW)
+		p.hInW = 0
+	}
+	p.inMu.Unlock()
+
+	// ---- 4) 关输出读端 ----
 	// CancelIoEx 是保险：对同步管道读它其实不生效（微软文档明确说
 	// CancelIoEx 只能取消关联了 OVERLAPPED 的请求），真正让 Read 返回的是第 2 步。
 	// 保留它是因为在部分系统版本上它确实能缩短关闭耗时，代价接近零。
@@ -756,7 +755,7 @@ func (p *conPTY) Close() error {
 	}
 	p.outMu.Unlock()
 
-	// ---- 4) 进程句柄 ----
+	// ---- 5) 进程句柄 ----
 	// 正常路径是 Wait 之后 reap。但调用方可能从不调 Wait
 	// （启动失败清理、测试里直接 Close），这里兜底。
 	// 进程已经被第 2 步终止了，所以不会泄漏一个活着的进程。
@@ -888,8 +887,11 @@ func buildEnvBlock(env []string) ([]uint16, error) {
 		// StringToUTF16 的结果末尾自带一个 NUL，正好作为条目分隔符。
 		block = append(block, syscall.StringToUTF16(kv)...)
 	}
-	// 环境块以额外的 NUL 结束。
+	// 环境块以双 NUL 结束；空列表也必须提供两个 NUL。
 	block = append(block, 0)
+	if len(uniq) == 0 {
+		block = append(block, 0)
+	}
 	return block, nil
 }
 
