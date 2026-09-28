@@ -1,0 +1,61 @@
+name: Docker Compose
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'compose.yaml'
+      - '.dockerignore'
+      - '.env.example'
+      - 'deploy/**'
+      - 'web/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/**'
+      - '.github/workflows/docker-compose.yml'
+      - '.github/workflows/publish-image.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check installer syntax
+        run: sh -n deploy/install-compose.sh
+      - name: Prepare local secrets
+        run: |
+          mkdir -p secrets
+          openssl rand -hex 32 > secrets/jwt_secret
+          chmod 600 secrets/jwt_secret
+      - name: Validate Compose and build Server
+        run: |
+          docker compose config --quiet
+          docker compose --profile public config --quiet
+          docker compose build server
+      - name: Start and verify embedded Web UI
+        run: |
+          docker compose up -d server
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8080/healthz
+          curl -fsS http://127.0.0.1:8080/ | grep -q '/assets/'
+      - name: Start HTTPS proxy
+        env:
+          CODEGATE_DOMAIN: localhost
+          CODEGATE_BASE_URL: https://localhost
+        run: |
+          docker compose --profile public up -d caddy
+          for i in $(seq 1 30); do
+            if curl -kfsS https://localhost/healthz >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -kfsS https://localhost/healthz
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --profile public logs --no-color
+      - name: Stop
+        if: always()
+        run: docker compose --profile public down

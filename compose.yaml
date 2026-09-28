@@ -1,0 +1,50 @@
+services:
+  server:
+    build: .
+    image: ${CODEGATE_IMAGE:-ghcr.io/jojo-5/codegate-server:latest}
+    restart: unless-stopped
+    environment:
+      CODEGATE_LISTEN: ":8080"
+      CODEGATE_BASE_URL: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
+      CODEGATE_ALLOWED_ORIGINS: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
+      CODEGATE_DB_PATH: /data/codegate.db
+      CODEGATE_JWT_SECRET_FILE: /run/secrets/jwt_secret
+      CODEGATE_ALLOW_SIGNUP: "false"
+    secrets:
+      - jwt_secret
+    volumes:
+      - server_data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["public"]
+    restart: unless-stopped
+    environment:
+      CODEGATE_DOMAIN: "${CODEGATE_DOMAIN:-localhost}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret
+
+volumes:
+  server_data:
+  caddy_data:
+  caddy_config:

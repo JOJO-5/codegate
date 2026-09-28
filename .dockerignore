@@ -1,0 +1,15 @@
+.git
+.github
+.workbuddy-ai
+.env
+.env.*
+secrets
+bin
+dist
+captures
+web/node_modules
+web/dist
+internal/server/webui/dist
+*.db
+*.db-shm
+*.db-wal
