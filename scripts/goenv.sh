@@ -33,6 +33,34 @@
 export GOROOT="C:/Users/JOJO/.workbuddy-ai/binaries/go/versions/1.27.1-plain/go"
 export GOPATH="C:/Users/JOJO/.workbuddy-ai/binaries/go/gopath"
 
+# ★ GOMODCACHE 必须挪出 ~/.workbuddy-ai/，否则 .mod 永远不落盘。
+#
+#   实测（2026-09-28，同一台机器、同一个 go，只换 GOMODCACHE）：
+#
+#     GOMODCACHE 位置                                      .mod  .tmp  结果
+#     ~/.workbuddy-ai/binaries/go/gopath/pkg/mod             0     1    失败
+#     ~/.workbuddy-ai/binaries/go/gopath/pkg/mod2（新建）     0     1    失败
+#     ~/.workbuddy-ai/binaries/go/modcache-fresh             0     1    失败
+#     ~/.workbuddy-ai/gomodcache-fresh                       0     1    失败
+#     C:/Users/JOJO/go/pkg/mod                               1     0    正常
+#     %TEMP%/cg-gomodcache2                                  1     0    正常
+#
+#   边界是**目录树**：只要落在 ~/.workbuddy-ai/ 底下，哪一层都失败。
+#
+#   现象：go 先把 .mod 写成 `v0.48.0.mod<随机数>.tmp`（os.CreateTemp 的命名），
+#   再 rename 成 `v0.48.0.mod`。rename 被拦 → 临时文件就地留下、目标永不出现。
+#   后果不是「多了垃圾文件」，而是**每次构建都重新从代理拉 .mod** ——
+#   代理一挂就构建不了。.info / .zip / .ziphash 都不受影响，所以很难联想到。
+#
+#   ⚠️ 手工 `mv x.tmp x.mod` 在同一个目录里**是成功的**。
+#   说明拦截针对的是 go.exe 这个进程（DLP 按进程白名单 + 路径策略），
+#   不是文件系统不支持 rename。所以「用 mv 试一下」根本验不出这个坑，
+#   必须用**真实的 go mod download** 对照。
+#
+#   为什么选 ~/go/pkg/mod 而不是 %TEMP%：临时目录会被清理工具删掉，
+#   缓存一没就要重新联网拉全套依赖（本机拉模块必须走代理，见上面第 2 条）。
+export GOMODCACHE="C:/Users/JOJO/go/pkg/mod"
+
 # PATH 用 /c/ 形式
 export PATH="/c/Users/JOJO/.workbuddy-ai/binaries/go/versions/1.27.1-plain/go/bin:$PATH"
 export PATH="/c/Users/JOJO/.workbuddy-ai/binaries/go/gopath/bin:$PATH"
