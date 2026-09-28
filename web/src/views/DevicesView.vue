@@ -28,6 +28,7 @@ const pairName = ref('')
 const pairError = ref<string | null>(null)
 const pairBusy = ref(false)
 type OnboardingOS = 'windows' | 'linux' | 'macos'
+const onboardingOS: OnboardingOS[] = ['windows', 'linux', 'macos']
 const selectedOS = ref<OnboardingOS>('windows')
 const copied = ref(false)
 const copyError = ref('')
@@ -156,7 +157,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
           <span>目标电脑的系统</span>
           <div class="row" role="group" aria-label="目标电脑的系统">
             <button
-              v-for="os in (['windows', 'linux', 'macos'] as const)"
+              v-for="os in onboardingOS"
               :key="os"
               class="btn btn--sm"
               type="button"
@@ -172,11 +173,11 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
         <div v-if="selectedOS === 'windows'" class="notice notice--info">
           在目标 Windows 电脑上从
           <a href="https://github.com/JOJO-5/codegate" target="_blank" rel="noopener noreferrer">私有仓库</a>
-          构建原生 Agent：
+          在仓库根目录构建原生 Agent：
           <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">go build -o bin/codegate-agent.exe ./cmd/codegate-agent
 .\bin\codegate-agent.exe doctor
 .\bin\codegate-agent.exe pair</pre>
-          配置 <code class="mono">%APPDATA%\CodeGate\agent.json</code> 中的 Server 地址、工作目录和允许的命令。
+          运行前先配置 <code class="mono">%APPDATA%\CodeGate\agent.json</code> 中的 Server 地址、工作目录和允许的命令。
           运行 <code class="mono">pair</code> 后，把输出的配对码填在下面。绑定完成后运行
           <code class="mono">.\bin\codegate-agent.exe run</code>。
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">查看完整配置示例</a>。
