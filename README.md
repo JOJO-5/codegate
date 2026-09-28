@@ -13,6 +13,10 @@ CodeGate 让你从手机或电脑浏览器访问另一台机器上的原生命�
 - **Agent 的 PTY 当前仅在 Windows 上实现（ConPTY）**。Unix 的终端实现仍是占位代码，Linux/macOS 暂不能作为被控终端机器。
 - 文件浏览、预览、上传和下载目前是[设计方案](docs/PHASE0-FILE-TRANSPORT.md)，尚未作为可用功能交付。
 
+## Docker Compose 部署 Server
+
+需要部署到有域名的机器时，使用 [Docker Compose 部署指南](docs/DEPLOY-DOCKER.md)。Compose 构建并运行 Server 与网页，可选 Caddy HTTPS；被控电脑仍运行 Windows 原生 Agent。
+
 ## 快速开始：同一台 Windows 电脑体验
 
 需要 Go **1.26+**、Node.js 和 npm。下面用 PowerShell；首次构建需要联网下载依赖。Server 和 Agent 可以先跑在同一台 Windows 电脑，确认流程后再分开部署。
