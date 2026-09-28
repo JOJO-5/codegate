@@ -1,7 +1,7 @@
 services:
   server:
     build: .
-    image: codegate-server:local
+    image: ${CODEGATE_IMAGE:-ghcr.io/jojo-5/codegate-server:latest}
     restart: unless-stopped
     environment:
       CODEGATE_LISTEN: ":8080"
