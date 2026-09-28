@@ -234,7 +234,7 @@ function sendInput(input) {
   ws.send(frame)
   ok(`已向会话写入 ${payload.length} 字节输入`)
 }
-if (OPENCODE) sendInput("opencode\r")
+if (OPENCODE) { sendInput("opencode\r"); await new Promise((r) => setTimeout(r, 1500)); sendInput("\x1b[4;600;800t") }
 else if (TUI) sendInput("codex --no-daemon\r")
 else if (STDIN_TEXT) sendInput(STDIN_TEXT)
 if (attached.seq_from > 0) {
