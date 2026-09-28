@@ -234,7 +234,7 @@ function sendInput(input) {
   ws.send(frame)
   ok(`已向会话写入 ${payload.length} 字节输入`)
 }
-if (OPENCODE) sendInput("opencode\r")
+if (OPENCODE) { sendInput("opencode\r"); await new Promise((r) => setTimeout(r, 1500)); sendInput("\x1b[4;600;800t\x1b[8;30;100t\x1b[?0u") }
 else if (TUI) sendInput("codex --no-daemon\r")
 else if (STDIN_TEXT) sendInput(STDIN_TEXT)
 if (attached.seq_from > 0) {
@@ -259,7 +259,7 @@ if (OPENCODE) {
   const printable = received.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f]/g, " ").replace(/\s+/g, " ")
   info(`OpenCode printable: ${JSON.stringify(printable.slice(0, 1800))}`)
   info(`OpenCode tail: ${JSON.stringify(received.slice(-1800))}`)
-  if (/OpenCode|New session|Select model|Ask anything/.test(printable) && !/Error:|panic:/i.test(printable)) ok("OpenCode rendered interactive UI text")
+  if (/OpenCode|New session|Select model|Ask anything/i.test(printable) && !/Error:|panic:/i.test(printable)) ok("OpenCode rendered interactive UI text")
   else bad("OpenCode did not render identifiable interactive UI text")
   sendInput("\x03")
 } else if (TUI) {
