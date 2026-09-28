@@ -94,7 +94,7 @@ $env:CODEGATE_ALLOWED_ORIGINS = 'http://127.0.0.1:8080'
 .\bin\codegate-agent.exe run
 ```
 
-回到网页选择设备、工作目录和 PowerShell 命令，即可创建会话。Agent 的 `pair` 会等待网页确认；请保持它运行到配对结束。首次排障可分别运行 `codegate-server doctor` 和 `codegate-agent doctor`。
+回到网页选择设备、工作目录和 PowerShell 命令，即可创建会话。Agent 的 `pair` 会等待网页确认；请保持它运行到配对结束。若需开机自动运行且未登录桌面也能连接，完成配对后参照 [Windows Agent 开机自启](docs/DEPLOY-DOCKER.md#开机自启未解锁也能连接) 安装计划任务。首次排障可分别运行 `codegate-server doctor` 和 `codegate-agent doctor`。
 
 ## 部署提示
 
