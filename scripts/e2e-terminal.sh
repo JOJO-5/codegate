@@ -261,8 +261,11 @@ CLIENT_ARGS=(--base "$BASE" --token "$TOKEN" --marker "$MARKER"
   --command-id "$COMMAND_ID" --cwd "$WORKW" --timeout 30000)
 if [ "${E2E_CLI_CONTROL:-0}" = "1" ]; then
   # cmd.exe keeps running. The client sends both commands through a real STDIN frame.
-  INPUT_TEXT="$(printf 'codex --help\recho %s\r' "$MARKER")"
-  CLIENT_ARGS+=(--stdin-text "$INPUT_TEXT" --expect "Codex")
+  # 用 cmd 的 ^ 转义拆开标记，输入回显里不会包含完整 MARKER。
+  # 只有 echo 真正执行后，终端输出才出现未拆开的标记。
+  SPLIT_MARKER="${MARKER:0:12}^${MARKER:12}"
+  INPUT_TEXT="$(printf 'codex --help\recho %s\r' "$SPLIT_MARKER")"
+  CLIENT_ARGS+=(--stdin-text "$INPUT_TEXT" --expect "Usage: codex")
 fi
 node scripts/e2e-client.mjs "${CLIENT_ARGS[@]}"
 CLIENT_EXIT=$?
