@@ -179,7 +179,9 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
 .\bin\codegate-agent.exe pair</pre>
           运行前先配置 <code class="mono">%APPDATA%\CodeGate\agent.json</code> 中的 Server 地址、工作目录和允许的命令。
           运行 <code class="mono">pair</code> 后，把输出的配对码填在下面。绑定完成后运行
-          <code class="mono">.\bin\codegate-agent.exe run</code>。
+          <code class="mono">.\bin\codegate-agent.exe run</code>。若希望开机后未解锁也能使用，可在仓库根目录执行
+          <code class="mono">powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-autostart.ps1 install</code>
+          （输入当前 Windows 账号密码，不是 PIN；先关闭手动运行的 Agent）。
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">查看完整配置示例</a>。
         </div>
 
