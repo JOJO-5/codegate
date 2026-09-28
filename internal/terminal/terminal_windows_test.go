@@ -128,6 +128,10 @@ func consoleSize() string {
 // 用 hex 而不是原文输出输入内容，是为了让"非 ASCII 字节"的断言
 // 不受控制台编码影响 —— 测试机是 GBK 代码页也不会误判。
 func runChildProcess() {
+	if os.Getenv("CODEGATE_PTY_NO_READ") == "1" {
+		time.Sleep(30 * time.Second)
+		return
+	}
 	out := os.Stdout
 
 	fmt.Fprintf(out, "INIT:%s\n", consoleSize())
@@ -655,6 +659,53 @@ func decodeEnvBlock(b []uint16) []string {
 	return out
 }
 
+// 关闭会话不能等待一个卡在满输入管道里的 WriteFile。
+func TestConPTYCloseWithBlockedWrite(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳过 ConPTY 集成测试（-short）")
+	}
+	if err := Available(); err != nil {
+		t.Skipf("本机不支持 ConPTY: %v", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	term := New()
+	env := append(childEnv(), "CODEGATE_PTY_NO_READ=1")
+	if err := term.Start(context.Background(), StartConfig{
+		Command: self, Dir: t.TempDir(), Env: env, Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 子进程不读 stdin。写入量超过管道容量，Write 应阻塞。
+	writeDone := make(chan struct{})
+	go func() {
+		defer close(writeDone)
+		_, _ = term.Write(make([]byte, 8<<20))
+	}()
+	select {
+	case <-writeDone:
+		t.Fatal("写入意外完成，未能构造阻塞场景")
+	case <-time.After(200 * time.Millisecond):
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- term.Close() }()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close 被阻塞中的 Write 卡住")
+	}
+	select {
+	case <-writeDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close 后 Write 仍未返回")
+	}
+}
+
 func TestBuildEnvBlock(t *testing.T) {
 	// nil 表示继承父进程环境（只给 PoC / 测试用）。
 	b, err := buildEnvBlock(nil)
@@ -663,6 +714,15 @@ func TestBuildEnvBlock(t *testing.T) {
 	}
 	if b != nil {
 		t.Errorf("buildEnvBlock(nil) 应返回 nil，实际 %v", b)
+	}
+
+	// 显式空列表表示不继承环境，必须编码成双 NUL。
+	b, err = buildEnvBlock([]string{})
+	if err != nil {
+		t.Fatalf("buildEnvBlock(空列表) 报错: %v", err)
+	}
+	if len(b) != 2 || b[0] != 0 || b[1] != 0 {
+		t.Errorf("空环境块应为双 NUL，实际 %v", b)
 	}
 
 	// 排序（大小写不敏感）+ 同名去重（后者覆盖前者）。
