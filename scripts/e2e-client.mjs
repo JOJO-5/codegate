@@ -71,6 +71,8 @@ const MARKER = args.marker
 const COMMAND_ID = args['command-id'] || 'e2e-echo'
 const CWD = args.cwd || ''
 const TIMEOUT = Number(args.timeout || 20000)
+const STDIN_TEXT = args['stdin-text'] || ''
+const EXPECT = args.expect || ''
 
 for (const [k, v] of Object.entries({ base: BASE, token: TOKEN, marker: MARKER })) {
   if (!v) { console.error(`缺少必需参数 --${k}`); process.exit(2) }
@@ -216,6 +218,20 @@ ok(`会话已建立 id=${sessionId} status=${created.session.status}`)
 console.log('\n=== attach（含 ring buffer 重放）===')
 const attached = await send('session.attach', { session_id: sessionId, since: 0, cols: 100, rows: 30 }, sessionId)
 ok(`attach 成功 role=${attached.role} seq=${attached.seq_from}..${attached.seq_to}`)
+
+// Send user keystrokes as a real protocol STDIN frame (not a control JSON message).
+if (STDIN_TEXT) {
+  const payload = new TextEncoder().encode(STDIN_TEXT)
+  const frame = new Uint8Array(20 + payload.length)
+  frame[0] = 1
+  frame[1] = 1 // FrameStdin
+  const id = sessionId.replaceAll('-', '')
+  if (!/^[0-9a-f]{32}$/i.test(id)) throw new Error(`invalid session ID: ${sessionId}`)
+  for (let i = 0; i < 16; i++) frame[4 + i] = Number.parseInt(id.slice(i * 2, i * 2 + 2), 16)
+  frame.set(payload, 20)
+  ws.send(frame)
+  ok(`已向会话写入 ${payload.length} 字节输入`)
+}
 if (attached.seq_from > 0) {
   bad(`seq_from=${attached.seq_from} > 0 —— 说明 ring buffer 已经丢过数据`)
 } else {
@@ -231,6 +247,10 @@ while (Date.now() < deadline && !received.includes(MARKER)) {
 
 info(`Stdout ${stdoutBytes} 字节 / Buffer ${bufferBytes} 字节`)
 
+if (EXPECT) {
+  if (received.toLowerCase().includes(EXPECT.toLowerCase())) ok(`收到编程 CLI 输出：${EXPECT}`)
+  else bad(`未收到预期的编程 CLI 输出：${EXPECT}`)
+}
 if (received.includes(MARKER)) {
   ok(`终端输出里找到了标记「${MARKER}」—— Agent → Server → Client 全链路通`)
 } else {
