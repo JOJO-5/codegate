@@ -233,7 +233,7 @@ function sendInput(input) {
   ws.send(frame)
   ok(`已向会话写入 ${payload.length} 字节输入`)
 }
-if (TUI) sendInput("codex\r")
+if (TUI) sendInput("codex --no-daemon\r")
 else if (STDIN_TEXT) sendInput(STDIN_TEXT)
 if (attached.seq_from > 0) {
   bad(`seq_from=${attached.seq_from} > 0 —— 说明 ring buffer 已经丢过数据`)
@@ -257,8 +257,9 @@ if (TUI) {
   await new Promise((r) => setTimeout(r, 2000))
   info(`After arrow: ${JSON.stringify(received.slice(-1200))}`)
   sendInput("\x03")
-  if (stdoutBytes > 500) ok("Codex interactive startup produced terminal output")
-  else bad("Codex interactive startup did not produce enough terminal output")
+  if (received.includes("Error:") || received.includes("error:")) bad("Codex interactive startup reported an error")
+  else if (received.includes("\x1b[?1049h") && stdoutBytes > 500) ok("Codex entered the alternate screen without an error")
+  else bad("Codex did not enter the interactive alternate screen")
 } else if (EXPECT) {
   if (received.toLowerCase().includes(EXPECT.toLowerCase())) ok(`收到编程 CLI 输出：${EXPECT}`)
   else {
