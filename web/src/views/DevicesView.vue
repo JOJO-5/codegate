@@ -232,7 +232,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
       </form>
 
       <!-- 第二步：确认设备信息 -->
-      <div v-else class="stack">
+      <div v-else-if="preview !== null" class="stack">
         <div class="notice notice--info">
           请确认下面这台机器是你自己的。不是你的就取消 —— 猜中配对码不该等于能绑定别人的电脑。
         </div>
