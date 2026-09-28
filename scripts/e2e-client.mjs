@@ -258,8 +258,8 @@ if (TUI) {
   info(`After arrow: ${JSON.stringify(received.slice(-1200))}`)
   sendInput("\x03")
   if (received.includes("Error:") || received.includes("error:")) bad("Codex interactive startup reported an error")
-  else if (received.includes("\x1b[?1049h") && stdoutBytes > 500) ok("Codex entered the alternate screen without an error")
-  else bad("Codex did not enter the interactive alternate screen")
+  else if (received.includes("\x1b[?1049h") && received.includes("OpenAI Codex") && received.includes("Sign in with ChatGPT")) ok("Codex TUI rendered and responded to arrow input with the sign-in menu")
+  else bad("Codex TUI did not render its interactive sign-in menu")
 } else if (EXPECT) {
   if (received.toLowerCase().includes(EXPECT.toLowerCase())) ok(`收到编程 CLI 输出：${EXPECT}`)
   else {
