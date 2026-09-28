@@ -55,20 +55,28 @@ source `scripts/goenv.sh`。
   Makefile go.mod web/src web/index.html web/package.json web/package-lock.json
   web/tsconfig.json web/vite.config.ts web/env.d.ts`
 - `go vet` 崩 `0xc0000005` → `GOFLAGS=-vet=off`（**本机专属，不要进 CI**）。
+- **`GOMODCACHE` 必须设在 `~/.workbuddy-ai/` 之外**（已设 `C:/Users/JOJO/go/pkg/mod`）。
+  在 `.workbuddy-ai` 树里，go 的 `.mod` rename 会被拦，`.mod` 永不落盘 →
+  每次构建重新拉模块。`goenv.sh` 里已修，含实测对照表。
 - 详细的 Windows make / 命令行参数陷阱见 skill `windows-make-and-argv-traps`。
 
 ## 尚未解决
 
-- Go module cache 的 rename 失败：`.mod` 从不落盘（118 个 `.mod*.tmp` 堆积），
-  每次构建重新拉 `.mod`。`GOTMPDIR` 无效，可试 `GOMODCACHE` 指到 `%TEMP%`。
 - `SessionView.vue`（Vue 层）的帧循环 / attach 重放 / resize 防抖无自动化测试。
 
 ## 版本控制
 
-**已纳入 git**（2026-09-28 `git init -b main` + 首次提交 `604832e`）。
-分支名**不带 `/`**（本机 git 有「报成功但引用不落盘」的老毛病，见 skill
-`git-ops-locked-windows`；权威校验只用 `git ls-remote` / `cat .git/refs/heads/main`）。
-**尚未配置远端**，等 JOJO 给地址再 `git remote add`。
+**已纳入 git 并推到 GitHub**：`https://github.com/JOJO-5/codegate`（**private**）。
+分支 `main`（**不带 `/`**，本机 git 有「报成功但引用不落盘」的老毛病，
+见 skill `git-ops-locked-windows`；权威校验只用 `git ls-remote`）。
+
+- 首次提交 `604832e`（154 文件），第二次 `07cb060`（VERSION 求值顺序修复）。
+- **推 GitHub 必须走代理**：`~/.gitconfig` 里已给 `https://github.com/` 配
+  `proxy = http://192.168.9.163:10808`（直连超时，代理 0.36 秒 200）。
+- **凭据走 gh 而不是 GCM**：`~/.gitconfig` 的 `[credential "https://github.com"]`
+  段用 `gh auth git-credential`。GCM 对 github.com 会拉 GUI 授权、静默卡住。
+  ⚠️ `gh` 连不上网时会报 **`The token in keyring is invalid`** —— 这是**假警报**，
+  真因是没走代理。设上 `HTTPS_PROXY` 后同一个 token 完全可用。
 
 `.gitattributes` 钉死 **仓库内一律 LF**，这不是洁癖：
 本机 `core.autocrlf=true`，靠它的话**下次 checkout** 会把 `scripts/*.sh`
