@@ -52,10 +52,11 @@ if [ ! -f "$install_dir/.env" ]; then
   fi
 fi
 
+public_domain=$(sed -n 's/^CODEGATE_DOMAIN=//p' "$install_dir/.env" | tail -n 1)
 cd "$install_dir"
 # The repository and GHCR image are private; gh's credential is passed through stdin.
 gh auth token | docker login ghcr.io -u "$(gh api user --jq .login)" --password-stdin >/dev/null
-if [ -n "${CODEGATE_DOMAIN:-}" ]; then
+if [ -n "$public_domain" ]; then
   docker compose --profile public pull server caddy
   docker compose --profile public up -d --no-build
 else
@@ -63,8 +64,8 @@ else
   docker compose up -d --no-build server
 fi
 printf '\nCodeGate 已启动。安装目录：%s\n' "$install_dir"
-if [ -n "${CODEGATE_DOMAIN:-}" ]; then
-  printf '访问地址：https://%s\n' "$CODEGATE_DOMAIN"
+if [ -n "$public_domain" ]; then
+  printf '访问地址：https://%s\n' "$public_domain"
 else
   printf '访问地址：http://127.0.0.1:8080 （仅部署机本地）\n'
 fi
