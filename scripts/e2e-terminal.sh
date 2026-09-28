@@ -136,7 +136,7 @@ WORKW="${TMPW}/work"
 
 COMMAND_ID="e2e-echo"
 COMMAND_ARGS='["/c", "echo", "'"${MARKER}"'"]'
-if [ "${E2E_CLI_CONTROL:-0}" = "1" ]; then
+if [ "${E2E_CLI_CONTROL:-0}" = "1" ] || [ "${E2E_TUI_CONTROL:-0}" = "1" ]; then
   COMMAND_ID="e2e-cli"
   COMMAND_ARGS='["/Q", "/K"]'
 fi
@@ -266,6 +266,9 @@ if [ "${E2E_CLI_CONTROL:-0}" = "1" ]; then
   SPLIT_MARKER="${MARKER:0:12}^${MARKER:12}"
   INPUT_TEXT="$(printf 'codex --help\recho %s\r' "$SPLIT_MARKER")"
   CLIENT_ARGS+=(--stdin-text "$INPUT_TEXT" --expect "Codex CLI")
+fi
+if [ "${E2E_TUI_CONTROL:-0}" = "1" ]; then
+  CLIENT_ARGS+=(--tui 1 --timeout 45000)
 fi
 node scripts/e2e-client.mjs "${CLIENT_ARGS[@]}"
 CLIENT_EXIT=$?
