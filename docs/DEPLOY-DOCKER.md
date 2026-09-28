@@ -2,6 +2,26 @@
 
 Compose 只运行 **Server**。要控制的电脑仍需运行 Windows 原生 Agent；Linux/macOS Agent 的 PTY 尚未实现，不能靠把 Agent 放进容器来替代。Server 镜像构建时会编译 Web 前端并嵌入二进制。
 
+## 一条命令安装预构建 Server（Linux / macOS）
+
+先安装并启动 Docker Engine（macOS 用 Docker Desktop）和 Compose 插件，安装 [GitHub CLI](https://cli.github.com/) 并执行 `gh auth login`。由于仓库与镜像是私有的，当前 GitHub 账号需要拥有仓库与 GHCR 镜像的读取权限；如果镜像拉取提示拒绝访问，检查令牌的 `read:packages` 权限。镜像在合并到 `main` 后由 GitHub Actions 发布，首次发布成功后才能使用下面的命令。
+
+本机部署，在 Linux 或 macOS 终端执行：
+
+```bash
+bash -o pipefail -c "gh api -H 'Accept: application/vnd.github.raw+json' repos/JOJO-5/codegate/contents/deploy/install-compose.sh | sh"
+```
+
+公网部署，先设置域名 DNS 指向这台服务器、开放 TCP 80/443，再执行：
+
+```bash
+CODEGATE_DOMAIN=codegate.example.com bash -o pipefail -c "gh api -H 'Accept: application/vnd.github.raw+json' repos/JOJO-5/codegate/contents/deploy/install-compose.sh | sh"
+```
+
+脚本下载 Compose 配置与 Caddyfile，创建并保留 JWT 密钥，登录 GHCR，拉取匹配宿主架构的 Server 镜像并启动。默认安装目录为 `~/.local/share/codegate`，可用 `CODEGATE_INSTALL_DIR` 修改。重复运行会拉取最新镜像并更新容器，但保留 `.env`、密钥和 SQLite 卷。修改域名时手动编辑安装目录的 `.env` 并重新运行；运行 `docker compose --profile public ps` 可检查状态。
+
+macOS 的本机地址只能在该 Mac 上访问；如需让其他设备连接，请使用公网域名与 HTTPS 或自行配置安全的反向代理。此方法下载的是运行在 Docker 中的 Linux Server 镜像，macOS 由 Docker Desktop 运行它。需要从源码构建时继续使用下方的 Compose 步骤。
+
 ## 先在部署机本地验证
 
 安装 Docker Engine 与 Compose 插件，在仓库根目录操作：
