@@ -55,6 +55,13 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
 
 $source = (Resolve-Path -LiteralPath $AgentPath).ProviderPath
 $config = (Resolve-Path -LiteralPath $ConfigPath).ProviderPath
+$configData = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
+if ($configData.state_dir -and -not [IO.Path]::IsPathRooted($configData.state_dir)) {
+    throw 'state_dir 必须是绝对路径，避免计划任务启动时生成另一把设备密钥。'
+}
+if ($env:CODEGATE_STATE_DIR) {
+    throw '请把 CODEGATE_STATE_DIR 改写到 agent.json 的绝对 state_dir 路径后重新配对。'
+}
 & $source doctor -config $config
 if ($LASTEXITCODE -ne 0) {
     throw 'Agent 自检失败，请先修复配置或终端环境。'
@@ -94,7 +101,7 @@ try {
     $scheduledAction = New-ScheduledTaskAction -Execute $installedAgent -Argument "run -config `"$config`"" -WorkingDirectory $installDir
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $scheduledAction -Trigger $trigger -Settings $settings -User $currentUser -Password $plainPassword -Description 'CodeGate Agent (starts before desktop sign-in)' -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $scheduledAction -Trigger $trigger -Settings $settings -User $currentUser -Password $plainPassword -RunLevel Limited -Description 'CodeGate Agent (starts before desktop sign-in)' -Force | Out-Null
 }
 finally {
     $plainPassword = $null
