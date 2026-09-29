@@ -102,7 +102,14 @@ func cmdSupervise(args []string) error {
 	for ctx.Err() == nil {
 		started := time.Now()
 		wait, oldMarker, err := launchManaged(ctx, current.Path, *configPath, cfg.StateDir)
-		if err != nil { return err }
+		if err != nil {
+			if current.Previous == "" { return err }
+			fmt.Fprintln(os.Stderr, "Agent 当前版本无法启动，回滚旧版本:", err)
+			current = installedAgent{Path: current.Previous}
+			if err := writeState(stateFile, current); err != nil { return err }
+			failures = 0
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			wait.kill()
