@@ -119,3 +119,23 @@ func TestUnixPTYCloseUnblocksRead(t *testing.T) {
 		t.Fatal("child process was not reaped")
 	}
 }
+
+func TestUnixPTYInterruptForeground(t *testing.T) {
+	term := New()
+	if err := term.Start(context.Background(), StartConfig{
+		Command: "/bin/sh",
+		Args: []string{"-c", "stty -echo; trap 'printf INTERRUPTED; exit 0' INT; printf READY; while :; do sleep 1; done"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	readUntil(t, term, "READY")
+	if err := term.Signal(SignalInterrupt); err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, term, "INTERRUPTED")
+	result := term.Wait()
+	if !result.Success() {
+		t.Fatalf("Wait after Ctrl+C = %s", result)
+	}
+}
