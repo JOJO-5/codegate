@@ -32,6 +32,10 @@ jobs:
         run: |
           sh -n scripts/agent-autostart-linux.sh
           sh -n scripts/agent-autostart-macos.sh
+          if [ "$(uname -s)" = Darwin ]; then
+            sh scripts/agent-autostart-macos.sh render > /tmp/codegate-agent.plist
+            plutil -lint /tmp/codegate-agent.plist
+          fi
       - name: Build Agent
         run: go build ./cmd/codegate-agent
       - name: Test PTY integration
