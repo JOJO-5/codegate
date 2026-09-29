@@ -270,6 +270,7 @@ export interface CommandAvailability {
 
 export interface DeviceUpdateStatus {
   online: boolean
+  web_proxy_enabled?: boolean
   agent_version?: string
   commands?: CommandAvailability[]
   update: AgentUpdateStatus | null
@@ -380,6 +381,14 @@ export const api = {
 
   getDeviceUpdateStatus(id: string): Promise<DeviceUpdateStatus> {
     return request<DeviceUpdateStatus>('GET', `/devices/${encodeURIComponent(id)}/update-status`)
+  },
+
+  startDSHWeb(id: string): Promise<{ url: string }> {
+    return request<{ url: string }>('POST', `/devices/${encodeURIComponent(id)}/dsh-web/start`)
+  },
+
+  stopDSHWeb(id: string): Promise<{ stopped: boolean }> {
+    return request<{ stopped: boolean }>('POST', `/devices/${encodeURIComponent(id)}/dsh-web/stop`)
   },
 
   renameDevice(id: string, name: string): Promise<DeviceDTO> {

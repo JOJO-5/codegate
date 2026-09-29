@@ -219,6 +219,8 @@ type Config struct {
 
 	// UpdateManifestURL points to a trusted HTTPS manifest for optional idle updates.
 	UpdateEnabled     bool `json:"update_enabled,omitempty"`
+	// DSHWebEnabled permits starting dsh web and proxying its fixed loopback port.
+	DSHWebEnabled bool `json:"dsh_web_enabled,omitempty"`
 	UpdateInterval    Duration `json:"update_interval,omitempty"`
 }
 

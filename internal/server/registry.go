@@ -102,6 +102,19 @@ func (c *AgentConn) TrySendBinary(data []byte) error {
 	return c.trySend(outbound{binary: true, data: data})
 }
 
+func (c *AgentConn) SendWeb(data []byte) error {
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-c.closed:
+		return errors.New("agent disconnected")
+	case c.send <- outbound{binary: true, data: data}:
+		return nil
+	case <-timer.C:
+		return ErrSendQueueFull
+	}
+}
+
 func (c *AgentConn) trySend(o outbound) error {
 	select {
 	case c.send <- o:

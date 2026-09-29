@@ -195,6 +195,12 @@ func (c *Conn) SendBinary(data []byte) bool {
 	return c.enqueue(outbound{binary: true, data: data}, 0) == nil
 }
 
+// Web tunnel bytes cannot be dropped or replayed. Close that stream when its
+// bounded queue stays full instead of corrupting an HTTP or WebSocket request.
+func (c *Conn) SendBinaryReliable(data []byte) error {
+	return c.enqueue(outbound{binary: true, data: data}, sendEnqueueTimeout)
+}
+
 // enqueue 把帧放进发送队列。timeout 为 0 表示非阻塞。
 func (c *Conn) enqueue(out outbound, timeout time.Duration) error {
 	select {

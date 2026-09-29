@@ -93,6 +93,8 @@ func (s *Server) buildRouter() http.Handler {
 	mux.Handle("DELETE /api/v1/devices/{id}", authed(s.handleDeviceDelete))
 	mux.Handle("GET /api/v1/devices/{id}/sessions", authed(s.handleDeviceSessions))
 	mux.Handle("GET /api/v1/devices/{id}/update-status", authed(s.handleDeviceUpdateStatus))
+	mux.Handle("POST /api/v1/devices/{id}/dsh-web/start", authed(s.handleDSHWebStart))
+	mux.Handle("POST /api/v1/devices/{id}/dsh-web/stop", authed(s.handleDSHWebStop))
 
 	mux.Handle("GET /api/v1/audit", authed(s.handleAuditLogs))
 
@@ -126,5 +128,14 @@ func (s *Server) buildRouter() http.Handler {
 	// 很远的地方报一个"响应不是 JSON"。
 	mux.Handle("/", webui.Handler())
 
-	return s.withRecover(s.withRequestLog(mux))
+	// DSH runs on a separate browser origin: its root /api and assets may not
+	// share CodeGate's path space or access-token storage.
+	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DSHProxyDomain != "" && s.isDSHHost(r.Host) {
+			s.serveDSH(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	return s.withRecover(s.withRequestLog(root))
 }

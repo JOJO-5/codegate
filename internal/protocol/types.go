@@ -57,6 +57,14 @@ const (
 	TypeFileWriteDone  Type = "file.write.done"
 	TypeFileCancel     Type = "file.cancel"
 
+	// DSH Web tunnel. The browser cannot emit these messages.
+	TypeWebStart Type = "web.start"
+	TypeWebStarted Type = "web.started"
+	TypeWebOpen Type = "web.open"
+	TypeWebClose Type = "web.close"
+	TypeWebStop Type = "web.stop"
+	TypeWebStopped Type = "web.stopped"
+
 	// ---- 通用 ----
 	TypeError Type = "error"
 	TypePing  Type = "ping"
@@ -133,12 +141,18 @@ var allowedSenders = map[Type]Sender{
 	TypeSessionClosed:      SentByAgent,
 	TypeSessionExit:        SentByAgent,
 	TypeSessionRoleChanged: SentByAgent,
+	TypeWebStarted: SentByAgent,
+	TypeWebStopped: SentByAgent,
 
 	// ---- 只有 Server 能发（对 Agent 的应答 / 对客户端的通知）----
 	TypeAgentChallenge:     SentByServer,
 	TypeAgentReady:         SentByServer,
 	TypeAgentPairCode:      SentByServer,
 	TypeAgentPairCompleted: SentByServer,
+	TypeWebStart: SentByServer,
+	TypeWebStop: SentByServer,
+	TypeWebOpen: SentByServer,
+	TypeWebClose: SentByServer | SentByAgent,
 
 	// ---- 只有浏览器能发 ----
 	TypeSessionCreate:       SentByClient,

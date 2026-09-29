@@ -87,6 +87,40 @@ const selectedWebURL = computed(() => reportedCommands.value?.find(c => c.id ===
 const dshCommand = computed(() => reportedCommands.value?.find(c => c.id === 'dsh'))
 const dshInstallCommand = 'dsh plugin --profile tui add github:deepseek-harness/turtle-ui'
 const dshCopyStatus = ref('')
+const dshOpening = ref(false)
+const dshStopping = ref(false)
+const dshOpenError = ref<string | null>(null)
+const dshOpenURL = ref<string | null>(null)
+async function openDSHWeb(): Promise<void> {
+  dshOpenError.value = null
+  dshOpenURL.value = null
+  // Open on the user gesture so mobile popup blockers permit the new tab.
+  const tab = window.open('', '_blank')
+  if (tab) tab.opener = null
+  dshOpening.value = true
+  try {
+    const result = await api.startDSHWeb(props.id)
+    if (tab) tab.location.href = result.url
+    else dshOpenURL.value = result.url
+  } catch (e) {
+    if (tab) tab.close()
+    dshOpenError.value = humanizeError(e)
+  } finally {
+    dshOpening.value = false
+  }
+}
+async function stopDSHWeb(): Promise<void> {
+  dshOpenError.value = null
+  dshStopping.value = true
+  try {
+    await api.stopDSHWeb(props.id)
+    dshOpenURL.value = null
+  } catch (e) {
+    dshOpenError.value = humanizeError(e)
+  } finally {
+    dshStopping.value = false
+  }
+}
 async function copyDshInstallCommand(): Promise<void> {
   try {
     await navigator.clipboard.writeText(dshInstallCommand)
@@ -405,7 +439,7 @@ function canOpen(s: SessionSummary): boolean {
           本机没有已授权且可找到的命令。请检查 Agent 的 allowed_commands 和开机服务使用的 PATH。
         </div>
         <div v-if="selectedWebURL" class="notice small">
-          外部 Web 地址：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。CodeGate 尚未转发这个页面；请自行确保该地址可达并受 HTTPS 与登录保护。
+          外部 Web 地址：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。此链接由你另行部署，与下方 CodeGate 内建转发互不影响。
         </div>
         <div v-if="dshCommand" class="notice small">
           <strong>DSH TUI：</strong>
@@ -416,6 +450,17 @@ function canOpen(s: SessionSummary): boolean {
           <div class="row"><code class="mono">{{ dshInstallCommand }}</code><button class="btn btn--ghost btn--sm" type="button" @click="copyDshInstallCommand">复制命令</button></div>
           <span v-if="dshCopyStatus" class="field__hint">{{ dshCopyStatus }}</span>
           <p>然后在该用户环境验证 <code class="mono">dsh --profile tui</code> 能打开 TUI，再把 dsh 配置到 agent.json 的 allowed_commands（args 为 ["--profile", "tui"]）。安装过程可能需要 pnpm 按提示允许插件构建；CodeGate 不会自动安装。</p>
+        </div>
+        <div v-if="dshCommand?.installed && updateInfo?.web_proxy_enabled" class="notice small">
+          <strong>DSH Web（内建转发）：</strong>目标机器需在 agent.json 启用 dsh_web_enabled；CodeGate 会在该机器启动仅监听本机的 DSH，并通过 Agent 出站连接打开独立 HTTPS 子域名。
+          <button class="btn btn--ghost btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online" @click="openDSHWeb">
+            {{ dshOpening ? '正在启动…' : '启动并打开 DSH Web ↗' }}
+          </button>
+          <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online" @click="stopDSHWeb">
+            {{ dshStopping ? '正在停止…' : '停止 DSH Web' }}
+          </button>
+          <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">打开 DSH Web ↗</a>
+          <span v-if="dshOpenError" class="notice notice--err">{{ dshOpenError }}</span>
         </div>
         <div v-if="detectedUnapproved.length" class="notice small">
           检测到但尚未授权：{{ detectedUnapproved.map(c => c.label).join('、') }}。在本机 agent.json 的 allowed_commands 中配置后才能从网页启动。

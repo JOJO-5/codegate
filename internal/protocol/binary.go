@@ -54,6 +54,8 @@ const (
 	// 必须由 Server 侧的 transfer 注册表做【每传输方向锁】
 	// （见 docs/PHASE0-FILE-TRANSPORT.md §3.3）。
 	FrameFileData FrameType = 0x10
+	FrameWebToAgent FrameType = 0x20
+	FrameWebToServer FrameType = 0x21
 )
 
 // 帧标志位。
@@ -80,6 +82,10 @@ func (t FrameType) String() string {
 		return "buffer"
 	case FrameFileData:
 		return "file.data"
+	case FrameWebToAgent:
+		return "web.to_agent"
+	case FrameWebToServer:
+		return "web.to_server"
 	default:
 		return fmt.Sprintf("unknown(0x%02x)", uint8(t))
 	}
@@ -88,7 +94,7 @@ func (t FrameType) String() string {
 // knownFrameType 判断帧类型是否已知。
 func knownFrameType(t FrameType) bool {
 	switch t {
-	case FrameStdin, FrameStdout, FrameBuffer, FrameFileData:
+	case FrameStdin, FrameStdout, FrameBuffer, FrameFileData, FrameWebToAgent, FrameWebToServer:
 		return true
 	default:
 		return false
@@ -112,6 +118,10 @@ func CanSendFrame(t FrameType, from Sender) bool {
 	case FrameFileData:
 		// 双向。真正的判定在 Server 的 transfer 注册表里。
 		return from == SentByAgent || from == SentByClient
+	case FrameWebToAgent:
+		return from == SentByServer
+	case FrameWebToServer:
+		return from == SentByAgent
 	default:
 		return false
 	}

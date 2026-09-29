@@ -115,6 +115,7 @@ func (s *Server) handleWSAgent(w http.ResponseWriter, r *http.Request) {
 	// 会让一台设备永远显示在线，而这是最难被发现的那类 bug。
 	closeWithCode(ws, code, reason)
 	ac.Close()
+	s.closeWebAgent(ac)
 
 	if sess.pairDeviceID != "" {
 		s.pairs.Unregister(sess.pairDeviceID)
@@ -515,6 +516,19 @@ func (s *agentSession) handlePairBegin(env *protocol.Envelope) error {
 
 func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 	switch env.Type {
+	case protocol.TypeWebStarted, protocol.TypeWebStopped:
+		s.srv.acceptWebReply(s.ac, env)
+		return nil
+	case protocol.TypeWebClose:
+		p, err := protocol.DecodePayload[protocol.WebStreamPayload](env)
+		if err != nil { return nil }
+		id, err := uuid.Parse(p.StreamID)
+		if err != nil { return nil }
+		s.srv.web.mu.Lock()
+		stream := s.srv.web.streams[id]
+		s.srv.web.mu.Unlock()
+		if stream != nil && stream.agent == s.ac { s.srv.closeWebStream(id, false) }
+		return nil
 	case protocol.TypeAgentHeartbeat:
 		return s.handleHeartbeat(env)
 	case protocol.TypeSessionSync:
@@ -550,6 +564,7 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 		s.srv.log.Debug("认证后收到握手阶段消息", "type", env.Type, "device_id", s.ac.DeviceID)
 		return nil
 	case protocol.TypeError:
+		if s.srv.acceptWebReply(s.ac, env) { return nil }
 		// Agent 报错：如果它是对某个客户端请求的响应，转给那个客户端；
 		// 否则只记日志（Agent 主动报的内部错误）。
 		s.routeToClient(env)
@@ -842,6 +857,14 @@ func (s *agentSession) onBinary(data []byte) error {
 	if !s.authed {
 		s.srv.log.Warn("未认证的 Agent 发送二进制帧", "ip", s.ip)
 		return &fatalClose{CloseUnauthorized, "binary_before_auth"}
+	}
+	typ, _, _, err := protocol.PeekFrameHeader(data)
+	if err != nil { return &fatalClose{ClosePolicyViolation, "invalid_frame"} }
+	if typ == protocol.FrameWebToServer {
+		if err := s.srv.webFrame(s.ac, data); err != nil {
+			return &fatalClose{ClosePolicyViolation, "invalid_web_frame"}
+		}
+		return nil
 	}
 
 	// Relay 会校验帧方向（Agent 只能发 stdout/buffer/file）

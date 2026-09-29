@@ -1,0 +1,7 @@
+# Run with: docker compose -f compose.yaml -f deploy/compose.dsh.yaml --profile public up -d
+# Provide a certificate for *.${CODEGATE_DSH_PROXY_DOMAIN} in secrets/dsh-tls.
+services:
+  caddy:
+    volumes:
+      - ./deploy/Caddyfile.dsh.example:/etc/caddy/Caddyfile:ro
+      - ./secrets/dsh-tls:/etc/caddy/dsh-cert:ro

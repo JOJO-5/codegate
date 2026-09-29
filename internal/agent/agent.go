@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -43,6 +44,12 @@ type Agent struct {
 
 	connMu sync.RWMutex
 	conn   *Conn
+	webMu sync.Mutex
+	webProcess *exec.Cmd
+	webHost string
+	webCookie string
+	webStreamsMu sync.Mutex
+	webStreams map[uuid.UUID]*webStream
 
 	// views 记录每个会话当前有哪些 view 在 attach。
 	//
@@ -140,6 +147,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// 退出前把所有会话收干净：ConPTY 句柄随进程消失，
 	// 但显式关闭能让子进程收到正确的终止信号，也避免留下孤儿 conhost。
 	defer a.closeUploads()
+	defer a.stopWeb()
 	defer func() {
 		if n := a.mgr.CloseAll("agent_shutdown"); n > 0 {
 			a.log.Warn("退出时有会话未能正常关闭", "count", n)
@@ -223,6 +231,7 @@ func (a *Agent) runOnce(ctx context.Context) error {
 	// ---- 3. 进入服务状态 ----
 	a.setConn(conn)
 	defer a.clearConn()
+	defer a.closeWebStreams()
 
 	// 会话对账：把本机的会话状态如实上报，让 Server 收敛（§7.4）。
 	// Agent 刚重启时这里是空列表 —— 那正是 Server 需要知道的：
