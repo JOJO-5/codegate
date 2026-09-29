@@ -472,6 +472,7 @@ func (a *Agent) sendHeartbeat(context.Context) error {
 		Sessions: out,
 		Update: a.currentUpdateStatus(),
 		Commands: a.commandInventory(),
+		Roots: a.ws.Roots(),
 	})
 	if err != nil {
 		return err

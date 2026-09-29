@@ -694,6 +694,7 @@ func (s *agentSession) handleHeartbeat(env *protocol.Envelope) error {
 	s.ac.SetSessions(ids)
 	s.ac.SetUpdateStatus(p.Update)
 	s.ac.SetCommands(p.Commands)
+	s.ac.SetRoots(p.Roots)
 	return nil
 }
 

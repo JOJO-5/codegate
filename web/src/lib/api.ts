@@ -273,6 +273,7 @@ export interface DeviceUpdateStatus {
   web_proxy_enabled?: boolean
   agent_version?: string
   commands?: CommandAvailability[]
+  roots?: string[]
   update: AgentUpdateStatus | null
 }
 
