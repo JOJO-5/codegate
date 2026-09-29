@@ -585,6 +585,7 @@ func (s *agentSession) routeToClient(env *protocol.Envelope) bool {
 	// 就发来一帧 stdin —— 而那时订阅关系还没建立，帧会被
 	// Relay 以「未 attach 到该会话」拒掉。用户看到的是
 	// 「终端一连上就输不进字」，而且只在时序巧合时出现。
+	if env.Type == protocol.TypeError && p.release != nil { p.release() }
 	s.applyResponseSideEffects(p, env)
 
 	data, err := protocol.Encode(env)

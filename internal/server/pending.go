@@ -33,6 +33,8 @@ type pendingReq struct {
 	deviceID  string
 	sessionID string
 	kind      protocol.Type
+	// release undoes a provisional attach subscription if no success arrives.
+	release func()
 
 	expiresAt time.Time
 }
@@ -63,6 +65,7 @@ func (p *pendingRegistry) Add(reqID string, r *pendingReq, now time.Time) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if old := p.m[reqID]; old != nil && old.release != nil { old.release() }
 	p.m[reqID] = r
 }
 
@@ -97,6 +100,7 @@ func (p *pendingRegistry) DropClient(c *ClientConn) int {
 	for k, r := range p.m {
 		if r.client == c {
 			delete(p.m, k)
+			if r.release != nil { r.release() }
 			n++
 		}
 	}
@@ -112,6 +116,7 @@ func (p *pendingRegistry) DropDevice(deviceID string) int {
 	for k, r := range p.m {
 		if r.deviceID == deviceID {
 			delete(p.m, k)
+			if r.release != nil { r.release() }
 			n++
 		}
 	}
@@ -136,6 +141,7 @@ func (p *pendingRegistry) sweep(now time.Time) {
 	p.mu.Unlock()
 
 	for _, r := range expired {
+		if r.release != nil { r.release() }
 		sendErrorEnvelope(r.client.TrySendText, nil,
 			protocol.NewRetryableError(protocol.CodeInternal, "请求超时，请重试"))
 	}

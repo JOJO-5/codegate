@@ -24,7 +24,8 @@ func (f *filesTestTerminal) Close() error { select { case <-f.done: default: clo
 func (f *filesTestTerminal) PID() int { return 123 }
 
 func TestFilePathConfinedToSessionWorkspace(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil { t.Fatal(err) }
 	one, two := filepath.Join(root,"one"), filepath.Join(root,"two")
 	if err := os.Mkdir(one,0700); err != nil { t.Fatal(err) }
 	if err := os.Mkdir(two,0700); err != nil { t.Fatal(err) }

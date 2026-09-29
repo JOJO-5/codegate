@@ -237,17 +237,25 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		return
 	}
 
+	// Replay frames precede session.attached on the Agent connection. Subscribe
+	// before forwarding attach so the initial screen is not silently dropped.
+	var release func()
+	if env.Type == protocol.TypeSessionAttach && !s.c.IsAttached(sessionID) {
+		s.srv.reg.Subscribe(sessionID, s.c)
+		release = func() { s.srv.reg.Unsubscribe(sessionID, s.c) }
+	}
 	s.srv.pending.Add(env.RequestID, &pendingReq{
 		client:    s.c,
 		userID:    s.c.UserID,
 		deviceID:  deviceID,
 		sessionID: sessionID,
 		kind:      env.Type,
+		release:   release,
 	}, s.srv.now())
 
 	data, err := protocol.Encode(env)
 	if err != nil {
-		s.srv.pending.Take(env.RequestID)
+		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
 		s.srv.log.Error("编码客户端请求失败", "type", env.Type, "err", err)
 		sendErrorEnvelope(s.c.TrySendText, env,
 			protocol.NewError(protocol.CodeInternal, "internal error"))
@@ -258,7 +266,7 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		// 队列满 = 这台 Agent 的某条客户端连接堵住了。
 		// ★ 必须把待回请求撤掉，否则它会一直挂到 TTL 超时，
 		// 而前端在这 60 秒里什么都等不到。
-		s.srv.pending.Take(env.RequestID)
+		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
 		s.srv.log.Warn("转发请求失败：Agent 发送队列已满",
 			"device_id", deviceID, "type", env.Type)
 		sendErrorEnvelope(s.c.TrySendText, env,
