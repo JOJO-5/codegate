@@ -697,6 +697,7 @@ func loadConfig(path string) (*config.Config, error) {
 		Listen         *string   `json:"listen"`
 		BaseURL        *string   `json:"base_url"`
 		DBPath         *string   `json:"db_path"`
+		AgentUpdatesDir *string `json:"agent_updates_dir"`
 		JWTSecret      *string   `json:"jwt_secret"`
 		AllowSignup    *bool     `json:"allow_signup"`
 		AllowedOrigins *[]string `json:"allowed_origins"`
@@ -724,6 +725,9 @@ func loadConfig(path string) (*config.Config, error) {
 	}
 	if file.DBPath != nil {
 		cfg.DBPath = *file.DBPath
+	}
+	if file.AgentUpdatesDir != nil {
+		cfg.AgentUpdatesDir = *file.AgentUpdatesDir
 	}
 	// 配置文件里的密钥只在环境变量没给时才生效 ——
 	// 环境变量优先，理由同上。

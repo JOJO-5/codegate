@@ -80,8 +80,10 @@ LaunchDaemon 以当前用户身份运行 Agent，二进制位于 `/usr/local/lib
 
 更新 Agent 时重新构建并执行 `install`。卸载脚本仅移除自启服务，保留配置和设备密钥；迁移机器或重装系统时请单独备份状态目录。Linux/macOS 的 CI 已验证 PTY 读写、尺寸、Ctrl+C、关闭与 Go 包测试，但无法替代目标机器的开机和模型凭据验证。
 
-## 空闲时检查更新包（可选）
+## 从 CodeGate Server 获取更新包（可选）
 
-Agent 构建时须注入版本号，例如 `go build -ldflags '-X main.version=v1.2.3' -o bin/codegate-agent ./cmd/codegate-agent`。在 `agent.json` 中加入 `"update_manifest_url": "https://updates.example.com/linux-amd64.json"`，可再加入 `"update_interval": "1h"`。Windows 和 macOS 使用各自 OS/架构的清单 URL；`dev` 构建不会检查更新。更新源由部署者控制，不要使用不可信的地址。
+在 Agent 的 `agent.json` 里设置 `"update_enabled": true`，可选 `"update_interval": "1h"`。Agent 用原有的配对密钥签名 HTTPS 请求，向其 `server_url` 所在的 CodeGate Server 检查自身系统与架构的更新。未配对的设备不能下载；开发版（`dev`）不会检查。构建发布二进制时用 `-ldflags '-X main.version=v1.2.4'` 注入版本号。
 
-清单示例：`{"version":"v1.2.4","os":"linux","arch":"amd64","url":"https://updates.example.com/codegate-agent-v1.2.4-linux-amd64","sha256":"<64 位十六进制 SHA-256>","size":12345678}`。清单与二进制须为同一 HTTPS 主机，不能重定向；版本必须为更高的 `v主.次.修订`，大小不超过 100 MiB。Agent 只在会话管理器没有任何会话时开始下载；下载中若新建会话就取消，完整校验大小及 SHA-256 后暂存于状态目录的 `updates/`。当前版本**只暂存，不自动替换运行中的 Agent**；安装与重启仍需在确认无会话后按上面的安装流程操作。私有 GitHub Release 需要认证，不能直接作为无凭据的下载源，也不要把仓库令牌写入 Agent 配置。
+Docker Compose 把宿主机 `./agent-updates` 只读挂载到 Server 的 `/data/agent-updates`。发布者将二进制放在 `agent-updates/<os>/<arch>/codegate-agent`，Windows 文件名用 `codegate-agent.exe`；同目录的 `version.txt` 写入版本（例如 `v1.2.4`）。合法的 `os` 为 `linux`、`darwin`、`windows`，`arch` 为 `amd64`、`arm64`。文件更新时先替换二进制，最后原子替换版本文件；Server 按实际文件计算 SHA-256 和大小，返回同源 HTTPS 下载地址。每个包上限 100 MiB。请确保 `CODEGATE_BASE_URL` 是 Agent 能访问的 HTTPS 域名，反向代理保留原始 Host。
+
+Agent 只在没有任何会话时下载；下载中创建会话即取消，并校验大小和 SHA-256 后暂存于本机状态目录的 `updates/`。当前版本只暂存，**尚不自动替换二进制或重启 Agent**。三个系统的服务切换和失败回滚需要独立实现；不要把未完成的暂存机制当成已经支持热更新。

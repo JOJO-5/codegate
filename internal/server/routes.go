@@ -37,6 +37,8 @@ func (s *Server) buildRouter() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
+	mux.HandleFunc("GET /api/v1/agent-updates/{os}/{arch}/manifest", s.handleAgentUpdateManifest)
+	mux.HandleFunc("GET /api/v1/agent-updates/{os}/{arch}/binary", s.handleAgentUpdateBinary)
 
 	// ---- 需要 Bearer access token 的端点 ----
 	//

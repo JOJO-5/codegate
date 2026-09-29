@@ -138,3 +138,7 @@ docker compose --profile public up -d --build
 备份时同时保管 `server_data` 中的 SQLite 数据与 `secrets/jwt_secret`；若需要迁移 Windows 设备身份，也备份 Agent 的状态目录。不要使用 `down -v` 做普通重启。
 
 如果已有自己的 HTTPS 反向代理，可以只启动 `server` 服务，将它代理到部署机的 `127.0.0.1:8080`，并照样设置 `CODEGATE_BASE_URL=https://你的域名`。
+
+## Agent 更新包目录
+
+在 Server 部署机的 Compose 安装目录创建 `agent-updates/`，放入各系统和架构的 Agent 二进制及 `version.txt`。Compose 会将其只读挂载给 Server；具体目录结构、版本构建命令和 Agent 配置见 [Unix Agent 指南](DEPLOY-AGENT-UNIX.md#从-codegate-server-获取更新包可选)。更新端点仅接受已配对设备的签名请求，不对浏览器公开包。当前 Agent 只下载、校验和暂存，不会自动重启或替换。

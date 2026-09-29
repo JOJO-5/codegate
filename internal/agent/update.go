@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"github.com/jojo/codegate/internal/protocol"
 	"strings"
 	"time"
 )
@@ -64,7 +66,9 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 		if current != generation { return 1 }
 		return count
 	}
-	path, version, err := stageUpdate(ctx, a.cfg.UpdateManifestURL, a.cfg.StateDir, Version, idle)
+	manifestURL, err := a.updateManifestURL()
+	if err != nil { a.log.Warn("Agent 更新地址无效", "err", err); return }
+	path, version, err := stageUpdate(ctx, manifestURL, a.cfg.StateDir, Version, idle, a.id)
 	if err != nil {
 		if ctx.Err() == nil {
 			a.log.Warn("Agent 更新检查失败", "err", err)
@@ -76,9 +80,19 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 	}
 }
 
+func (a *Agent) updateManifestURL() (string, error) {
+	u, err := url.Parse(a.cfg.ServerURL)
+	if err != nil { return "", err }
+	if u.Scheme == "wss" { u.Scheme = "https" }
+	if u.Scheme != "https" { return "", errors.New("更新仅支持 HTTPS") }
+	u.Path = "/api/v1/agent-updates/" + runtime.GOOS + "/" + runtime.GOARCH + "/manifest"
+	u.RawQuery, u.Fragment = "", ""
+	return u.String(), nil
+}
+
 // stageUpdate never installs or executes downloaded bytes. The caller provides
 // a live session count so a session created during download cancels staging.
-func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion string, sessions func() int) (string, string, error) {
+func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion string, sessions func() int, identity *Identity) (string, string, error) {
 	if sessions() != 0 {
 		return "", "", nil
 	}
@@ -86,7 +100,7 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil {
 		return "", "", errors.New("更新清单必须使用 HTTPS")
 	}
-	data, err := fetchLimited(ctx, manifestURL, 64<<10, sessions)
+	data, err := fetchLimited(ctx, manifestURL, 64<<10, sessions, identity)
 	if err != nil {
 		return "", "", err
 	}
@@ -143,6 +157,7 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	if err != nil {
 		return "", "", err
 	}
+	if identity != nil { signUpdateRequest(req, identity) }
 	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return "", "", err
@@ -200,11 +215,12 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	return target, m.Version, nil
 }
 
-func fetchLimited(ctx context.Context, address string, limit int64, sessions func() int) ([]byte, error) {
+func fetchLimited(ctx context.Context, address string, limit int64, sessions func() int, identity *Identity) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
 	}
+	if identity != nil { signUpdateRequest(req, identity) }
 	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -224,6 +240,14 @@ func fetchLimited(ctx context.Context, address string, limit int64, sessions fun
 		return nil, errors.New("更新清单过大")
 	}
 	return data, nil
+}
+
+func signUpdateRequest(req *http.Request, identity *Identity) {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	payload := protocol.UpdateSigningPayload(req.URL.Host, req.URL.Path, timestamp)
+	req.Header.Set("X-CodeGate-Device", identity.DeviceID)
+	req.Header.Set("X-CodeGate-Timestamp", timestamp)
+	req.Header.Set("X-CodeGate-Signature", base64.StdEncoding.EncodeToString(identity.Sign(payload)))
 }
 
 func newerVersion(candidate, current string) bool {

@@ -216,7 +216,7 @@ type Config struct {
 	ReconnectMax      Duration `json:"reconnect_max,omitempty"`
 
 	// UpdateManifestURL points to a trusted HTTPS manifest for optional idle updates.
-	UpdateManifestURL string `json:"update_manifest_url,omitempty"`
+	UpdateEnabled     bool `json:"update_enabled,omitempty"`
 	UpdateInterval    Duration `json:"update_interval,omitempty"`
 }
 
@@ -296,10 +296,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("agent: server_url 的协议 %q 不支持（应为 wss:// 或 ws://）", u.Scheme)
 	}
 
-	if c.UpdateManifestURL != "" {
-		updateURL, err := url.Parse(c.UpdateManifestURL)
-		if err != nil || updateURL.Scheme != "https" || updateURL.Host == "" || updateURL.User != nil || updateURL.Fragment != "" {
-			return errors.New("agent: update_manifest_url 必须是 HTTPS 地址")
+	if c.UpdateEnabled {
+		if u.Scheme != "wss" && u.Scheme != "https" {
+			return errors.New("agent: 启用更新需要加密的 Server 连接")
 		}
 		if c.UpdateInterval.Std() < time.Minute {
 			return errors.New("agent: update_interval 不能短于 1m")

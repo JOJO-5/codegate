@@ -35,6 +35,7 @@ type Config struct {
 
 	// ---- 存储 ----
 	DBPath string
+	AgentUpdatesDir string // 只读更新仓库；为空时关闭更新端点
 
 	// ---- 认证 ----
 	JWTSecret       []byte
@@ -122,6 +123,9 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	}
 	if v := getenv("CODEGATE_DB_PATH"); v != "" {
 		c.DBPath = v
+	}
+	if v := getenv("CODEGATE_AGENT_UPDATES_DIR"); v != "" {
+		c.AgentUpdatesDir = v
 	}
 	if v := getenv("CODEGATE_LOG_LEVEL"); v != "" {
 		c.LogLevel = v
