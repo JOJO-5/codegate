@@ -102,7 +102,7 @@ $env:CODEGATE_ALLOWED_ORIGINS = 'http://127.0.0.1:8080'
 - 公网部署请配置 HTTPS/WSS、固定的 `CODEGATE_JWT_SECRET_FILE`、`CODEGATE_BASE_URL` 与 `CODEGATE_ALLOWED_ORIGINS`。不要把本机示例中的 `insecure: true` 用于公网。
 - Agent 的 `allowed_roots` 和 `allowed_commands` 必须显式配置。浏览器只应获得你愿意开放的目录和程序。
 - Server 的数据库默认放在平台数据目录；Agent 的设备私钥放在状态目录。迁移设备身份时应妥善保管私钥。
-- Docker 镜像由 main 分支的发布工作流生成；原生 Agent 暂无安装包，Windows 流程和 [Linux/macOS 流程](docs/DEPLOY-AGENT-UNIX.md) 从源码构建。
+- Docker 镜像由 main 分支的发布工作流生成；Server 镜像内嵌六个平台的带版本 Agent 包；登录后的设备页可以生成从自托管 Server 下载的十分钟一次性安装命令。Windows 流程和 [Linux/macOS 流程](docs/DEPLOY-AGENT-UNIX.md) 也支持源码构建。
 
 ## 开发与验证
 

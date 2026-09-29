@@ -833,3 +833,18 @@ func TestSignal(t *testing.T) {
 		t.Errorf("信号数 = %d, 期望 1", n)
 	}
 }
+
+func TestFreezeIfEmptyPreventsNewSessions(t *testing.T) {
+	m := NewManager(func(context.Context, terminal.StartConfig) (terminal.Terminal, error) {
+		return newFakePTY(42), nil
+	}, Config{})
+	req := CreateRequest{DeviceID: uuid.New(), UserID: uuid.New(), Command: "sh", Cwd: ".", Cols: 80, Rows: 24}
+	session, err := m.Create(context.Background(), req)
+	if err != nil { t.Fatal(err) }
+	if m.FreezeIfEmpty() { t.Fatal("froze manager with active session") }
+	if err := m.Close(session.ID, "test"); err != nil { t.Fatal(err) }
+	if !m.FreezeIfEmpty() { t.Fatal("failed to freeze empty manager") }
+	if _, err := m.Create(context.Background(), req); !errors.Is(err, ErrManagerClosed) {
+		t.Fatalf("new session after update barrier: %v", err)
+	}
+}

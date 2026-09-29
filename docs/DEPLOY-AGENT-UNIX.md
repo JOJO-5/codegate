@@ -78,7 +78,7 @@ sh scripts/agent-autostart-macos.sh uninstall
 
 LaunchDaemon 以当前用户身份运行 Agent，二进制位于 `/usr/local/libexec/codegate/codegate-agent`，设备私钥仍留在该用户目录。macOS 的 FileVault 冷启动需要先解锁磁盘，系统才能启动任何守护进程；模型凭据如果只在登录钥匙串里，登录前的 CLI 也可能无法读取。请在目标机器上完成一次重启、未登录状态的设备上线与 TUI 操作验证。
 
-更新 Agent 时重新构建并执行 `install`。卸载脚本仅移除自启服务，保留配置和设备密钥；迁移机器或重装系统时请单独备份状态目录。Linux/macOS 的 CI 已验证 PTY 读写、尺寸、Ctrl+C、关闭与 Go 包测试，但无法替代目标机器的开机和模型凭据验证。
+旧版服务迁移到监督进程时先关闭全部会话，再重新构建新版 Agent 并执行一次 `install`。此后在配置中开启空闲更新。卸载脚本仅移除自启服务，保留配置和设备密钥；迁移机器或重装系统时请单独备份状态目录。Linux/macOS 的 CI 已验证 PTY 读写、尺寸、Ctrl+C、关闭与 Go 包测试，但无法替代目标机器的开机和模型凭据验证。
 
 ## 从 CodeGate Server 获取更新包（可选）
 
@@ -86,4 +86,4 @@ LaunchDaemon 以当前用户身份运行 Agent，二进制位于 `/usr/local/lib
 
 Server 镜像根据仓库根目录的 `VERSION` 自动编译并内嵌 Linux、macOS、Windows 的 amd64/arm64 Agent，更新 Server 镜像后即提供对应版本。每个包上限 100 MiB。请确保 `CODEGATE_BASE_URL` 是 Agent 能访问的 HTTPS 域名，反向代理保留原始 Host。
 
-Agent 只在没有任何会话时下载；下载中创建会话即取消，并校验大小和 SHA-256 后暂存于本机状态目录的 `updates/`。当前版本只暂存，**尚不自动替换二进制或重启 Agent**。三个系统的服务切换和失败回滚需要独立实现；不要把未完成的暂存机制当成已经支持热更新。
+Agent 只在没有任何会话时下载；下载中创建会话即取消。校验大小和 SHA-256 后，监督进程冻结新会话创建并启动新版本；新版本需在 90 秒内完成与 Server 的认证，否则回滚旧版。前台手动 `run` 只暂存，不自动切换。服务脚本必须是使用 `supervise` 的新版。

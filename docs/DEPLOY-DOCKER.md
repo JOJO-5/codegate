@@ -141,4 +141,22 @@ docker compose --profile public up -d --build
 
 ## Agent 更新包
 
-Server 镜像构建时按仓库根目录 `VERSION` 同时交叉编译 Linux、macOS、Windows 的 amd64/arm64 Agent，并将它们放进镜像内只读的 `/opt/codegate/agent-updates`。更新镜像后由 Server 自动提供这六个平台的版本包，无需在宿主机手动复制二进制。发布新版本前递增 `VERSION` 的 `v主.次.修订` 号。Agent 通过已配对设备的签名请求下载。当前 Agent 仍只暂存，切换与回滚由后续运行时逻辑实现。
+Server 镜像构建时按仓库根目录 `VERSION` 同时交叉编译 Linux、macOS、Windows 的 amd64/arm64 Agent，并将它们放进镜像内只读的 `/opt/codegate/agent-updates`。更新镜像后由 Server 自动提供这六个平台的版本包，无需在宿主机手动复制二进制。发布新版本前递增 `VERSION` 的 `v主.次.修订` 号。Agent 通过已配对设备的签名请求下载。使用 `supervise` 开机服务的 Agent 在没有会话时下载校验，冻结新会话创建后启动新版本；若 90 秒内无法通过 Server 认证则继续旧版本，启动后短时间内连续异常退出也会回滚。首次安装应在网页“设备”页选择系统并生成 10 分钟有效的一次性安装命令。
+
+## Agent 首次安装与空闲更新
+
+在已登录的“设备”页选 Windows、Linux 或 macOS，点击生成安装命令，在目标机器执行。安装命令只使用 10 分钟、仅能下载一次；它从当前 Server 下载对应 CPU 架构的二进制并校验 SHA-256，同时保存开机服务脚本。请先为目标机器创建 `agent.json`、运行 `doctor` 和 `pair`，网页确认配对后关闭前台 `run`，再安装开机服务。
+
+Linux / macOS 的服务脚本保存于 `~/.local/share/codegate/agent-autostart.sh`，执行：
+
+```sh
+CODEGATE_AGENT_BINARY="$HOME/.local/bin/codegate-agent" sh "$HOME/.local/share/codegate/agent-autostart.sh" install
+```
+
+Windows 的服务脚本保存于 `%LOCALAPPDATA%\\CodeGate\\agent-autostart.ps1`，在 PowerShell 中执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\CodeGate\\agent-autostart.ps1" install -AgentPath "$env:LOCALAPPDATA\\CodeGate\\bin\\codegate-agent.exe"
+```
+
+将 `"update_enabled": true` 写入 Agent 配置后，服务运行的 `supervise` 命令会在无会话时安全切换。已有采用 `run` 启动的服务需要先手动关闭所有会话，再重新执行新版服务脚本安装一次以切换到 `supervise`；仅前台手动运行的 Agent 会暂存包而不会自行替换。服务器故障时，更新可能在健康检查阶段退回旧版并于下次检查重新尝试。
