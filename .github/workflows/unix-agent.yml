@@ -1,0 +1,44 @@
+name: Unix Agent
+
+on:
+  pull_request:
+    paths:
+      - 'internal/terminal/**'
+      - 'internal/agent/**'
+      - 'internal/session/**'
+      - 'cmd/codegate-agent/**'
+      - 'scripts/agent-autostart-linux.sh'
+      - 'scripts/agent-autostart-macos.sh'
+      - 'web/src/views/DevicesView.vue'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/unix-agent.yml'
+
+jobs:
+  agent:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check boot scripts
+        run: |
+          sh -n scripts/agent-autostart-linux.sh
+          sh -n scripts/agent-autostart-macos.sh
+          if [ "$(uname -s)" = Darwin ]; then
+            sh scripts/agent-autostart-macos.sh render > /tmp/codegate-agent.plist
+            plutil -lint /tmp/codegate-agent.plist
+          fi
+      - name: Build Agent
+        run: go build ./cmd/codegate-agent
+      - name: Test PTY integration
+        run: go test ./internal/terminal -run TestUnixPTY -count=1 -timeout 2m -v
+      - name: Test Go packages
+        run: go test ./... -timeout 5m

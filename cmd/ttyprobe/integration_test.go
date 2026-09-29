@@ -244,6 +244,9 @@ func TestProbeResizeRepeatedly(t *testing.T) {
 // 这是解释 0x03 行为的钥匙，也是 P2 报告要留档的原始数据：
 // 它告诉我们 ConPTY 交给子进程的默认输入模式到底是什么。
 func TestProbeConsoleMode(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ConPTY-specific behavior")
+	}
 	s := startProbe(t, 80, 24)
 	out := s.waitFor("MODE stdin=", 20*time.Second)
 
@@ -265,6 +268,9 @@ func TestProbeConsoleMode(t *testing.T) {
 // TUI（vim / htop / Claude Code / Codex）启动时都会自己设 raw mode，
 // 所以这条路径覆盖的正是 CodeGate 最主要的用例。
 func TestProbeCtrlCInRawMode(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ConPTY-specific behavior")
+	}
 	s := startProbe(t, 80, 24)
 	s.waitFor("SIZE", 20*time.Second)
 
@@ -297,6 +303,9 @@ func TestProbeCtrlCInRawMode(t *testing.T) {
 // 这个测试断言的就是这个（不太好看的）现状 —— 它是一条**回归基线**：
 // 哪天 ConPTY 改了行为，它会红，提醒我们重新评估 Signal 的实现。
 func TestProbeCtrlCInCookedMode(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ConPTY-specific behavior")
+	}
 	s := startProbe(t, 80, 24)
 	s.waitFor("SIZE", 20*time.Second)
 
@@ -364,6 +373,9 @@ func TestProbeWidthSamples(t *testing.T) {
 // 这个测试把「不 EOF」本身作为断言 —— 如果哪天它开始 EOF 了，
 // 说明 ConPTY 行为变了，上面的结论要重新验证。
 func TestProbeReadDoesNotEOFOnExit(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ConPTY-specific behavior")
+	}
 	s := startProbe(t, 80, 24)
 	s.waitFor("SIZE", 20*time.Second)
 
