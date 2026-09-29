@@ -141,4 +141,4 @@ docker compose --profile public up -d --build
 
 ## Agent 更新包目录
 
-在 Server 部署机的 Compose 安装目录创建 `agent-updates/`，放入各系统和架构的 Agent 二进制及 `version.txt`。Compose 会将其只读挂载给 Server；具体目录结构、版本构建命令和 Agent 配置见 [Unix Agent 指南](DEPLOY-AGENT-UNIX.md#从-codegate-server-获取更新包可选)。更新端点仅接受已配对设备的签名请求，不对浏览器公开包。当前 Agent 只下载、校验和暂存，不会自动重启或替换。
+一键安装脚本会在 Server 部署机的 Compose 安装目录创建 `agent-updates/`；从源码部署时先执行 `mkdir -p agent-updates && chmod 755 agent-updates`。把各系统和架构的 Agent 二进制及 `version.txt` 放进去，并确保子目录可遍历、文件可由容器内 uid 10001 读取（例如目录 755、文件 644）。Compose 会将其只读挂载给 Server；具体目录结构、版本构建命令和 Agent 配置见 [Unix Agent 指南](DEPLOY-AGENT-UNIX.md#从-codegate-server-获取更新包可选)。更新端点仅接受已配对设备的签名请求，不对浏览器公开包。当前 Agent 只下载、校验和暂存，不会自动重启或替换。

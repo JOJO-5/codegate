@@ -41,6 +41,7 @@ server.yaml
 
 # ---- Docker Compose 本地密钥 ----
 /secrets/
+/agent-updates/
 
 # ---- 探针/调试产物 ----
 /captures/
