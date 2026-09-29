@@ -139,6 +139,6 @@ docker compose --profile public up -d --build
 
 如果已有自己的 HTTPS 反向代理，可以只启动 `server` 服务，将它代理到部署机的 `127.0.0.1:8080`，并照样设置 `CODEGATE_BASE_URL=https://你的域名`。
 
-## Agent 更新包目录
+## Agent 更新包
 
-一键安装脚本会在 Server 部署机的 Compose 安装目录创建 `agent-updates/`；从源码部署时先执行 `mkdir -p agent-updates && chmod 755 agent-updates`。把各系统和架构的 Agent 二进制及 `version.txt` 放进去，并确保子目录可遍历、文件可由容器内 uid 10001 读取（例如目录 755、文件 644）。Compose 会将其只读挂载给 Server；具体目录结构、版本构建命令和 Agent 配置见 [Unix Agent 指南](DEPLOY-AGENT-UNIX.md#从-codegate-server-获取更新包可选)。更新端点仅接受已配对设备的签名请求，不对浏览器公开包。当前 Agent 只下载、校验和暂存，不会自动重启或替换。
+Server 镜像构建时按仓库根目录 `VERSION` 同时交叉编译 Linux、macOS、Windows 的 amd64/arm64 Agent，并将它们放进镜像内只读的 `/opt/codegate/agent-updates`。更新镜像后由 Server 自动提供这六个平台的版本包，无需在宿主机手动复制二进制。发布新版本前递增 `VERSION` 的 `v主.次.修订` 号。Agent 通过已配对设备的签名请求下载。当前 Agent 仍只暂存，切换与回滚由后续运行时逻辑实现。

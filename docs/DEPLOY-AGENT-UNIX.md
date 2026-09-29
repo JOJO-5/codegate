@@ -84,6 +84,6 @@ LaunchDaemon 以当前用户身份运行 Agent，二进制位于 `/usr/local/lib
 
 在 Agent 的 `agent.json` 里设置 `"update_enabled": true`，可选 `"update_interval": "1h"`。Agent 用原有的配对密钥签名 HTTPS 请求，向其 `server_url` 所在的 CodeGate Server 检查自身系统与架构的更新。未配对的设备不能下载；开发版（`dev`）不会检查。构建发布二进制时用 `-ldflags '-X main.version=v1.2.4'` 注入版本号。
 
-Docker Compose 把宿主机 `./agent-updates` 只读挂载到 Server 的 `/data/agent-updates`。发布者将二进制放在 `agent-updates/<os>/<arch>/codegate-agent`，Windows 文件名用 `codegate-agent.exe`；同目录的 `version.txt` 写入版本（例如 `v1.2.4`）。合法的 `os` 为 `linux`、`darwin`、`windows`，`arch` 为 `amd64`、`arm64`。文件更新时先替换二进制，最后原子替换版本文件；Server 按实际文件计算 SHA-256 和大小，返回同源 HTTPS 下载地址。每个包上限 100 MiB。请确保 `CODEGATE_BASE_URL` 是 Agent 能访问的 HTTPS 域名，反向代理保留原始 Host。
+Server 镜像根据仓库根目录的 `VERSION` 自动编译并内嵌 Linux、macOS、Windows 的 amd64/arm64 Agent，更新 Server 镜像后即提供对应版本。每个包上限 100 MiB。请确保 `CODEGATE_BASE_URL` 是 Agent 能访问的 HTTPS 域名，反向代理保留原始 Host。
 
 Agent 只在没有任何会话时下载；下载中创建会话即取消，并校验大小和 SHA-256 后暂存于本机状态目录的 `updates/`。当前版本只暂存，**尚不自动替换二进制或重启 Agent**。三个系统的服务切换和失败回滚需要独立实现；不要把未完成的暂存机制当成已经支持热更新。
