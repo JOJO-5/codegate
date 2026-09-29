@@ -8,14 +8,14 @@
  * 否则他会对着一个显示"运行中"的会话点进去，然后发现连不上。
  */
 
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { useSessionsStore } from '../stores/sessions'
 import { useConnStore } from '../stores/conn'
 import { api, type DeviceUpdateStatus } from '../lib/api'
 import { humanizeError, platformLabel, relativeTime, statusKind, statusLabel, toMs } from '../lib/format'
-import { PRESETS } from '../lib/commands'
+import { PRESETS, type CommandPreset } from '../lib/commands'
 import { estimateTerminalSize } from '../lib/viewport'
 import { MessageType, isLiveStatus, type SessionSummary } from '../lib/protocol'
 
@@ -68,7 +68,25 @@ const sessionName = ref('')
 const creating = ref(false)
 const createError = ref<string | null>(null)
 
-const selectedPreset = computed(() => PRESETS.find((p) => p.id === presetId.value) ?? PRESETS[0])
+// The Agent reports what is configured and actually available on this host.
+// Older Agents do not send an inventory; keep the legacy list with a warning.
+const reportedCommands = computed(() => updateInfo.value?.commands)
+const selectableCommands = computed<CommandPreset[]>(() => {
+  if (reportedCommands.value === undefined) return PRESETS
+  return reportedCommands.value.filter(c => c.allowed && c.installed).map(c => ({
+    id: c.id, label: c.label, kind: c.kind,
+    hint: PRESETS.find(p => p.id === c.id)?.hint ?? '本机允许的命令',
+    ...(c.resume ? { resume: true } : {}),
+  }))
+})
+const detectedUnapproved = computed(() =>
+  (reportedCommands.value ?? []).filter(c => c.installed && !c.allowed),
+)
+const selectedPreset = computed(() => selectableCommands.value.find(p => p.id === presetId.value))
+const selectedWebURL = computed(() => reportedCommands.value?.find(c => c.id === presetId.value && c.allowed)?.web_url)
+watch(selectableCommands, commands => {
+  if (!commands.some(c => c.id === presetId.value)) presetId.value = commands[0]?.id ?? ''
+})
 
 /**
  * cwd 按设备记住上次用的值。
@@ -336,7 +354,7 @@ function canOpen(s: SessionSummary): boolean {
         <div class="field">
           <label for="preset">命令</label>
           <select id="preset" v-model="presetId" :disabled="creating">
-            <option v-for="p in PRESETS" :key="p.id" :value="p.id">
+            <option v-for="p in selectableCommands" :key="p.id" :value="p.id">
               {{ p.label }} —— {{ p.hint }}
             </option>
           </select>
@@ -369,6 +387,20 @@ function canOpen(s: SessionSummary): boolean {
           />
         </div>
 
+        <div v-if="reportedCommands === undefined" class="notice notice--warn small">
+          当前 Agent 尚未上报本机命令清单；预置列表仅供旧版本兼容，是否可运行仍由本机 allowed_commands 决定。
+        </div>
+        <div v-else-if="selectableCommands.length === 0" class="notice notice--warn small">
+          本机没有已授权且可找到的命令。请检查 Agent 的 allowed_commands 和开机服务使用的 PATH。
+        </div>
+        <div v-if="selectedWebURL" class="notice small">
+          这款 CLI 另有网页界面：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。它由目标机器或你的反向代理单独提供，需要自行登录。
+        </div>
+        <div v-if="detectedUnapproved.length" class="notice small">
+          检测到但尚未授权：{{ detectedUnapproved.map(c => c.label).join('、') }}。在本机 agent.json 的 allowed_commands 中配置后才能从网页启动。
+          DSH 还需先安装 TUI profile；仅找到 dsh 命令并不代表 TUI 已就绪。
+        </div>
+
         <!-- Windows shell 的 ConPTY 中断限制。 -->
         <div v-if="selectedPreset?.kind === 'shell' && device?.platform === 'windows'" class="notice notice--warn">
           <strong>{{ selectedPreset.label }}</strong> 属于 shell 类程序。在 Windows 上，
@@ -379,7 +411,7 @@ function canOpen(s: SessionSummary): boolean {
         <div v-if="createError" class="notice notice--err">{{ createError }}</div>
 
         <div class="row">
-          <button class="btn btn--primary" type="submit" :disabled="creating || !conn.isOpen">
+          <button class="btn btn--primary" type="submit"  :disabled="creating || !conn.isOpen || selectableCommands.length === 0">
             <span v-if="creating" class="spinner" />
             创建并进入
           </button>

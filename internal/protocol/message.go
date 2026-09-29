@@ -206,6 +206,7 @@ type SessionSummary struct {
 type HeartbeatPayload struct {
 	Sessions []HeartbeatSession `json:"sessions"`
 	Update AgentUpdateStatus `json:"update"`
+	Commands []CommandAvailability `json:"commands,omitempty"`
 }
 
 // AgentUpdateStatus reports only observable Agent state, never a guessed
@@ -223,6 +224,19 @@ type AgentUpdateFailure struct {
 	Version string `json:"version"`
 	Reason string `json:"reason"`
 	OccurredAt int64 `json:"occurred_at"`
+}
+
+// CommandAvailability is a fixed, display-only inventory. The Agent still
+// checks allowed_commands when creating a session; a detected binary does not
+// grant execution rights.
+type CommandAvailability struct {
+	ID string `json:"id"`
+	Label string `json:"label"`
+	Kind string `json:"kind"`
+	Installed bool `json:"installed"`
+	Allowed bool `json:"allowed"`
+	Resume bool `json:"resume,omitempty"`
+	WebURL string `json:"web_url,omitempty"`
 }
 
 // HeartbeatSession 是心跳里的会话摘要（只放对账必需的字段，尽量小）。

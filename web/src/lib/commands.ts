@@ -66,6 +66,12 @@ export const PRESETS: CommandPreset[] = [
     kind: 'tui',
   },
   {
+    id: 'dsh',
+    label: 'DeepSeek Harness',
+    hint: '需要先安装 DSH TUI profile（如 dsh-code）',
+    kind: 'tui',
+  },
+  {
     id: 'shell',
     label: 'Shell',
     hint: 'cmd / PowerShell —— 注意 Ctrl+C 在 Windows 上无法中断它',

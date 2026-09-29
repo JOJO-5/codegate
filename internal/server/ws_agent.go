@@ -678,6 +678,7 @@ func (s *agentSession) handleHeartbeat(env *protocol.Envelope) error {
 	// 整体替换天然收敛：Agent 说它有什么，就是什么。
 	s.ac.SetSessions(ids)
 	s.ac.SetUpdateStatus(p.Update)
+	s.ac.SetCommands(p.Commands)
 	return nil
 }
 

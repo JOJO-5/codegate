@@ -104,6 +104,8 @@ $env:CODEGATE_ALLOWED_ORIGINS = 'http://127.0.0.1:8080'
 - Server 的数据库默认放在平台数据目录；Agent 的设备私钥放在状态目录。迁移设备身份时应妥善保管私钥。
 - Docker 镜像由 main 分支的发布工作流生成；Server 镜像内嵌六个平台的带版本 Agent 包；登录后的设备页可以生成从自托管 Server 下载的十分钟一次性安装命令。Windows 流程和 [Linux/macOS 流程](docs/DEPLOY-AGENT-UNIX.md) 也支持源码构建。
 
+已授权的普通 Shell 和编程 CLI 都可作为终端会话运行。新版 Agent 会报告本机已安装的常见 CLI，但扫描结果不自动授权；DeepSeek Harness 的 TUI 与独立 Web UI 接入见 [部署文档](docs/DEPLOY-DOCKER.md#终端与-dsh)。
+
 ## 开发与验证
 
 ```powershell

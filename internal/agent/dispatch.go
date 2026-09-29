@@ -458,6 +458,7 @@ func (a *Agent) sendHeartbeat(context.Context) error {
 	env, err := protocol.NewEnvelope(protocol.TypeAgentHeartbeat, protocol.HeartbeatPayload{
 		Sessions: out,
 		Update: a.currentUpdateStatus(),
+		Commands: a.commandInventory(),
 	})
 	if err != nil {
 		return err
