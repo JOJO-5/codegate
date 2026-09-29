@@ -185,25 +185,31 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">查看完整配置示例</a>。
         </div>
 
-        <div v-else class="notice notice--warn">
-          {{ selectedOS === 'linux' ? 'Linux' : 'macOS' }} 目前还不能作为被控电脑接入：Agent 的终端功能只在 Windows 上实现。
-          如果要在这台机器部署 Server，可以先安装并启动 Docker、Compose，运行 <code class="mono">gh auth login</code>，
-          再执行下面的命令。私有仓库和镜像需要读取权限。
-          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">{{ serverInstallCommand }}</pre>
-          <button class="btn btn--sm" type="button" @click="copyServerCommand">
-            {{ copied ? '已复制' : '复制 Server 安装命令' }}
-          </button>
-          <span v-if="copyError" role="alert">{{ copyError }}</span>
-          <div class="small" style="margin-top: 8px">
-            这条命令部署的是 Server，不会在 Linux/macOS 上安装可配对的 Agent。
-            公网域名及 HTTPS 设置见
-            <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">部署指南</a>。
+        <div v-else class="notice notice--info">
+          在目标 {{ selectedOS === 'linux' ? 'Linux' : 'macOS' }} 电脑的仓库根目录构建并配对 Agent：
+          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">go build -o bin/codegate-agent ./cmd/codegate-agent
+./bin/codegate-agent doctor
+./bin/codegate-agent pair</pre>
+          先配置
+          <code class="mono">{{ selectedOS === 'linux' ? '~/.config/codegate/agent.json' : '~/Library/Application Support/codegate/agent.json' }}</code>
+          中的 Server 地址、允许目录和命令。配对后可运行
+          <code class="mono">./bin/codegate-agent run</code>，或安装登录前自启：
+          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">{{ selectedOS === 'linux' ? 'sh scripts/agent-autostart-linux.sh install' : 'sh scripts/agent-autostart-macos.sh install' }}</pre>
+          <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-AGENT-UNIX.md" target="_blank" rel="noopener noreferrer">查看 Linux/macOS Agent 完整配置</a>。
+          <div class="small" style="margin-top: 10px">
+            若要在这台机器另外部署 Server，可安装 Docker、Compose，执行 <code class="mono">gh auth login</code> 后运行：
+            <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">{{ serverInstallCommand }}</pre>
+            <button class="btn btn--sm" type="button" @click="copyServerCommand">
+              {{ copied ? '已复制' : '复制 Server 安装命令' }}
+            </button>
+            <span v-if="copyError" role="alert">{{ copyError }}</span>
+            <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">Server 部署指南</a>。
           </div>
         </div>
       </div>
 
       <!-- 第一步：输入配对码 -->
-      <form v-if="preview === null && selectedOS === 'windows'" class="stack" @submit.prevent="submitCode">
+      <form v-if="preview === null" class="stack" @submit.prevent="submitCode">
         <div class="field">
           <label for="paircode">配对码</label>
           <input
