@@ -89,6 +89,7 @@ type Manager struct {
 	cfg      Config
 	now      func() time.Time // 测试可注入
 	closed   bool
+	generation uint64 // increases on each successful Create, even if the session closes
 }
 
 // NewManager 创建一个 Manager。factory 为 nil 时 Create 会直接报错。
@@ -152,6 +153,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (*Session, erro
 		return nil, fmt.Errorf("%w: 上限 %d", ErrLimitReached, m.cfg.MaxSessions)
 	}
 	m.sessions[s.ID] = s
+	m.generation++
 	m.mu.Unlock()
 
 	return s, nil
@@ -197,6 +199,14 @@ func (m *Manager) ListByDevice(deviceID uuid.UUID) []*Session {
 		}
 	}
 	return out
+}
+
+// UpdateState returns a count and creation generation under one lock.
+// A downloader can reject a package if a session was created and closed during transfer.
+func (m *Manager) UpdateState() (int, uint64) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.sessions), m.generation
 }
 
 // Count 返回当前会话数。

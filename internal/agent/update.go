@@ -55,10 +55,16 @@ func (a *Agent) updateLoop(ctx context.Context) {
 func (a *Agent) checkUpdate(ctx context.Context) {
 	// Count includes retained exited sessions: their scrollback must remain
 	// available until the user closes them or retention reaps them.
-	if a.mgr.Count() != 0 {
+	count, generation := a.mgr.UpdateState()
+	if count != 0 {
 		return
 	}
-	path, version, err := stageUpdate(ctx, a.cfg.UpdateManifestURL, a.cfg.StateDir, Version, a.mgr.Count)
+	idle := func() int {
+		count, current := a.mgr.UpdateState()
+		if current != generation { return 1 }
+		return count
+	}
+	path, version, err := stageUpdate(ctx, a.cfg.UpdateManifestURL, a.cfg.StateDir, Version, idle)
 	if err != nil {
 		if ctx.Err() == nil {
 			a.log.Warn("Agent 更新检查失败", "err", err)

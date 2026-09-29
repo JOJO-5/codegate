@@ -34,6 +34,8 @@ func TestStageUpdateRequiresIdleAndValidChecksum(t *testing.T) {
 	sum := sha256.Sum256(payload)
 	var hits atomic.Int32
 	var corrupt atomic.Bool
+	var interrupted atomic.Bool
+	var interruptDownload atomic.Bool
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -46,6 +48,7 @@ func TestStageUpdateRequiresIdleAndValidChecksum(t *testing.T) {
 			})
 			return
 		}
+		if interruptDownload.Load() { interrupted.Store(true) }
 		_, _ = w.Write(payload)
 	}))
 	defer server.Close()
@@ -64,6 +67,16 @@ func TestStageUpdateRequiresIdleAndValidChecksum(t *testing.T) {
 		t.Fatalf("bad checksum accepted: path=%q err=%v", path, err)
 	}
 	corrupt.Store(false)
+	interruptDownload.Store(true)
+	path, _, err = stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func() int {
+		if interrupted.Load() { return 1 }
+		return 0
+	})
+	if err == nil || path != "" {
+		t.Fatalf("session opened during download: path=%q err=%v", path, err)
+	}
+	interruptDownload.Store(false)
+	interrupted.Store(false)
 	path, version, err := stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func()int{return 0})
 	if err != nil || path == "" || version != "v1.2.4" {
 		t.Fatalf("valid artifact not staged: path=%q version=%q err=%v", path, version, err)
