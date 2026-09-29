@@ -147,12 +147,13 @@ func (s *clientSession) onText(data []byte) error {
 		protocol.TypeSessionAttach, protocol.TypeSessionDetach, protocol.TypeSessionClose,
 		protocol.TypeSessionResize, protocol.TypeSessionSignal,
 		protocol.TypeSessionClaimControl,
-		protocol.TypeFileList, protocol.TypeFileStat, protocol.TypeFileRead, protocol.TypeFileWrite:
+		protocol.TypeFileList, protocol.TypeFileStat, protocol.TypeFileRead, protocol.TypeFileWrite,
+		protocol.TypeFileCancel:
 		s.routeRequest(env)
 		return nil
 
 
-	case protocol.TypeFileAck, protocol.TypeFileCancel:
+	case protocol.TypeFileAck:
 		// 这两个是流控/取消通知，没有对应的实现，忽略即可。
 		return nil
 
@@ -338,16 +339,18 @@ func (s *clientSession) resolveTarget(env *protocol.Envelope) (string, string, e
 // 而 payload 里的是权威字段。不同客户端可能只填其中一个，
 // 所以两个都认。
 func sessionIDOf(env *protocol.Envelope) string {
-	if env.SessionID != "" {
-		return env.SessionID
-	}
 	if len(env.Payload) == 0 {
 		return ""
 	}
 	var p struct {
 		SessionID string `json:"session_id"`
 	}
-	if err := json.Unmarshal(env.Payload, &p); err != nil {
+	if err := json.Unmarshal(env.Payload, &p); err != nil || p.SessionID == "" {
+		return ""
+	}
+	// The payload is forwarded unchanged to the Agent. Never authorize the
+	// envelope's session and execute against a different payload session.
+	if env.SessionID != "" && env.SessionID != p.SessionID {
 		return ""
 	}
 	return p.SessionID

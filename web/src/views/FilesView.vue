@@ -135,8 +135,10 @@ async function upload(): Promise<void> {
     selected.value = null
     if (picker.value) picker.value.value = ''
     await list()
-  } catch (e) { error.value = humanizeError(e) }
-  finally { uploading.value = false }
+  } catch (e) {
+    error.value = humanizeError(e)
+    if (conn.isOpen) void conn.request(MessageType.FileCancel, { session_id: props.id, transfer_id: uploadId }, props.id).catch(() => {})
+  } finally { uploading.value = false }
 }
 
 onMounted(async () => {

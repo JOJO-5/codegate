@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -25,6 +26,7 @@ type fileUpload struct {
 	written int64
 	overwrite bool
 	sessionID string
+	createdAt time.Time
 }
 
 // filePath confines file access to both the configured workspace and this
@@ -159,7 +161,7 @@ func (a *Agent) onFileWrite(env *protocol.Envelope) {
 		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) { a.replyError(env, statErr); return }
 		temp, err := os.CreateTemp(filepath.Dir(target), ".codegate-upload-*")
 		if err != nil { a.replyError(env, err); return }
-		u = &fileUpload{file: temp, temp: temp.Name(), target: target, size: req.Size, overwrite: req.Overwrite, sessionID: req.SessionID}
+		u = &fileUpload{file: temp, temp: temp.Name(), target: target, size: req.Size, overwrite: req.Overwrite, sessionID: req.SessionID, createdAt: time.Now()}
 		a.uploads[req.UploadID] = u
 	}
 	if u.sessionID != req.SessionID || u.target != target || u.size != req.Size || u.written != req.Offset || u.overwrite != req.Overwrite {
@@ -196,4 +198,30 @@ func (a *Agent) cancelUpload(id string) {
 	if u.file != nil { _ = u.file.Close() }
 	_ = os.Remove(u.temp)
 	delete(a.uploads, id)
+}
+
+func (a *Agent) onFileCancel(env *protocol.Envelope) {
+	req, err := protocol.DecodePayload[protocol.FileCancelPayload](env)
+	if err != nil { a.replyError(env, err); return }
+	if _, err := a.filePath(req.SessionID, ""); err != nil { a.replyError(env, err); return }
+	a.uploadMu.Lock()
+	if u := a.uploads[req.TransferID]; u != nil && u.sessionID == req.SessionID {
+		a.cancelUpload(req.TransferID)
+	}
+	a.uploadMu.Unlock()
+	a.reply(env, protocol.TypeFileWriteDone, protocol.FileWriteDonePayload{})
+}
+
+func (a *Agent) reapUploads() {
+	a.uploadMu.Lock()
+	defer a.uploadMu.Unlock()
+	for id, u := range a.uploads {
+		if time.Since(u.createdAt) > 10*time.Minute { a.cancelUpload(id) }
+	}
+}
+
+func (a *Agent) closeUploads() {
+	a.uploadMu.Lock()
+	defer a.uploadMu.Unlock()
+	for id := range a.uploads { a.cancelUpload(id) }
 }

@@ -51,6 +51,8 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 		a.onFileRead(env)
 	case protocol.TypeFileWrite:
 		a.onFileWrite(env)
+	case protocol.TypeFileCancel:
+		a.onFileCancel(env)
 	case protocol.TypePing:
 		a.reply(env, protocol.TypePong, nil)
 	case protocol.TypePong:
@@ -353,8 +355,7 @@ func (a *Agent) onSessionResize(env *protocol.Envelope) {
 		a.replyError(env, err)
 		return
 	}
-	// resize 是高频操作（拖窗口），成功时**不回响应** ——
-	// 回了会让 Server 和前端多出一堆无用的往返。
+	a.reply(env, protocol.TypeSessionInfo, protocol.SessionCreatedPayload{Session: sess.Summary()})
 }
 
 func (a *Agent) onSessionSignal(env *protocol.Envelope) {
@@ -386,6 +387,7 @@ func (a *Agent) onSessionSignal(env *protocol.Envelope) {
 	}
 
 	a.log.Info("已投递信号", "session", sid, "signal", sig)
+	a.reply(env, protocol.TypeSessionInfo, protocol.SessionCreatedPayload{Session: sess.Summary()})
 }
 
 // ---------------------------------------------------------------------------

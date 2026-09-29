@@ -131,6 +131,7 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// 退出前把所有会话收干净：ConPTY 句柄随进程消失，
 	// 但显式关闭能让子进程收到正确的终止信号，也避免留下孤儿 conhost。
+	defer a.closeUploads()
 	defer func() {
 		if n := a.mgr.CloseAll("agent_shutdown"); n > 0 {
 			a.log.Warn("退出时有会话未能正常关闭", "count", n)
@@ -250,6 +251,7 @@ func (a *Agent) reapLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			a.reapUploads()
 			if n := a.mgr.Reap(); n > 0 {
 				a.log.Debug("回收已退出的会话", "count", n)
 			}

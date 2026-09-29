@@ -462,6 +462,7 @@ type FileWriteDonePayload struct {
 
 // FileCancelPayload 取消一次传输。
 type FileCancelPayload struct {
+	SessionID string `json:"session_id"`
 	TransferID string `json:"transfer_id"`
 	Reason     string `json:"reason,omitempty"`
 }
