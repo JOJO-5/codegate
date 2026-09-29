@@ -17,7 +17,7 @@ import { onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { humanizeError, platformGlyph, platformLabel, relativeTime, toMs } from '../lib/format'
-import type { PairPreview } from '../lib/api'
+import { api, type PairPreview } from '../lib/api'
 
 const devices = useDevicesStore()
 
@@ -32,6 +32,41 @@ const onboardingOS: OnboardingOS[] = ['windows', 'linux', 'macos']
 const selectedOS = ref<OnboardingOS>('windows')
 const copied = ref(false)
 const copyError = ref('')
+const installCommand = ref('')
+const installBusy = ref(false)
+const installError = ref('')
+const installCopied = ref(false)
+
+function chooseOS(os: OnboardingOS): void {
+  selectedOS.value = os
+  installCommand.value = ''
+  installError.value = ''
+}
+
+async function generateInstallCommand(): Promise<void> {
+  installBusy.value = true
+  installError.value = ''
+  installCommand.value = ''
+  try {
+    const os = selectedOS.value === 'macos' ? 'darwin' : selectedOS.value
+    const result = await api.installTicket(os)
+    installCommand.value = result.command
+    installCopied.value = false
+  } catch (e) {
+    installError.value = humanizeError(e)
+  } finally {
+    installBusy.value = false
+  }
+}
+
+async function copyInstallCommand(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(installCommand.value)
+    installCopied.value = true
+  } catch {
+    installError.value = '复制失败，请手动选择命令。'
+  }
+}
 const serverInstallCommand =
   'bash -o pipefail -c "gh api -H \'Accept: application/vnd.github.raw+json\' repos/JOJO-5/codegate/contents/deploy/install-compose.sh | sh"'
 
@@ -163,38 +198,46 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
               type="button"
               :aria-pressed="selectedOS === os"
               :class="selectedOS === os ? 'btn--primary' : ''"
-              @click="selectedOS = os"
+              @click="chooseOS(os)"
             >
               {{ os === 'windows' ? 'Windows' : os === 'linux' ? 'Linux' : 'macOS' }}
             </button>
           </div>
         </div>
 
+        <div class="stack">
+          <button class="btn btn--primary" type="button" :disabled="installBusy" @click="generateInstallCommand">
+            {{ installBusy ? '生成中…' : '生成从本 Server 下载 Agent 的命令' }}
+          </button>
+          <div v-if="installError" class="notice notice--err">{{ installError }}</div>
+          <div v-if="installCommand" class="notice notice--info">
+            仅限所选系统，10 分钟内使用一次。运行后配置工作目录和命令，再配对。
+            <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">{{ installCommand }}</pre>
+            <button class="btn btn--sm" type="button" @click="copyInstallCommand">{{ installCopied ? '已复制' : '复制安装命令' }}</button>
+          </div>
+        </div>
+
         <div v-if="selectedOS === 'windows'" class="notice notice--info">
-          在目标 Windows 电脑上从
-          <a href="https://github.com/JOJO-5/codegate" target="_blank" rel="noopener noreferrer">私有仓库</a>
-          在仓库根目录构建原生 Agent：
-          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">go build -o bin/codegate-agent.exe ./cmd/codegate-agent
-.\bin\codegate-agent.exe doctor
-.\bin\codegate-agent.exe pair</pre>
+          在目标 Windows 电脑运行上方命令安装 Agent。安装完成后先配置 Agent，再执行：
+          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">&amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" doctor
+&amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" pair</pre>
           运行前先配置 <code class="mono">%APPDATA%\CodeGate\agent.json</code> 中的 Server 地址、工作目录和允许的命令。
           运行 <code class="mono">pair</code> 后，把输出的配对码填在下面。绑定完成后运行
-          <code class="mono">.\bin\codegate-agent.exe run</code>。若希望开机后未解锁也能使用，可在仓库根目录执行
-          <code class="mono">powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-autostart.ps1 install</code>
+          <code class="mono">&amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" run</code>。若希望开机后未解锁也能使用，可在仓库根目录执行
+          <code class="mono">powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\CodeGate\agent-autostart.ps1" install -AgentPath "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe"</code>
           （输入当前 Windows 账号密码，不是 PIN；先关闭手动运行的 Agent）。
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">查看完整配置示例</a>。
         </div>
 
         <div v-else class="notice notice--info">
-          在目标 {{ selectedOS === 'linux' ? 'Linux' : 'macOS' }} 电脑的仓库根目录构建并配对 Agent：
-          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">go build -o bin/codegate-agent ./cmd/codegate-agent
-./bin/codegate-agent doctor
-./bin/codegate-agent pair</pre>
+          在目标 {{ selectedOS === 'linux' ? 'Linux' : 'macOS' }} 电脑运行上方命令安装 Agent，然后配置 Agent，执行：
+          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">~/.local/bin/codegate-agent doctor
+~/.local/bin/codegate-agent pair</pre>
           先配置
           <code class="mono">{{ selectedOS === 'linux' ? '~/.config/codegate/agent.json' : '~/Library/Application Support/codegate/agent.json' }}</code>
           中的 Server 地址、允许目录和命令。配对后可运行
-          <code class="mono">./bin/codegate-agent run</code>，或安装登录前自启：
-          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">{{ selectedOS === 'linux' ? 'sh scripts/agent-autostart-linux.sh install' : 'sh scripts/agent-autostart-macos.sh install' }}</pre>
+          <code class="mono">~/.local/bin/codegate-agent run</code>，或安装登录前自启：
+          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">CODEGATE_AGENT_BINARY="$HOME/.local/bin/codegate-agent" sh "$HOME/.local/share/codegate/agent-autostart.sh" install</pre>
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-AGENT-UNIX.md" target="_blank" rel="noopener noreferrer">查看 Linux/macOS Agent 完整配置</a>。
           <div class="small" style="margin-top: 10px">
             若要在这台机器另外部署 Server，可安装 Docker、Compose，执行 <code class="mono">gh auth login</code> 后运行：

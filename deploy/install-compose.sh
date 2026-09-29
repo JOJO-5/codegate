@@ -24,9 +24,7 @@ if [ -n "${CODEGATE_DOMAIN:-}" ]; then
 fi
 
 umask 077
-mkdir -p "$install_dir/deploy" "$install_dir/secrets" "$install_dir/agent-updates"
-# The Server runs as uid 10001 and must traverse this read-only bind mount.
-chmod 755 "$install_dir/agent-updates"
+mkdir -p "$install_dir/deploy" "$install_dir/secrets"
 for path in compose.yaml deploy/Caddyfile; do
   tmp=$(mktemp "$install_dir/.codegate.XXXXXXXX")
   if ! gh api -H 'Accept: application/vnd.github.raw+json' "repos/$repo/contents/$path" > "$tmp"; then

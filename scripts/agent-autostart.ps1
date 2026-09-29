@@ -98,7 +98,7 @@ if (-not [string]::Equals($credential.UserName, $currentUser, [StringComparison]
 
 $plainPassword = $credential.GetNetworkCredential().Password
 try {
-    $scheduledAction = New-ScheduledTaskAction -Execute $installedAgent -Argument "run -config `"$config`"" -WorkingDirectory $installDir
+    $scheduledAction = New-ScheduledTaskAction -Execute $installedAgent -Argument "supervise -config `"$config`"" -WorkingDirectory $installDir
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $scheduledAction -Trigger $trigger -Settings $settings -User $currentUser -Password $plainPassword -RunLevel Limited -Description 'CodeGate Agent (starts before desktop sign-in)' -Force | Out-Null

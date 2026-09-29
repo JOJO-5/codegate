@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -33,6 +34,9 @@ type Agent struct {
 	log *slog.Logger
 
 	startedAt time.Time
+
+	// OnVerifiedUpdate is set by the supervised CLI before Run starts.
+	OnVerifiedUpdate func(path, version string) error
 
 	connMu sync.RWMutex
 	conn   *Conn
@@ -204,6 +208,9 @@ func (a *Agent) runOnce(ctx context.Context) error {
 	// 连上了才算一次成功：重置退避。
 	// （调用方看到 nil 以外的错误才会退避，所以这里只能通过"返回 nil 之外的路径"
 	//  来表达成功 —— 见 Run 里的处理。）
+	if readyFile := os.Getenv("CODEGATE_AGENT_READY_FILE"); readyFile != "" {
+		if err := os.WriteFile(readyFile, []byte(Version), 0o600); err != nil { a.log.Warn("写入更新健康标记失败", "err", err) }
+	}
 	a.log.Info("已连接到 Server",
 		"server", a.cfg.ServerURL,
 		"device_id", a.id.DeviceID,

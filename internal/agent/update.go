@@ -76,7 +76,10 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 		return
 	}
 	if path != "" {
-		a.log.Info("已下载并校验 Agent 更新包；等待安全切换机制", "version", version, "path", path)
+		a.log.Info("已下载并校验 Agent 更新包", "version", version, "path", path)
+		if a.OnVerifiedUpdate != nil {
+			if err := a.OnVerifiedUpdate(path, version); err != nil { a.log.Warn("更新切换准备失败", "err", err) }
+		}
 	}
 }
 

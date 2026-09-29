@@ -33,7 +33,9 @@ source_binary=${CODEGATE_AGENT_BINARY:-./bin/codegate-agent}
 
 mkdir -p "$unit_dir" "$HOME/.local/bin"
 systemctl --user stop codegate-agent.service 2>/dev/null || :
-install -m 0755 "$source_binary" "$binary"
+if [ "$source_binary" != "$binary" ]; then
+  install -m 0755 "$source_binary" "$binary"
+fi
 cat > "$unit" <<'UNIT'
 [Unit]
 Description=CodeGate Agent
@@ -42,7 +44,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/codegate-agent run -config %h/.config/codegate/agent.json
+ExecStart=%h/.local/bin/codegate-agent supervise -config %h/.config/codegate/agent.json
 Restart=always
 RestartSec=5
 

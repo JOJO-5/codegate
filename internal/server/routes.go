@@ -49,6 +49,10 @@ func (s *Server) buildRouter() http.Handler {
 	}
 
 	mux.Handle("POST /api/v1/ws-ticket", authed(s.handleWSTicket))
+	mux.Handle("POST /api/v1/agent-install-ticket", authed(s.handleInstallTicket))
+	mux.HandleFunc("GET /api/v1/agent-install/{os}/script", s.handleInstallScript)
+	mux.HandleFunc("GET /api/v1/agent-install/{os}/service", s.handleInstallServiceScript)
+	mux.HandleFunc("GET /api/v1/agent-install/{os}/{arch}/binary", s.handleInstallBinary)
 
 	// ---- 认证（§14.2）----
 	//
