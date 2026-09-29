@@ -141,6 +141,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	// 会话回收定时器：已退出的会话保留一段时间（让用户能回看最后的输出），
 	// 超期后回收（§7.5）。
 	go a.reapLoop(ctx)
+	if a.cfg.UpdateEnabled && Version != "dev" {
+		go a.updateLoop(ctx)
+	}
 
 	for {
 		err := a.runOnce(ctx)

@@ -214,6 +214,10 @@ type Config struct {
 	HeartbeatInterval Duration `json:"heartbeat_interval,omitempty"`
 	ReconnectMin      Duration `json:"reconnect_min,omitempty"`
 	ReconnectMax      Duration `json:"reconnect_max,omitempty"`
+
+	// UpdateManifestURL points to a trusted HTTPS manifest for optional idle updates.
+	UpdateEnabled     bool `json:"update_enabled,omitempty"`
+	UpdateInterval    Duration `json:"update_interval,omitempty"`
 }
 
 // DefaultConfig 返回一份可用的最小配置。
@@ -230,6 +234,7 @@ func DefaultConfig() Config {
 		ReconnectMin:        Duration(DefaultReconnectMin),
 		ReconnectMax:        Duration(DefaultReconnectMax),
 		AllowCustomCommands: false,
+		UpdateInterval: Duration(time.Hour),
 	}
 }
 
@@ -255,6 +260,9 @@ func (c Config) withDefaults() Config {
 	// 退避上限不能小于下限，否则退避逻辑会算出递减的间隔。
 	if c.ReconnectMax < c.ReconnectMin {
 		c.ReconnectMax = c.ReconnectMin
+	}
+	if c.UpdateInterval <= 0 {
+		c.UpdateInterval = d.UpdateInterval
 	}
 	if c.StateDir == "" {
 		c.StateDir = DefaultStateDir()
@@ -286,6 +294,15 @@ func (c Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("agent: server_url 的协议 %q 不支持（应为 wss:// 或 ws://）", u.Scheme)
+	}
+
+	if c.UpdateEnabled {
+		if u.Scheme != "wss" && u.Scheme != "https" {
+			return errors.New("agent: 启用更新需要加密的 Server 连接")
+		}
+		if c.UpdateInterval.Std() < time.Minute {
+			return errors.New("agent: update_interval 不能短于 1m")
+		}
 	}
 
 	if len(c.AllowedRoots) == 0 {

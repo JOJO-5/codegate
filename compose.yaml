@@ -8,12 +8,14 @@ services:
       CODEGATE_BASE_URL: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
       CODEGATE_ALLOWED_ORIGINS: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
       CODEGATE_DB_PATH: /data/codegate.db
+      CODEGATE_AGENT_UPDATES_DIR: /data/agent-updates
       CODEGATE_JWT_SECRET_FILE: /run/secrets/jwt_secret
       CODEGATE_ALLOW_SIGNUP: "false"
     secrets:
       - jwt_secret
     volumes:
       - server_data:/data
+      - ./agent-updates:/data/agent-updates:ro
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
