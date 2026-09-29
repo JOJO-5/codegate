@@ -71,6 +71,18 @@ const createError = ref<string | null>(null)
 // The Agent reports what is configured and actually available on this host.
 // Older Agents do not send an inventory; keep the legacy list with a warning.
 const reportedCommands = computed(() => updateInfo.value?.commands)
+
+/**
+ * Agent 上报的 allowed_roots —— 工作目录白名单。
+ *
+ * 用途只有两个：本地没记住值时自动带出第一个根，以及给输入框提供候选。
+ * 它不是授权依据 —— 真正的校验在 Agent 侧的 Workspace.Resolve。
+ * 旧版 Agent 不上报此字段，列表为空时界面回落成纯手输。
+ */
+const allowedRoots = computed(() => updateInfo.value?.roots ?? [])
+const cwdPlaceholder = computed(() =>
+  allowedRoots.value[0] ?? '请填写工作目录的绝对路径（须在 Agent 的 allowed_roots 内）',
+)
 const selectableCommands = computed<CommandPreset[]>(() => {
   if (reportedCommands.value === undefined) return PRESETS
   return reportedCommands.value.filter(c => c.allowed && c.installed).map(c => ({
@@ -133,6 +145,11 @@ watch(selectableCommands, commands => {
   if (!commands.some(c => c.id === presetId.value)) presetId.value = commands[0]?.id ?? ''
 })
 
+// 设备离线时首次取不到 roots（updateInfo 为 null），等心跳或下一次轮询补上。
+watch(allowedRoots, roots => {
+  if (cwd.value.trim() === '' && roots.length > 0) cwd.value = roots[0] ?? ''
+})
+
 /**
  * cwd 按设备记住上次用的值。
  *
@@ -159,6 +176,10 @@ onMounted(async () => {
 
   await sessions.load(props.id)
   await loadUpdateStatus()
+
+  // 本地没有记住的值时，用 Agent 配置里的第一个 allowed_root 兜底 ——
+  // 否则每次新建会话都要手打一个 Windows 长路径。
+  if (cwd.value.trim() === '') cwd.value = allowedRoots.value[0] ?? ''
   updateTimer = setInterval(() => { void loadUpdateStatus() }, 15_000)
 
   // 订阅会话生命周期事件，让列表保持最新。
@@ -216,7 +237,7 @@ async function createSession(): Promise<void> {
     return
   }
   if (cwd.value.trim() === '') {
-    createError.value = '请填写工作目录（cwd）。它必须在 Agent 的 allowed_workspaces 内。'
+    createError.value = '请填写工作目录（cwd）。它必须在 Agent 的 allowed_roots 内。'
     return
   }
 
@@ -412,13 +433,24 @@ function canOpen(s: SessionSummary): boolean {
             v-model="cwd"
             class="mono"
             type="text"
+            list="cwd-roots"
             autocapitalize="none"
             autocorrect="off"
             spellcheck="false"
-            placeholder="例如 C:\Users\me\project 或 /home/me/project"
+            :placeholder="cwdPlaceholder"
             :disabled="creating"
           />
-          <span class="field__hint">必须是 Agent 的 allowed_workspaces 里的目录，否则会被拒绝。</span>
+          <datalist id="cwd-roots">
+            <option v-for="root in allowedRoots" :key="root" :value="root" />
+          </datalist>
+          <span class="field__hint">
+            <template v-if="allowedRoots.length > 0">
+              必须是 Agent 的 allowed_roots 里的目录，否则会被拒绝。可选：{{ allowedRoots.join('、') }}
+            </template>
+            <template v-else>
+              必须是 Agent 的 allowed_roots 里的目录，否则会被拒绝（Agent 离线或版本过低，未上报允许目录）。
+            </template>
+          </span>
         </div>
 
         <div class="field">
