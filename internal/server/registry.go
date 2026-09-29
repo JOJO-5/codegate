@@ -196,6 +196,7 @@ type ClientConn struct {
 	// 一个客户端同时只看一个终端，但保留集合是为了将来支持分屏。
 	attMu    sync.RWMutex
 	attached map[string]struct{}
+	attachIDs map[string]string
 
 	lastSeen  atomic.Int64
 	connected time.Time
@@ -213,6 +214,7 @@ func newClientConn(id string, ws *websocket.Conn, queueSize int) *ClientConn {
 		conn:      ws,
 		send:      make(chan outbound, queueSize),
 		attached:  make(map[string]struct{}),
+		attachIDs: make(map[string]string),
 		connected: time.Now(),
 		closed:    make(chan struct{}),
 	}
@@ -262,6 +264,20 @@ func (c *ClientConn) Detach(sessionID string) {
 	c.attMu.Lock()
 	defer c.attMu.Unlock()
 	delete(c.attached, sessionID)
+	delete(c.attachIDs, sessionID)
+}
+
+// SetAttachID remembers the request that created the Agent-side view.
+func (c *ClientConn) SetAttachID(sessionID, attachID string) {
+	c.attMu.Lock()
+	defer c.attMu.Unlock()
+	c.attachIDs[sessionID] = attachID
+}
+
+func (c *ClientConn) AttachID(sessionID string) string {
+	c.attMu.RLock()
+	defer c.attMu.RUnlock()
+	return c.attachIDs[sessionID]
 }
 
 // IsAttached 判断是否已 attach 到某会话。

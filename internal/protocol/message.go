@@ -285,6 +285,7 @@ type SessionAttachedPayload struct {
 // SessionDetachPayload 是请求断开接管。
 type SessionDetachPayload struct {
 	SessionID string `json:"session_id"`
+	AttachID string `json:"attach_id,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 }
 

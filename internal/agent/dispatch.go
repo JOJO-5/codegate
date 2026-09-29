@@ -277,17 +277,11 @@ func (a *Agent) onSessionDetach(env *protocol.Envelope) {
 		return
 	}
 
-	if connID := env.RequestID; connID != "" {
-		sess.Detach(connID)
-		a.untrackView(sid, connID)
-	} else {
-		// 没有指定哪条 view：把该会话的全部 view 都摘掉。
-		// 这对应「Server 侧整个客户端连接断了」的场景 —— 它不知道
-		// 具体是哪条 attach 失效，只知道该会话不该再有输出了。
-		for _, id := range a.viewIDs(sid) {
-			sess.Detach(id)
-			a.untrackView(sid, id)
-		}
+	// attach and detach have different request IDs. The Server supplies the
+	// original attach ID from its authenticated connection state.
+	if req.AttachID != "" {
+		sess.Detach(req.AttachID)
+		a.untrackView(sid, req.AttachID)
 	}
 
 	// ★ detach 只解除"谁在看"，**不终止 PTY**（不变量 I1/I2）。

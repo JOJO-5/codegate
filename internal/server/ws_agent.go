@@ -620,6 +620,7 @@ func (s *agentSession) applyResponseSideEffects(p *pendingReq, env *protocol.Env
 		s.srv.reg.Subscribe(sid, p.client)
 		s.srv.reg.SetSessionOwner(sid, s.ac.DeviceID)
 		p.client.Attach(sid)
+		p.client.SetAttachID(sid, p.requestID)
 		s.ac.AddSession(sid)
 
 	case protocol.TypeSessionDetached:

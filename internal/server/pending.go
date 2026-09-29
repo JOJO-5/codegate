@@ -33,6 +33,7 @@ type pendingReq struct {
 	deviceID  string
 	sessionID string
 	kind      protocol.Type
+	requestID string
 	// release undoes a provisional attach subscription if no success arrives.
 	release func()
 

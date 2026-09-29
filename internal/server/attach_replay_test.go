@@ -24,6 +24,10 @@ func TestAttachReplayArrivesBeforeAttachedResponse(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	sendJSON(t, client, detach)
 	fwd := agentRecv(t, agent)
+	detachPayload, err := protocol.DecodePayload[protocol.SessionDetachPayload](fwd)
+	if err != nil || detachPayload.AttachID == "" || detachPayload.AttachID == detach.RequestID {
+		t.Fatalf("detach must use original attach ID: %+v, err=%v", detachPayload, err)
+	}
 	agentReply(t, agent, fwd, protocol.TypeSessionDetached,
 		protocol.SessionDetachedPayload{SessionID: sessionID, Reason: "client_close"})
 	if got := recvEnvelope(t, client); got.Type != protocol.TypeSessionDetached { t.Fatal(got.Type) }

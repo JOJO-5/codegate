@@ -250,8 +250,23 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		deviceID:  deviceID,
 		sessionID: sessionID,
 		kind:      env.Type,
+		requestID: env.RequestID,
 		release:   release,
 	}, s.srv.now())
+
+	if env.Type == protocol.TypeSessionDetach {
+		p, err := protocol.DecodePayload[protocol.SessionDetachPayload](env)
+		if err != nil {
+			if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
+			sendErrorEnvelope(s.c.TrySendText, env, err)
+			return
+		}
+		// Ignore any attach_id supplied by the browser. Only this connection's
+		// authenticated attach may be detached.
+		p.AttachID = s.c.AttachID(sessionID)
+		env.Payload, err = json.Marshal(p)
+		if err != nil { return }
+	}
 
 	data, err := protocol.Encode(env)
 	if err != nil {
@@ -379,6 +394,7 @@ func (s *clientSession) detachAll() {
 	}
 
 	for _, sid := range sids {
+		attachID := s.c.AttachID(sid)
 		s.srv.reg.Unsubscribe(sid, s.c)
 		s.c.Detach(sid)
 
@@ -393,7 +409,7 @@ func (s *clientSession) detachAll() {
 		}
 
 		env, err := protocol.NewRequest(uuid.NewString(), protocol.TypeSessionDetach, sid,
-			protocol.SessionDetachPayload{SessionID: sid, Reason: "client_close"})
+			protocol.SessionDetachPayload{SessionID: sid, AttachID: attachID, Reason: "client_close"})
 		if err != nil {
 			continue
 		}
