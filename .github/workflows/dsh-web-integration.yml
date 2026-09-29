@@ -1,0 +1,26 @@
+name: DSH Web integration
+on:
+  pull_request:
+    paths:
+      - 'internal/agent/dsh_web*'
+      - 'internal/server/dsh_*'
+      - '.github/workflows/dsh-web-integration.yml'
+  workflow_dispatch:
+jobs:
+  real-dsh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install DeepSeek Harness
+        run: npm install -g @deepseek-ai/dsh
+      - name: Check real DSH token exchange
+        env:
+          CODEGATE_TEST_DSH: '1'
+        run: go test ./internal/agent -run '^TestRealDSHBrowserTokenExchange$' -count=1 -timeout=2m
