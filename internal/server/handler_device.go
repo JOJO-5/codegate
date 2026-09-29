@@ -713,3 +713,19 @@ func writeDeviceError(w http.ResponseWriter, err error) {
 		writeProtoError(w, err)
 	}
 }
+
+// handleDeviceUpdateStatus reports the last status from the currently connected
+// Agent. A missing status means no heartbeat has arrived yet, not "up to date".
+func (s *Server) handleDeviceUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	userID, _ := userIDFromContext(r.Context())
+	deviceID := r.PathValue("id")
+	if _, err := s.authorizeDevice(r.Context(), userID, deviceID); err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	if agent, ok := s.reg.Agent(deviceID); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil})
+}

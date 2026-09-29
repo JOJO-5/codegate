@@ -205,6 +205,24 @@ type SessionSummary struct {
 // HeartbeatPayload 是 Agent 的周期上报，同时充当 session 对账数据源。
 type HeartbeatPayload struct {
 	Sessions []HeartbeatSession `json:"sessions"`
+	Update AgentUpdateStatus `json:"update"`
+}
+
+// AgentUpdateStatus reports only observable Agent state, never a guessed
+// install outcome from the published Server version.
+type AgentUpdateStatus struct {
+	Enabled bool `json:"enabled"`
+	State string `json:"state"`
+	Version string `json:"version,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	CheckedAt int64 `json:"checked_at,omitempty"`
+	LastFailure *AgentUpdateFailure `json:"last_failure,omitempty"`
+}
+
+type AgentUpdateFailure struct {
+	Version string `json:"version"`
+	Reason string `json:"reason"`
+	OccurredAt int64 `json:"occurred_at"`
 }
 
 // HeartbeatSession 是心跳里的会话摘要（只放对账必需的字段，尽量小）。

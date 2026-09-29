@@ -40,6 +40,28 @@ var updateHTTPClient = &http.Client{
 	},
 }
 
+// currentUpdateStatus returns a snapshot for the next authenticated heartbeat.
+func (a *Agent) currentUpdateStatus() protocol.AgentUpdateStatus {
+	a.updateMu.RLock()
+	status := a.updateStatus
+	a.updateMu.RUnlock()
+	data, err := os.ReadFile(filepath.Join(a.cfg.StateDir, "updates", "last-failure.json"))
+	if err == nil && len(data) <= 4096 {
+		var failure protocol.AgentUpdateFailure
+		if json.Unmarshal(data, &failure) == nil && failure.OccurredAt > 0 { status.LastFailure = &failure }
+	}
+	return status
+}
+
+func (a *Agent) setUpdateStatus(state, version, detail string) {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	a.updateStatus = protocol.AgentUpdateStatus{
+		Enabled: true, State: state, Version: version, Detail: detail,
+		CheckedAt: time.Now().UnixMilli(),
+	}
+}
+
 func (a *Agent) updateLoop(ctx context.Context) {
 	a.checkUpdate(ctx)
 	ticker := time.NewTicker(a.cfg.UpdateInterval.Std())
@@ -59,6 +81,7 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 	// available until the user closes them or retention reaps them.
 	count, generation := a.mgr.UpdateState()
 	if count != 0 {
+		a.setUpdateStatus("waiting", "", "有会话正在运行或等待回看")
 		return
 	}
 	idle := func() int {
@@ -66,19 +89,32 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 		if current != generation { return 1 }
 		return count
 	}
+	a.setUpdateStatus("checking", "", "")
 	manifestURL, err := a.updateManifestURL()
-	if err != nil { a.log.Warn("Agent 更新地址无效", "err", err); return }
+	if err != nil { a.setUpdateStatus("error", "", "更新地址无效"); a.log.Warn("Agent 更新地址无效", "err", err); return }
 	path, version, err := stageUpdate(ctx, manifestURL, a.cfg.StateDir, Version, idle, a.id)
 	if err != nil {
 		if ctx.Err() == nil {
+			a.setUpdateStatus("error", "", err.Error())
 			a.log.Warn("Agent 更新检查失败", "err", err)
 		}
 		return
 	}
+	if path == "" {
+		if idle() != 0 { a.setUpdateStatus("waiting", "", "检查期间会话状态发生变化")
+		} else { a.setUpdateStatus("current", "", "当前未发现新版本") }
+		return
+	}
 	if path != "" {
+		a.setUpdateStatus("staged", version, "更新包已校验")
 		a.log.Info("已下载并校验 Agent 更新包", "version", version, "path", path)
 		if a.OnVerifiedUpdate != nil {
-			if err := a.OnVerifiedUpdate(path, version); err != nil { a.log.Warn("更新切换准备失败", "err", err) }
+			if err := a.OnVerifiedUpdate(path, version); err != nil {
+				a.setUpdateStatus("error", version, err.Error())
+				a.log.Warn("更新切换准备失败", "err", err)
+			} else {
+				a.setUpdateStatus("switching", version, "等待守护进程确认新版本")
+			}
 		}
 	}
 }

@@ -13,6 +13,7 @@ import { useRouter } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { useSessionsStore } from '../stores/sessions'
 import { useConnStore } from '../stores/conn'
+import { api, type DeviceUpdateStatus } from '../lib/api'
 import { humanizeError, platformLabel, relativeTime, statusKind, statusLabel, toMs } from '../lib/format'
 import { PRESETS } from '../lib/commands'
 import { estimateTerminalSize } from '../lib/viewport'
@@ -27,6 +28,38 @@ const router = useRouter()
 
 const device = computed(() => devices.byId(props.id))
 const list = computed(() => sessions.forDevice(props.id))
+const updateInfo = ref<DeviceUpdateStatus | null>(null)
+let updateTimer: ReturnType<typeof setInterval> | null = null
+let updateLoading = false
+async function loadUpdateStatus(): Promise<void> {
+  if (updateLoading) return
+  updateLoading = true
+  try {
+    const status = await api.getDeviceUpdateStatus(props.id)
+    updateInfo.value = status
+    devices.patch(props.id, { online: status.online, ...(status.agent_version ? { agent_version: status.agent_version } : {}) })
+  } catch {
+    updateInfo.value = null
+  } finally {
+    updateLoading = false
+  }
+}
+const updateLabel = computed(() => {
+  const info = updateInfo.value
+  if (info === null) return '状态暂不可用'
+  if (!info.online) return '设备离线'
+  const u = info.update
+  if (u === null || !u.state) return '等待 Agent 心跳'
+  if (!u.enabled || u.state === 'disabled') return '自动更新未启用'
+  return ({
+    waiting: '等待会话空闲',
+    checking: '正在检查更新',
+    current: '未发现新版本',
+    staged: '更新包已校验',
+    switching: '正在切换版本',
+    error: '检查或切换失败',
+  } as Record<string, string>)[u.state] ?? '未知状态'
+})
 
 // ---- 新建会话表单 ----
 const presetId = ref('claude')
@@ -62,6 +95,8 @@ onMounted(async () => {
   if (saved !== null && saved !== '') cwd.value = saved
 
   await sessions.load(props.id)
+  await loadUpdateStatus()
+  updateTimer = setInterval(() => { void loadUpdateStatus() }, 15_000)
 
   // 订阅会话生命周期事件，让列表保持最新。
   // ★ 必须在 onUnmounted 里取消订阅 —— 否则来回切换页面会累积监听器。
@@ -89,6 +124,8 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubscribeControl?.()
   unsubscribeControl = null
+  if (updateTimer !== null) clearInterval(updateTimer)
+  updateTimer = null
 })
 
 function describeSession(s: SessionSummary): string {
@@ -264,6 +301,30 @@ function canOpen(s: SessionSummary): boolean {
       </template>
     </div>
 
+    <div class="card">
+      <div class="card__title">
+        <h2>Agent 更新</h2>
+        <span class="badge" :class="updateInfo?.update?.state === 'error' ? 'badge--err' : updateInfo?.update?.state === 'waiting' || updateInfo?.update?.state === 'switching' ? 'badge--warn' : 'badge--idle'">
+          {{ updateLabel }}
+        </span>
+      </div>
+      <p v-if="updateInfo?.update?.enabled && updateInfo.update.state === 'waiting'" class="dim small">
+        当前有会话正在运行或等待回看。明确关闭这些会话后，Agent 才会在下次检查时下载更新。
+      </p>
+      <div v-if="updateInfo?.update?.last_failure" class="notice notice--warn small" style="margin-bottom: 8px">
+        上次升级未完成（{{ updateInfo.update.last_failure.version }}）：{{ updateInfo.update.last_failure.reason }}。
+        {{ relativeTime(updateInfo.update.last_failure.occurred_at) }}，已继续使用旧版。
+      </div>
+      <p v-if="updateInfo?.update?.version" class="dim small">目标版本：{{ updateInfo.update.version }}</p>
+      <p v-if="updateInfo?.update?.detail" class="dim small">{{ updateInfo.update.detail }}</p>
+      <p v-if="updateInfo?.update?.checked_at" class="faint small">
+        最近检查：{{ relativeTime(updateInfo.update.checked_at) }}。状态由 Agent 心跳上报，可能有短暂延迟。
+      </p>
+      <p v-if="updateInfo?.online && updateInfo.update?.state === 'disabled'" class="dim small">
+        要启用空闲自动更新，请在本机 agent.json 设置 update_enabled，并使用 supervise 开机服务。
+      </p>
+    </div>
+
     <!-- ---- 新建会话 ---- -->
     <div class="card">
       <div class="card__title">
@@ -312,7 +373,7 @@ function canOpen(s: SessionSummary): boolean {
         <div v-if="selectedPreset?.kind === 'shell' && device?.platform === 'windows'" class="notice notice--warn">
           <strong>{{ selectedPreset.label }}</strong> 属于 shell 类程序。在 Windows 上，
           系统自带的 ConPTY 无法把中断信号送达它 —— 会话里的 Ctrl+C 按钮会被禁用。
-          终端内的 Ctrl+C 会被屏蔽以免关闭会话；结束整个会话请使用「关闭会话」。
+          终端内的 Ctrl+C 会被屏蔽以免关闭会话；结束整个会话需在终端页确认「关闭会话」。
         </div>
 
         <div v-if="createError" class="notice notice--err">{{ createError }}</div>
@@ -342,6 +403,8 @@ function canOpen(s: SessionSummary): boolean {
       <div v-if="sessions.error" class="notice notice--err" style="margin-bottom: 12px">
         {{ sessions.error }}
       </div>
+
+      <p class="dim small">离开终端页面不会结束远端进程；点击运行中的会话可接回原会话。只有在终端页确认关闭才会结束进程。</p>
 
       <div v-if="list.length === 0" class="empty">这个设备上还没有会话。</div>
 

@@ -677,6 +677,7 @@ func (s *agentSession) handleHeartbeat(env *protocol.Envelope) error {
 	// 摘除旧条目 —— 结果是「设备页显示着一堆早就死掉的会话」。
 	// 整体替换天然收敛：Agent 说它有什么，就是什么。
 	s.ac.SetSessions(ids)
+	s.ac.SetUpdateStatus(p.Update)
 	return nil
 }
 

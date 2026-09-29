@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jojo/codegate/internal/agent"
+	"github.com/jojo/codegate/internal/protocol"
 )
 
 type installedAgent struct {
@@ -105,6 +106,7 @@ func cmdSupervise(args []string) error {
 		if err != nil {
 			if current.Previous == "" { return err }
 			fmt.Fprintln(os.Stderr, "Agent 当前版本无法启动，回滚旧版本:", err)
+			_ = writeUpdateFailure(cfg.StateDir, current.Path, "当前版本无法启动: "+err.Error())
 			current = installedAgent{Path: current.Previous}
 			if err := writeState(stateFile, current); err != nil { return err }
 			failures = 0
@@ -120,6 +122,7 @@ func cmdSupervise(args []string) error {
 		if ctx.Err() != nil { return nil }
 		if time.Since(started) < 30*time.Second { failures++ } else { failures = 0 }
 		if failures >= 3 && current.Previous != "" {
+			_ = writeUpdateFailure(cfg.StateDir, current.Path, "新版本连续异常退出，已回滚")
 			current = installedAgent{Path: current.Previous}
 			_ = writeState(stateFile, current)
 			failures = 0
@@ -133,6 +136,7 @@ func cmdSupervise(args []string) error {
 					nextState := installedAgent{Path: candidate.Path, Previous: current.Path}
 					if err := writeState(stateFile, nextState); err == nil {
 						current = nextState
+						_ = os.Remove(updatePath(cfg.StateDir, "last-failure.json"))
 						failures = 0
 						select {
 						case <-ctx.Done(): next.kill(); return nil
@@ -145,6 +149,7 @@ func cmdSupervise(args []string) error {
 					next.kill()
 				}
 			}
+			_ = writeUpdateFailure(cfg.StateDir, candidate.Version, "新版本未通过启动和 Server 鉴权健康检查，继续使用旧版")
 			fmt.Fprintln(os.Stderr, "Agent 新版本启动失败，继续使用旧版本:", candidate.Version)
 		}
 		// An existing version can exit on a transient failure. Restart with
@@ -233,6 +238,20 @@ func writeState(path string, state installedAgent) error {
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(data); err != nil { tmp.Close(); return err }
 	if err := tmp.Sync(); err != nil { tmp.Close(); return err }
+	if err := tmp.Close(); err != nil { return err }
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) { return err }
+	return os.Rename(tmp.Name(), path)
+}
+
+func writeUpdateFailure(stateDir, version, reason string) error {
+	failure := protocol.AgentUpdateFailure{Version: version, Reason: reason, OccurredAt: time.Now().UnixMilli()}
+	data, err := json.Marshal(failure)
+	if err != nil { return err }
+	path := updatePath(stateDir, "last-failure.json")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".last-failure-*")
+	if err != nil { return err }
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil { tmp.Close(); return err }
 	if err := tmp.Close(); err != nil { return err }
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) { return err }
 	return os.Rename(tmp.Name(), path)
