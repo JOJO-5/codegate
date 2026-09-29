@@ -173,7 +173,6 @@ DeepSeek Harness 的 `dsh` 命令本身是 profile 启动器。先在目标机�
   "label": "DeepSeek Harness",
   "command": "dsh",
   "args": ["--profile", "cli"],
-  "resume_args": ["--continue"],
   "kind": "tui",
   "web_url": "https://dsh.example.com"
 }
