@@ -84,6 +84,17 @@ const detectedUnapproved = computed(() =>
 )
 const selectedPreset = computed(() => selectableCommands.value.find(p => p.id === presetId.value))
 const selectedWebURL = computed(() => reportedCommands.value?.find(c => c.id === presetId.value && c.allowed)?.web_url)
+const dshCommand = computed(() => reportedCommands.value?.find(c => c.id === 'dsh'))
+const dshInstallCommand = 'dsh plugin --profile tui add github:deepseek-harness/turtle-ui'
+const dshCopyStatus = ref('')
+async function copyDshInstallCommand(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(dshInstallCommand)
+    dshCopyStatus.value = '已复制安装命令'
+  } catch {
+    dshCopyStatus.value = '复制失败，请手动选择命令复制'
+  }
+}
 watch(selectableCommands, commands => {
   if (!commands.some(c => c.id === presetId.value)) presetId.value = commands[0]?.id ?? ''
 })
@@ -394,11 +405,21 @@ function canOpen(s: SessionSummary): boolean {
           本机没有已授权且可找到的命令。请检查 Agent 的 allowed_commands 和开机服务使用的 PATH。
         </div>
         <div v-if="selectedWebURL" class="notice small">
-          这款 CLI 另有网页界面：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。它由目标机器或你的反向代理单独提供，需要自行登录。
+          外部 Web 地址：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。CodeGate 尚未转发这个页面；请自行确保该地址可达并受 HTTPS 与登录保护。
+        </div>
+        <div v-if="dshCommand" class="notice small">
+          <strong>DSH TUI：</strong>
+          <span v-if="!dshCommand.installed">本机服务的 PATH 中未找到 dsh。</span>
+          <span v-else-if="!dshCommand.allowed">已找到 dsh，但尚未配置为可启动命令。</span>
+          <span v-else>已找到 dsh 且入口已配置；TUI 插件状态尚未自动验证。</span>
+          <p>要在终端使用，先在目标机器以运行 Agent 的同一用户执行：</p>
+          <div class="row"><code class="mono">{{ dshInstallCommand }}</code><button class="btn btn--ghost btn--sm" type="button" @click="copyDshInstallCommand">复制命令</button></div>
+          <span v-if="dshCopyStatus" class="field__hint">{{ dshCopyStatus }}</span>
+          <p>然后在该用户环境验证 <code class="mono">dsh --profile tui</code> 能打开 TUI，再把 dsh 配置到 agent.json 的 allowed_commands（args 为 ["--profile", "tui"]）。安装过程可能需要 pnpm 按提示允许插件构建；CodeGate 不会自动安装。</p>
         </div>
         <div v-if="detectedUnapproved.length" class="notice small">
           检测到但尚未授权：{{ detectedUnapproved.map(c => c.label).join('、') }}。在本机 agent.json 的 allowed_commands 中配置后才能从网页启动。
-          DSH 还需先安装 TUI profile；仅找到 dsh 命令并不代表 TUI 已就绪。
+          仅找到 dsh 命令并不代表 TUI 插件已就绪。
         </div>
 
         <!-- Windows shell 的 ConPTY 中断限制。 -->
@@ -411,7 +432,7 @@ function canOpen(s: SessionSummary): boolean {
         <div v-if="createError" class="notice notice--err">{{ createError }}</div>
 
         <div class="row">
-          <button class="btn btn--primary" type="submit"  :disabled="creating || !conn.isOpen || selectableCommands.length === 0">
+          <button class="btn btn--primary" type="submit" :disabled="creating || !conn.isOpen || selectableCommands.length === 0">
             <span v-if="creating" class="spinner" />
             创建并进入
           </button>

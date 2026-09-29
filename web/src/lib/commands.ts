@@ -1,16 +1,8 @@
 /**
  * 预置命令表与命令分类。
  *
- * # 为什么前端要自己带一份
- *
- * 权威来源应该是 Agent 的 `allowed_commands`（它才知道这台机器上装了什么、
- * 允许跑什么）。但那个能力目前**没有暴露给前端** ——
- * `protocol.TypeDeviceInfo` 这个类型在 `types.go` 里登记了，
- * 却还没有对应的 payload 结构体，Agent 也没上报过。
- *
- * 所以 P5 阶段先由前端带一份预置表，并把「该从哪里来」写清楚，
- * 而不是假装它已经存在。等 `device.info` 真正落地时，
- * 把 `PRESETS` 换成服务端下发的数据即可，其余逻辑不用动。
+ * 新 Agent 会通过心跳上报本机已配置与已安装命令；旧 Agent 仍使用
+ * 这份预置表作为兼容回退。检测结果不会授予命令执行权限。
  *
  * # 分类为什么重要
  *
@@ -68,7 +60,7 @@ export const PRESETS: CommandPreset[] = [
   {
     id: 'dsh',
     label: 'DeepSeek Harness',
-    hint: '需要先安装 DSH TUI profile（如 dsh-code）',
+    hint: '需安装并验证 TUI 插件（如 turtle-ui）',
     kind: 'tui',
   },
   {
