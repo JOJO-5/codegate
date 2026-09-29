@@ -91,7 +91,10 @@ const kind = computed(() => {
   return classifyCommand(s.name ?? '')
 })
 const isShell = computed(() => kind.value === 'shell')
-const windowsShell = computed(() => isShell.value && devices.byId(summary.value?.device_id ?? '')?.platform === 'windows')
+const windowsShell = computed(() => {
+  const platform = devices.byId(summary.value?.device_id ?? '')?.platform
+  return isShell.value && platform !== 'linux' && platform !== 'darwin'
+})
 const isLive = computed(() => {
   const st = summary.value?.status
   return st === 'starting' || st === 'running' || st === 'detached'
@@ -404,6 +407,7 @@ onMounted(async () => {
   })
   // 8-bit 输入（鼠标协议、某些终端的粘贴）走这条
   t.onBinary((data) => {
+    if (role.value !== 'controller' || !isLive.value) return
     const bytes = new Uint8Array(data.length)
     for (let i = 0; i < data.length; i++) {
       bytes[i] = data.charCodeAt(i) & 0xff
