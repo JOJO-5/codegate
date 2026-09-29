@@ -20,15 +20,17 @@ case "$action" in
     echo '已移除 Agent 开机任务；设备配置和私钥仍保留。'
     exit 0
     ;;
-  install) ;;
+  install|render) ;;
   *) echo '用法: agent-autostart-macos.sh install|status|uninstall' >&2; exit 2 ;;
 esac
 
 [ "$(uname -s)" = Darwin ] || { echo '仅支持 macOS。' >&2; exit 1; }
-[ -f "$config" ] || { echo "请先配置并配对: $config" >&2; exit 1; }
-source_binary=${CODEGATE_AGENT_BINARY:-./bin/codegate-agent}
-[ -f "$source_binary" ] || { echo "Agent 程序不存在: $source_binary" >&2; exit 1; }
-"$source_binary" doctor -config "$config"
+if [ "$action" = install ]; then
+  [ -f "$config" ] || { echo "请先配置并配对: $config" >&2; exit 1; }
+  source_binary=${CODEGATE_AGENT_BINARY:-./bin/codegate-agent}
+  [ -f "$source_binary" ] || { echo "Agent 程序不存在: $source_binary" >&2; exit 1; }
+  "$source_binary" doctor -config "$config"
+fi
 
 xml_escape() {
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
@@ -65,6 +67,10 @@ cat > "$tmp" <<PLIST
 </plist>
 PLIST
 plutil -lint "$tmp" >/dev/null
+if [ "$action" = render ]; then
+  cat "$tmp"
+  exit 0
+fi
 
 sudo launchctl bootout system "$plist" 2>/dev/null || :
 sudo mkdir -p /usr/local/libexec/codegate
