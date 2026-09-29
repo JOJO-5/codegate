@@ -160,3 +160,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\Code
 ```
 
 将 `"update_enabled": true` 写入 Agent 配置后，服务运行的 `supervise` 命令会在无会话时安全切换。已有采用 `run` 启动的服务需要先手动关闭所有会话，再重新执行新版服务脚本安装一次以切换到 `supervise`；仅前台手动运行的 Agent 会暂存包而不会自行替换。服务器故障时，更新可能在健康检查阶段退回旧版并于下次检查重新尝试。
+
+## 终端与 DSH
+
+设备上的 Agent 可以启动配置中授权的普通 Shell 和交互式 CLI，浏览器中使用的是该机器的真实 PTY。新 Agent 会在心跳中检查已配置命令是否能从开机服务的 PATH 找到，并额外检测 Claude Code、Codex、OpenCode、DSH 的可执行文件。检测结果仅用于展示，**不会自动授权**。想让一个程序出现在“新建会话”菜单，仍需在目标机器的 `agent.json` 添加 `allowed_commands` 并重启 Agent。
+
+DeepSeek Harness 的 `dsh` 命令本身是 profile 启动器。先在目标机器为 TUI 安装插件（例如 dsh-code 的 `cli` profile），并在同一用户账号下确认 `dsh --profile cli` 能打开交互界面。随后可在 `allowed_commands` 添加：
+
+```json
+{
+  "id": "dsh",
+  "label": "DeepSeek Harness",
+  "command": "dsh",
+  "args": ["--profile", "cli"],
+  "kind": "tui",
+  "web_url": "https://dsh.example.com"
+}
+```
+
+`web_url` 可选，必须是你**另外部署并完成 HTTPS 与登录保护**的 DSH Web 地址。设备页会显示“打开独立 Web UI”，它与 CodeGate 的终端会话不是同一个页面或认证系统。仅执行 `dsh web` 默认绑定的 `127.0.0.1:3080` 不会让远端浏览器自动可达；需要你自己的安全反向代理或访问隧道。也可以将 `args` 改为 `["--profile","tui"]`，前提是该 profile 已安装 TUI 插件。

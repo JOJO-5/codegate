@@ -111,6 +111,8 @@ type CommandSpec struct {
 	// 也不知道对话存在哪 —— 它只知道这个 CLI 支持一个 resume 标志。
 	// 这是刻意的：一旦开始理解"对话"，这个项目就变成 AI Agent 了。
 	ResumeArgs []string `json:"resume_args,omitempty"`
+	// WebURL links to a separately hosted HTTPS UI for the same tool.
+	WebURL string `json:"web_url,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +337,12 @@ func (c Config) Validate() error {
 
 		if strings.TrimSpace(cmd.Command) == "" {
 			return fmt.Errorf("agent: allowed_commands[%d] (%s) 缺少 command", i, cmd.ID)
+		}
+		if cmd.WebURL != "" {
+			web, err := url.Parse(cmd.WebURL)
+			if err != nil || web.Scheme != "https" || web.Host == "" || web.User != nil || web.Fragment != "" {
+				return fmt.Errorf("agent: allowed_commands[%d] (%s) 的 web_url 必须是 HTTPS URL", i, cmd.ID)
+			}
 		}
 		if !cmd.Kind.Valid() {
 			return fmt.Errorf(

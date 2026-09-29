@@ -258,9 +258,20 @@ export interface AgentUpdateStatus {
   last_failure?: { version: string; reason: string; occurred_at: number }
 }
 
+export interface CommandAvailability {
+  id: string
+  label: string
+  kind: 'shell' | 'tui'
+  installed: boolean
+  allowed: boolean
+  resume?: boolean
+  web_url?: string
+}
+
 export interface DeviceUpdateStatus {
   online: boolean
   agent_version?: string
+  commands?: CommandAvailability[]
   update: AgentUpdateStatus | null
 }
 

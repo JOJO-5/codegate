@@ -724,8 +724,8 @@ func (s *Server) handleDeviceUpdateStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if agent, ok := s.reg.Agent(deviceID); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus()})
+		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus(), "commands": agent.Commands()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil})
+	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil, "commands": []protocol.CommandAvailability{}})
 }

@@ -61,6 +61,7 @@ type AgentConn struct {
 	caps      protocol.AgentCaps
 	updateMu sync.RWMutex
 	updateStatus *protocol.AgentUpdateStatus
+	commands []protocol.CommandAvailability
 	agentVer  string
 	platform  string
 	connected time.Time
@@ -151,6 +152,18 @@ func (c *AgentConn) SetUpdateStatus(status protocol.AgentUpdateStatus) {
 	c.updateMu.Lock()
 	defer c.updateMu.Unlock()
 	c.updateStatus = &status
+}
+
+func (c *AgentConn) SetCommands(commands []protocol.CommandAvailability) {
+	c.updateMu.Lock()
+	defer c.updateMu.Unlock()
+	c.commands = append([]protocol.CommandAvailability(nil), commands...)
+}
+
+func (c *AgentConn) Commands() []protocol.CommandAvailability {
+	c.updateMu.RLock()
+	defer c.updateMu.RUnlock()
+	return append([]protocol.CommandAvailability(nil), c.commands...)
 }
 
 // SetSessions 整体替换该 Agent 持有的会话集合。
