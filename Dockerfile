@@ -32,6 +32,7 @@ RUN apk add --no-cache ca-certificates su-exec \
     && chown codegate:codegate /data
 COPY --from=build /out/codegate-server /usr/local/bin/codegate-server
 COPY --from=build /out/agent-updates/ /opt/codegate/agent-updates/
+COPY scripts/agent-autostart-linux.sh scripts/agent-autostart-macos.sh scripts/agent-autostart.ps1 /opt/codegate/agent-install/
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

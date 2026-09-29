@@ -337,6 +337,10 @@ export const api = {
     return request<MeResponse>('GET', '/me')
   },
 
+  installTicket(os: "windows" | "linux" | "darwin"): Promise<{ command: string; expires_in: number }> {
+    return request("POST", "/agent-install-ticket", { os })
+  },
+
   // ---- 设备 ----
 
   async listDevices(): Promise<DeviceDTO[]> {

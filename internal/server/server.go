@@ -40,6 +40,7 @@ type Server struct {
 
 	// tickets 是浏览器 WS 连接用的一次性票据。
 	tickets *ticketStore
+	installTickets *installTicketStore
 
 	// pairs 保存「已发配对码、等浏览器确认」的 Agent 连接。
 	//
@@ -121,6 +122,7 @@ func New(o Options) (*Server, error) {
 		relay:   NewRelay(reg, log),
 		tokens:  tokens,
 		tickets: newTicketStore(),
+		installTickets: newInstallTicketStore(),
 		pairs:   newPairRegistry(),
 		pending: newPendingRegistry(),
 
@@ -337,6 +339,7 @@ func (s *Server) runCleanup() {
 	}
 
 	s.tickets.sweep(now)
+	s.installTickets.sweep(now)
 	s.pairs.sweep(now)
 	s.pending.sweep(now)
 }
