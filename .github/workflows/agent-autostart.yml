@@ -1,0 +1,26 @@
+name: Windows Agent autostart
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/agent-autostart.ps1'
+      - '.github/workflows/agent-autostart.yml'
+
+jobs:
+  syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('scripts/agent-autostart.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+      - name: Check missing task status
+        shell: pwsh
+        run: ./scripts/agent-autostart.ps1 status

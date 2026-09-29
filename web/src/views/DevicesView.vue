@@ -27,6 +27,24 @@ const preview = ref<PairPreview | null>(null)
 const pairName = ref('')
 const pairError = ref<string | null>(null)
 const pairBusy = ref(false)
+type OnboardingOS = 'windows' | 'linux' | 'macos'
+const onboardingOS: OnboardingOS[] = ['windows', 'linux', 'macos']
+const selectedOS = ref<OnboardingOS>('windows')
+const copied = ref(false)
+const copyError = ref('')
+const serverInstallCommand =
+  'bash -o pipefail -c "gh api -H \'Accept: application/vnd.github.raw+json\' repos/JOJO-5/codegate/contents/deploy/install-compose.sh | sh"'
+
+async function copyServerCommand(): Promise<void> {
+  copied.value = false
+  copyError.value = ''
+  try {
+    await navigator.clipboard.writeText(serverInstallCommand)
+    copied.value = true
+  } catch {
+    copyError.value = '复制失败，请手动选择命令复制。'
+  }
+}
 
 onMounted(() => {
   void devices.load()
@@ -100,7 +118,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
     <div v-else-if="devices.items.length === 0" class="empty">
       <div>还没有绑定任何设备。</div>
       <div class="small" style="margin-top: 6px">
-        在那台电脑上运行 <code class="mono">codegate-agent pair</code> 获取配对码，然后填到下面。
+        在下方选择目标电脑的系统，按步骤启动 Agent 后填写配对码。
       </div>
     </div>
 
@@ -134,8 +152,58 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
         <h2>添加设备</h2>
       </div>
 
+      <div v-if="preview === null" class="stack">
+        <div class="field">
+          <span>目标电脑的系统</span>
+          <div class="row" role="group" aria-label="目标电脑的系统">
+            <button
+              v-for="os in onboardingOS"
+              :key="os"
+              class="btn btn--sm"
+              type="button"
+              :aria-pressed="selectedOS === os"
+              :class="selectedOS === os ? 'btn--primary' : ''"
+              @click="selectedOS = os"
+            >
+              {{ os === 'windows' ? 'Windows' : os === 'linux' ? 'Linux' : 'macOS' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="selectedOS === 'windows'" class="notice notice--info">
+          在目标 Windows 电脑上从
+          <a href="https://github.com/JOJO-5/codegate" target="_blank" rel="noopener noreferrer">私有仓库</a>
+          在仓库根目录构建原生 Agent：
+          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">go build -o bin/codegate-agent.exe ./cmd/codegate-agent
+.\bin\codegate-agent.exe doctor
+.\bin\codegate-agent.exe pair</pre>
+          运行前先配置 <code class="mono">%APPDATA%\CodeGate\agent.json</code> 中的 Server 地址、工作目录和允许的命令。
+          运行 <code class="mono">pair</code> 后，把输出的配对码填在下面。绑定完成后运行
+          <code class="mono">.\bin\codegate-agent.exe run</code>。若希望开机后未解锁也能使用，可在仓库根目录执行
+          <code class="mono">powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-autostart.ps1 install</code>
+          （输入当前 Windows 账号密码，不是 PIN；先关闭手动运行的 Agent）。
+          <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">查看完整配置示例</a>。
+        </div>
+
+        <div v-else class="notice notice--warn">
+          {{ selectedOS === 'linux' ? 'Linux' : 'macOS' }} 目前还不能作为被控电脑接入：Agent 的终端功能只在 Windows 上实现。
+          如果要在这台机器部署 Server，可以先安装并启动 Docker、Compose，运行 <code class="mono">gh auth login</code>，
+          再执行下面的命令。私有仓库和镜像需要读取权限。
+          <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">{{ serverInstallCommand }}</pre>
+          <button class="btn btn--sm" type="button" @click="copyServerCommand">
+            {{ copied ? '已复制' : '复制 Server 安装命令' }}
+          </button>
+          <span v-if="copyError" role="alert">{{ copyError }}</span>
+          <div class="small" style="margin-top: 8px">
+            这条命令部署的是 Server，不会在 Linux/macOS 上安装可配对的 Agent。
+            公网域名及 HTTPS 设置见
+            <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">部署指南</a>。
+          </div>
+        </div>
+      </div>
+
       <!-- 第一步：输入配对码 -->
-      <form v-if="preview === null" class="stack" @submit.prevent="submitCode">
+      <form v-if="preview === null && selectedOS === 'windows'" class="stack" @submit.prevent="submitCode">
         <div class="field">
           <label for="paircode">配对码</label>
           <input
@@ -166,7 +234,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
       </form>
 
       <!-- 第二步：确认设备信息 -->
-      <div v-else class="stack">
+      <div v-else-if="preview !== null" class="stack">
         <div class="notice notice--info">
           请确认下面这台机器是你自己的。不是你的就取消 —— 猜中配对码不该等于能绑定别人的电脑。
         </div>

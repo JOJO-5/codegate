@@ -109,6 +109,24 @@ go build -o bin/codegate-agent.exe ./cmd/codegate-agent
 
 Agent 只需能向域名的 443 端口发起出站连接。OpenCode 运行在 Windows 电脑上，使用那台电脑的安装、模型配置和工作目录。
 
+### 开机自启（未解锁也能连接）
+
+先完成 `pair` 并确认网页显示设备，再在目标 Windows 电脑的仓库根目录运行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-autostart.ps1 install
+```
+
+脚本会先运行 `doctor`，把 Agent 程序复制到当前用户的 `%LOCALAPPDATA%\CodeGate\bin`，创建系统启动时触发的计划任务，并立即启动。安装时输入**当前 Windows 账号的密码**（不是 PIN）；任务以同一账号的普通权限运行，使用已配对的配置和设备私钥，登录桌面前也可以运行。不要同时留着手动启动的 `agent run`，避免同一身份双重连接。不要把任务改成 SYSTEM 账号，远程 CLI 会获得过高权限且使用不同的用户配置。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-autostart.ps1 status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-autostart.ps1 uninstall
+```
+
+卸载只移除计划任务，保留配置和设备私钥。重新构建 Agent 后再执行一次 `install` 以更新任务使用的程序。安装后建议实际重启并在**未登录桌面**时查看网页设备状态、创建一条 TUI 会话；本项目 CI 只验证脚本语法，真实的登录状态和 CLI 环境需要在目标 Windows 电脑上确认。任务使用的用户账号必须能在无人登录时访问允许的工作目录、OpenCode 程序及其模型配置；如密码变更，重新运行 `install` 更新计划任务的凭据。
+
+
 ## 运维
 
 ```bash
