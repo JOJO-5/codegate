@@ -6,6 +6,9 @@ on:
   pull_request:
     paths:
       - 'internal/terminal/**'
+      - 'internal/agent/**'
+      - 'internal/server/**'
+      - 'internal/protocol/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/terminal-windows.yml'
@@ -22,3 +25,7 @@ jobs:
           cache: true
       - name: Test terminal package
         run: go test ./internal/terminal -count=1 -timeout=3m
+      - name: Build Agent and test file relay
+        run: |
+          go build ./cmd/codegate-agent
+          go test ./internal/agent ./internal/server -count=1 -timeout=5m

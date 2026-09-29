@@ -50,6 +50,7 @@ const (
 	TypeFileStatResult Type = "file.stat.result"
 	TypeFileRead       Type = "file.read"
 	TypeFileReadBegin  Type = "file.read.begin"
+	TypeFileReadResult Type = "file.read.result"
 	TypeFileAck        Type = "file.ack"
 	TypeFileWrite      Type = "file.write"
 	TypeFileWriteReady Type = "file.write.ready"
@@ -160,6 +161,7 @@ var allowedSenders = map[Type]Sender{
 	TypeFileListed:     SentByAgent,
 	TypeFileStatResult: SentByAgent,
 	TypeFileReadBegin:  SentByAgent,
+	TypeFileReadResult: SentByAgent,
 	TypeFileWriteReady: SentByAgent,
 	TypeFileWriteDone:  SentByAgent,
 

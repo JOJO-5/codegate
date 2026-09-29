@@ -43,6 +43,16 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 		a.onSessionList(env)
 	case protocol.TypeSessionGet:
 		a.onSessionGet(env)
+	case protocol.TypeFileList:
+		a.onFileList(env)
+	case protocol.TypeFileStat:
+		a.onFileStat(env)
+	case protocol.TypeFileRead:
+		a.onFileRead(env)
+	case protocol.TypeFileWrite:
+		a.onFileWrite(env)
+	case protocol.TypeFileCancel:
+		a.onFileCancel(env)
 	case protocol.TypePing:
 		a.reply(env, protocol.TypePong, nil)
 	case protocol.TypePong:
@@ -267,17 +277,11 @@ func (a *Agent) onSessionDetach(env *protocol.Envelope) {
 		return
 	}
 
-	if connID := env.RequestID; connID != "" {
-		sess.Detach(connID)
-		a.untrackView(sid, connID)
-	} else {
-		// 没有指定哪条 view：把该会话的全部 view 都摘掉。
-		// 这对应「Server 侧整个客户端连接断了」的场景 —— 它不知道
-		// 具体是哪条 attach 失效，只知道该会话不该再有输出了。
-		for _, id := range a.viewIDs(sid) {
-			sess.Detach(id)
-			a.untrackView(sid, id)
-		}
+	// attach and detach have different request IDs. The Server supplies the
+	// original attach ID from its authenticated connection state.
+	if req.AttachID != "" {
+		sess.Detach(req.AttachID)
+		a.untrackView(sid, req.AttachID)
 	}
 
 	// ★ detach 只解除"谁在看"，**不终止 PTY**（不变量 I1/I2）。
@@ -345,8 +349,7 @@ func (a *Agent) onSessionResize(env *protocol.Envelope) {
 		a.replyError(env, err)
 		return
 	}
-	// resize 是高频操作（拖窗口），成功时**不回响应** ——
-	// 回了会让 Server 和前端多出一堆无用的往返。
+	a.reply(env, protocol.TypeSessionInfo, protocol.SessionCreatedPayload{Session: sess.Summary()})
 }
 
 func (a *Agent) onSessionSignal(env *protocol.Envelope) {
@@ -378,6 +381,7 @@ func (a *Agent) onSessionSignal(env *protocol.Envelope) {
 	}
 
 	a.log.Info("已投递信号", "session", sid, "signal", sig)
+	a.reply(env, protocol.TypeSessionInfo, protocol.SessionCreatedPayload{Session: sess.Summary()})
 }
 
 // ---------------------------------------------------------------------------

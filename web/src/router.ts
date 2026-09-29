@@ -51,6 +51,13 @@ const routes: RouteRecordRaw[] = [
     meta: { chrome: false },
   },
   {
+    path: '/sessions/:id/files',
+    name: 'session-files',
+    component: () => import('./views/FilesView.vue'),
+    props: true,
+    meta: { title: '工作区文件' },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('./views/SettingsView.vue'),

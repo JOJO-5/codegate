@@ -146,19 +146,14 @@ func (s *clientSession) onText(data []byte) error {
 	case protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
 		protocol.TypeSessionAttach, protocol.TypeSessionDetach, protocol.TypeSessionClose,
 		protocol.TypeSessionResize, protocol.TypeSessionSignal,
-		protocol.TypeSessionClaimControl:
+		protocol.TypeSessionClaimControl,
+		protocol.TypeFileList, protocol.TypeFileStat, protocol.TypeFileRead, protocol.TypeFileWrite,
+		protocol.TypeFileCancel:
 		s.routeRequest(env)
 		return nil
 
-	case protocol.TypeFileList, protocol.TypeFileStat, protocol.TypeFileRead,
-		protocol.TypeFileWrite:
-		// 文件传输是 Phase 8。回一条明确的错误，而不是静默丢弃 ——
-		// 静默丢弃会让前端永远停在 loading 上。
-		sendErrorEnvelope(s.c.TrySendText, env,
-			protocol.NewError(protocol.CodeInternal, "文件传输尚未实现（Phase 8）"))
-		return nil
 
-	case protocol.TypeFileAck, protocol.TypeFileCancel:
+	case protocol.TypeFileAck:
 		// 这两个是流控/取消通知，没有对应的实现，忽略即可。
 		return nil
 
@@ -242,17 +237,40 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		return
 	}
 
+	// Replay frames precede session.attached on the Agent connection. Subscribe
+	// before forwarding attach so the initial screen is not silently dropped.
+	var release func()
+	if env.Type == protocol.TypeSessionAttach && !s.c.IsAttached(sessionID) {
+		s.srv.reg.Subscribe(sessionID, s.c)
+		release = func() { s.srv.reg.Unsubscribe(sessionID, s.c) }
+	}
 	s.srv.pending.Add(env.RequestID, &pendingReq{
 		client:    s.c,
 		userID:    s.c.UserID,
 		deviceID:  deviceID,
 		sessionID: sessionID,
 		kind:      env.Type,
+		requestID: env.RequestID,
+		release:   release,
 	}, s.srv.now())
+
+	if env.Type == protocol.TypeSessionDetach {
+		p, err := protocol.DecodePayload[protocol.SessionDetachPayload](env)
+		if err != nil {
+			if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
+			sendErrorEnvelope(s.c.TrySendText, env, err)
+			return
+		}
+		// Ignore any attach_id supplied by the browser. Only this connection's
+		// authenticated attach may be detached.
+		p.AttachID = s.c.AttachID(sessionID)
+		env.Payload, err = json.Marshal(p)
+		if err != nil { return }
+	}
 
 	data, err := protocol.Encode(env)
 	if err != nil {
-		s.srv.pending.Take(env.RequestID)
+		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
 		s.srv.log.Error("编码客户端请求失败", "type", env.Type, "err", err)
 		sendErrorEnvelope(s.c.TrySendText, env,
 			protocol.NewError(protocol.CodeInternal, "internal error"))
@@ -263,7 +281,7 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		// 队列满 = 这台 Agent 的某条客户端连接堵住了。
 		// ★ 必须把待回请求撤掉，否则它会一直挂到 TTL 超时，
 		// 而前端在这 60 秒里什么都等不到。
-		s.srv.pending.Take(env.RequestID)
+		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
 		s.srv.log.Warn("转发请求失败：Agent 发送队列已满",
 			"device_id", deviceID, "type", env.Type)
 		sendErrorEnvelope(s.c.TrySendText, env,
@@ -344,16 +362,18 @@ func (s *clientSession) resolveTarget(env *protocol.Envelope) (string, string, e
 // 而 payload 里的是权威字段。不同客户端可能只填其中一个，
 // 所以两个都认。
 func sessionIDOf(env *protocol.Envelope) string {
-	if env.SessionID != "" {
-		return env.SessionID
-	}
 	if len(env.Payload) == 0 {
 		return ""
 	}
 	var p struct {
 		SessionID string `json:"session_id"`
 	}
-	if err := json.Unmarshal(env.Payload, &p); err != nil {
+	if err := json.Unmarshal(env.Payload, &p); err != nil || p.SessionID == "" {
+		return ""
+	}
+	// The payload is forwarded unchanged to the Agent. Never authorize the
+	// envelope's session and execute against a different payload session.
+	if env.SessionID != "" && env.SessionID != p.SessionID {
 		return ""
 	}
 	return p.SessionID
@@ -374,6 +394,7 @@ func (s *clientSession) detachAll() {
 	}
 
 	for _, sid := range sids {
+		attachID := s.c.AttachID(sid)
 		s.srv.reg.Unsubscribe(sid, s.c)
 		s.c.Detach(sid)
 
@@ -388,7 +409,7 @@ func (s *clientSession) detachAll() {
 		}
 
 		env, err := protocol.NewRequest(uuid.NewString(), protocol.TypeSessionDetach, sid,
-			protocol.SessionDetachPayload{SessionID: sid, Reason: "client_close"})
+			protocol.SessionDetachPayload{SessionID: sid, AttachID: attachID, Reason: "client_close"})
 		if err != nil {
 			continue
 		}

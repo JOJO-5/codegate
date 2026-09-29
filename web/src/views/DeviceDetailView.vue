@@ -308,11 +308,11 @@ function canOpen(s: SessionSummary): boolean {
           />
         </div>
 
-        <!-- Ctrl+C 的预期行为，在**创建之前**就告诉用户（§6.5） -->
-        <div v-if="selectedPreset?.kind === 'shell'" class="notice notice--warn">
+        <!-- Windows shell 的 ConPTY 中断限制。 -->
+        <div v-if="selectedPreset?.kind === 'shell' && device?.platform === 'windows'" class="notice notice--warn">
           <strong>{{ selectedPreset.label }}</strong> 属于 shell 类程序。在 Windows 上，
           系统自带的 ConPTY 无法把中断信号送达它 —— 会话里的 Ctrl+C 按钮会被禁用。
-          需要停下长命令时，请用终端页的「终止会话」。
+          终端内的 Ctrl+C 会被屏蔽以免关闭会话；结束整个会话请使用「关闭会话」。
         </div>
 
         <div v-if="createError" class="notice notice--err">{{ createError }}</div>
