@@ -79,3 +79,9 @@ sh scripts/agent-autostart-macos.sh uninstall
 LaunchDaemon 以当前用户身份运行 Agent，二进制位于 `/usr/local/libexec/codegate/codegate-agent`，设备私钥仍留在该用户目录。macOS 的 FileVault 冷启动需要先解锁磁盘，系统才能启动任何守护进程；模型凭据如果只在登录钥匙串里，登录前的 CLI 也可能无法读取。请在目标机器上完成一次重启、未登录状态的设备上线与 TUI 操作验证。
 
 更新 Agent 时重新构建并执行 `install`。卸载脚本仅移除自启服务，保留配置和设备密钥；迁移机器或重装系统时请单独备份状态目录。Linux/macOS 的 CI 已验证 PTY 读写、尺寸、Ctrl+C、关闭与 Go 包测试，但无法替代目标机器的开机和模型凭据验证。
+
+## 空闲时检查更新包（可选）
+
+Agent 构建时须注入版本号，例如 `go build -ldflags '-X main.version=v1.2.3' -o bin/codegate-agent ./cmd/codegate-agent`。在 `agent.json` 中加入 `"update_manifest_url": "https://updates.example.com/linux-amd64.json"`，可再加入 `"update_interval": "1h"`。Windows 和 macOS 使用各自 OS/架构的清单 URL；`dev` 构建不会检查更新。更新源由部署者控制，不要使用不可信的地址。
+
+清单示例：`{"version":"v1.2.4","os":"linux","arch":"amd64","url":"https://updates.example.com/codegate-agent-v1.2.4-linux-amd64","sha256":"<64 位十六进制 SHA-256>","size":12345678}`。清单与二进制须为同一 HTTPS 主机，不能重定向；版本必须为更高的 `v主.次.修订`，大小不超过 100 MiB。Agent 只在会话管理器没有任何会话时开始下载；下载中若新建会话就取消，完整校验大小及 SHA-256 后暂存于状态目录的 `updates/`。当前版本**只暂存，不自动替换运行中的 Agent**；安装与重启仍需在确认无会话后按上面的安装流程操作。私有 GitHub Release 需要认证，不能直接作为无凭据的下载源，也不要把仓库令牌写入 Agent 配置。
