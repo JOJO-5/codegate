@@ -51,7 +51,7 @@ cat > "$tmp" <<PLIST
   <key>ProgramArguments</key>
   <array>
     <string>$binary</string>
-    <string>run</string>
+    <string>supervise</string>
     <string>-config</string>
     <string>$escaped_config</string>
   </array>

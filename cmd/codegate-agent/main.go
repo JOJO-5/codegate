@@ -57,6 +57,8 @@ func dispatch(args []string) error {
 	switch cmd {
 	case "run":
 		return cmdRun(rest)
+	case "supervise":
+		return cmdSupervise(rest)
 	case "pair":
 		return cmdPair(rest)
 	case "status":
@@ -85,6 +87,7 @@ func usage(w *os.File) {
 
 子命令:
   run       启动 Agent（常驻，断线自动重连）
+  supervise 作为开机服务运行 Agent 并管理空闲更新
   pair      生成配对码，把本机绑定到账号
   status    查看本机设备身份与状态目录
   config    打印生效的配置（含默认值）
@@ -133,6 +136,12 @@ func cmdRun(args []string) error {
 	// 让子进程收到正确的终止信号，也不留下孤儿 conhost。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if os.Getenv("CODEGATE_AGENT_SUPERVISED") == "1" {
+		a.OnVerifiedUpdate = func(path, version string) error {
+			return queueVerifiedUpdate(a, cfg.StateDir, path, version, stop)
+		}
+	}
 
 	log.Info("CodeGate Agent 启动",
 		"version", agent.Version,

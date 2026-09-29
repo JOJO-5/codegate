@@ -241,6 +241,16 @@ func (m *Manager) Close(id uuid.UUID, reason string) error {
 	return s.Close(reason)
 }
 
+// FreezeIfEmpty atomically prevents any new session once every old session is gone.
+// The updater uses it before asking the supervisor to restart the Agent.
+func (m *Manager) FreezeIfEmpty() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || len(m.sessions) != 0 { return false }
+	m.closed = true
+	return true
+}
+
 // CloseAll 关闭全部会话。用于 Agent 优雅退出。
 //
 // 返回出错的数量：单个会话关不掉不应该阻断整个关闭流程，

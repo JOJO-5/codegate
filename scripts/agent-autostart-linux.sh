@@ -42,7 +42,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/codegate-agent run -config %h/.config/codegate/agent.json
+ExecStart=%h/.local/bin/codegate-agent supervise -config %h/.config/codegate/agent.json
 Restart=always
 RestartSec=5
 
