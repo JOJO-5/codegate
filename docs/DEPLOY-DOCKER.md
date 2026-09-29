@@ -165,17 +165,24 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\Code
 
 设备上的 Agent 可以启动配置中授权的普通 Shell 和交互式 CLI，浏览器中使用的是该机器的真实 PTY。新 Agent 会在心跳中检查已配置命令是否能从开机服务的 PATH 找到，并额外检测 Claude Code、Codex、OpenCode、DSH 的可执行文件。检测结果仅用于展示，**不会自动授权**。想让一个程序出现在“新建会话”菜单，仍需在目标机器的 `agent.json` 添加 `allowed_commands` 并重启 Agent。
 
-DeepSeek Harness 的 `dsh` 命令本身是 profile 启动器。先在目标机器为 TUI 安装插件（例如 dsh-code 的 `cli` profile），并在同一用户账号下确认 `dsh --profile cli` 能打开交互界面。随后可在 `allowed_commands` 添加：
+DeepSeek Harness 的 `dsh` 命令本身是 profile 启动器；CodeGate 检测到它不代表 TUI 插件已就绪。在目标机器以运行 Agent 的同一用户安装官方文档给出的示例插件，并确认能启动交互界面：
+
+```sh
+dsh plugin --profile tui add github:deepseek-harness/turtle-ui
+dsh --profile tui
+```
+
+插件管理需要 `pnpm`；安装 Git 源码插件时，可能还需按 DSH 提示在该 profile 的 `pnpm-workspace.yaml` 允许构建后重试。验证成功再在 `allowed_commands` 添加：
 
 ```json
 {
   "id": "dsh",
   "label": "DeepSeek Harness",
   "command": "dsh",
-  "args": ["--profile", "cli"],
+  "args": ["--profile", "tui"],
   "kind": "tui",
   "web_url": "https://dsh.example.com"
 }
 ```
 
-`web_url` 可选，必须是你**另外部署并完成 HTTPS 与登录保护**的 DSH Web 地址。设备页会显示“打开独立 Web UI”，它与 CodeGate 的终端会话不是同一个页面或认证系统。仅执行 `dsh web` 默认绑定的 `127.0.0.1:3080` 不会让远端浏览器自动可达；需要你自己的安全反向代理或访问隧道。也可以将 `args` 改为 `["--profile","tui"]`，前提是该 profile 已安装 TUI 插件。
+`web_url` 可选，必须是你**另外部署并完成 HTTPS 与登录保护**的 DSH Web 地址。设备页会显示“打开独立 Web UI”，它与 CodeGate 的终端会话不是同一个页面或认证系统。仅执行 `dsh web` 默认绑定的 `127.0.0.1:3080` 不会让远端浏览器自动可达；需要你自己的安全反向代理或访问隧道。CodeGate 当前只提供外部 Web 地址跳转；尚未内置从 Server 到 Agent 本机端口的 HTTP/WebSocket 转发。后续内置转发应通过现有 Agent 出站连接，只允许固定的 DSH loopback 目标，复用设备访问权限，并处理 DSH 的 Host/Origin 校验、浏览器令牌、Cookie 与 WebSocket；完成前不能将 `web_url` 当作内建代理。
