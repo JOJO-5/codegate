@@ -7,6 +7,7 @@ unit_dir="$HOME/.config/systemd/user"
 unit="$unit_dir/codegate-agent.service"
 binary="$HOME/.local/bin/codegate-agent"
 config="$HOME/.config/codegate/agent.json"
+account=$(id -un)
 
 command -v systemctl >/dev/null 2>&1 || { echo '需要 systemd。' >&2; exit 1; }
 case "$action" in
@@ -51,9 +52,9 @@ UNIT
 
 # A user service normally starts at login. Linger starts the user manager at boot.
 if command -v loginctl >/dev/null 2>&1; then
-  if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != yes ]; then
+  if [ "$(loginctl show-user "$account" -p Linger --value 2>/dev/null)" != yes ]; then
     echo '启用 linger 需要管理员授权，以便登录前运行 Agent。'
-    sudo loginctl enable-linger "$USER"
+    sudo loginctl enable-linger "$account"
   fi
 else
   echo '缺少 loginctl，无法保证登录前运行。' >&2
