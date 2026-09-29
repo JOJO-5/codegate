@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
+	"log/slog"
 	"errors"
 	"io"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jojo/codegate/internal/protocol"
 	"github.com/jojo/codegate/internal/session"
 	"github.com/jojo/codegate/internal/terminal"
 )
@@ -50,4 +53,37 @@ func TestFilePathConfinedToSessionWorkspace(t *testing.T) {
 			t.Fatalf("symlink escaped session cwd: %v",err)
 		}
 	}
+}
+
+func TestFileUploadChunksAtomically(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil { t.Fatal(err) }
+	mgr := session.NewManager(func(context.Context, terminal.StartConfig) (terminal.Terminal,error) {
+		return &filesTestTerminal{done: make(chan struct{})},nil
+	}, session.Config{})
+	defer mgr.CloseAll("test")
+	sess, err := mgr.Create(context.Background(), session.CreateRequest{
+		DeviceID:uuid.New(), UserID:uuid.New(), Cwd:root, Command:"test", Cols:80, Rows:24,
+	})
+	if err != nil { t.Fatal(err) }
+	a := &Agent{ws:NewWorkspace([]string{root}), mgr:mgr, uploads:make(map[string]*fileUpload), log:slog.Default()}
+	defer a.closeUploads()
+	id := uuid.NewString()
+	for i, piece := range []string{"abc","def"} {
+		req, err := protocol.NewRequest(uuid.NewString(), protocol.TypeFileWrite, sess.ID.String(),
+			protocol.FileWritePayload{
+				SessionID:sess.ID.String(), UploadID:id, Path:"test.txt", Size:6,
+				Offset:int64(i*3), Data:base64.StdEncoding.EncodeToString([]byte(piece)), Final:i==1,
+			})
+		if err != nil { t.Fatal(err) }
+		a.onFileWrite(req)
+		if i==0 {
+			if _, err := os.Stat(filepath.Join(root,"test.txt")); !errors.Is(err,os.ErrNotExist) {
+				t.Fatalf("partial upload published early: %v",err)
+			}
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(root,"test.txt"))
+	if err != nil || string(got)!="abcdef" { t.Fatalf("uploaded = %q, err=%v",got,err) }
+	if len(a.uploads)!=0 { t.Fatalf("completed upload left state: %d",len(a.uploads)) }
 }
