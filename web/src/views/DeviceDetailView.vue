@@ -35,7 +35,9 @@ async function loadUpdateStatus(): Promise<void> {
   if (updateLoading) return
   updateLoading = true
   try {
-    updateInfo.value = await api.getDeviceUpdateStatus(props.id)
+    const status = await api.getDeviceUpdateStatus(props.id)
+    updateInfo.value = status
+    devices.patch(props.id, { online: status.online, ...(status.agent_version ? { agent_version: status.agent_version } : {}) })
   } catch {
     updateInfo.value = null
   } finally {

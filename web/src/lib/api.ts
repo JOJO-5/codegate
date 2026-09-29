@@ -260,6 +260,7 @@ export interface AgentUpdateStatus {
 
 export interface DeviceUpdateStatus {
   online: boolean
+  agent_version?: string
   update: AgentUpdateStatus | null
 }
 
