@@ -7,6 +7,9 @@ on:
       - 'internal/agent/**'
       - 'internal/session/**'
       - 'cmd/codegate-agent/**'
+      - 'scripts/agent-autostart-linux.sh'
+      - 'scripts/agent-autostart-macos.sh'
+      - 'web/src/views/DevicesView.vue'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/unix-agent.yml'
@@ -25,6 +28,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Check boot scripts
+        run: |
+          sh -n scripts/agent-autostart-linux.sh
+          sh -n scripts/agent-autostart-macos.sh
       - name: Build Agent
         run: go build ./cmd/codegate-agent
       - name: Test PTY integration
