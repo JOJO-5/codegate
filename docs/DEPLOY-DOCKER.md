@@ -1,6 +1,6 @@
 # Docker Compose 部署
 
-Compose 只运行 **Server**。要控制的电脑仍需运行 Windows 原生 Agent；Linux/macOS Agent 的 PTY 尚未实现，不能靠把 Agent 放进容器来替代。Server 镜像构建时会编译 Web 前端并嵌入二进制。
+Compose 只运行 **Server**。要控制的电脑需运行对应系统的原生 Agent；Windows、Linux、macOS 均支持终端会话。Linux/macOS Agent 的接入见 [Unix Agent 指南](DEPLOY-AGENT-UNIX.md)。Server 镜像构建时会编译 Web 前端并嵌入二进制。
 
 ## 一条命令安装预构建 Server（Linux / macOS）
 
