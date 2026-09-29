@@ -54,13 +54,6 @@ export const PRESETS: CommandPreset[] = [
     kind: 'tui',
   },
   {
-    id: 'claude-resume',
-    label: 'Claude Code（继续上次）',
-    hint: '带上 --continue，恢复上一个对话',
-    kind: 'tui',
-    resume: true,
-  },
-  {
     id: 'codex',
     label: 'Codex CLI',
     hint: 'OpenAI Codex',

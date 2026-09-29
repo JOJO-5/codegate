@@ -43,6 +43,14 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 		a.onSessionList(env)
 	case protocol.TypeSessionGet:
 		a.onSessionGet(env)
+	case protocol.TypeFileList:
+		a.onFileList(env)
+	case protocol.TypeFileStat:
+		a.onFileStat(env)
+	case protocol.TypeFileRead:
+		a.onFileRead(env)
+	case protocol.TypeFileWrite:
+		a.onFileWrite(env)
 	case protocol.TypePing:
 		a.reply(env, protocol.TypePong, nil)
 	case protocol.TypePong:

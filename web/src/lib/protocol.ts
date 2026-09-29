@@ -143,6 +143,7 @@ export const MessageType = {
   FileStatResult: 'file.stat.result',
   FileRead: 'file.read',
   FileReadBegin: 'file.read.begin',
+  FileReadResult: 'file.read.result',
   FileAck: 'file.ack',
   FileWrite: 'file.write',
   FileWriteReady: 'file.write.ready',

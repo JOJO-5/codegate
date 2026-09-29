@@ -146,17 +146,11 @@ func (s *clientSession) onText(data []byte) error {
 	case protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
 		protocol.TypeSessionAttach, protocol.TypeSessionDetach, protocol.TypeSessionClose,
 		protocol.TypeSessionResize, protocol.TypeSessionSignal,
-		protocol.TypeSessionClaimControl:
+		protocol.TypeSessionClaimControl,
+		protocol.TypeFileList, protocol.TypeFileStat, protocol.TypeFileRead, protocol.TypeFileWrite:
 		s.routeRequest(env)
 		return nil
 
-	case protocol.TypeFileList, protocol.TypeFileStat, protocol.TypeFileRead,
-		protocol.TypeFileWrite:
-		// 文件传输是 Phase 8。回一条明确的错误，而不是静默丢弃 ——
-		// 静默丢弃会让前端永远停在 loading 上。
-		sendErrorEnvelope(s.c.TrySendText, env,
-			protocol.NewError(protocol.CodeInternal, "文件传输尚未实现（Phase 8）"))
-		return nil
 
 	case protocol.TypeFileAck, protocol.TypeFileCancel:
 		// 这两个是流控/取消通知，没有对应的实现，忽略即可。

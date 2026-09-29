@@ -352,6 +352,7 @@ type ErrorPayload struct {
 
 // FileListPayload 请求列目录。
 type FileListPayload struct {
+	SessionID string `json:"session_id"`
 	Path string `json:"path"` // 空串 = 列根目录
 }
 
@@ -374,6 +375,7 @@ type FileEntry struct {
 
 // FileStatPayload 请求单个文件的元信息。
 type FileStatPayload struct {
+	SessionID string `json:"session_id"`
 	Path string `json:"path"`
 }
 
@@ -396,9 +398,18 @@ type FileStatResultPayload struct {
 //
 // Length 为 0 表示读到文件末尾；预览时前端传 64 KB。
 type FileReadPayload struct {
+	SessionID string `json:"session_id"`
 	Path   string `json:"path"`
 	Offset int64  `json:"offset"`
 	Length int64  `json:"length"`
+}
+
+// FileReadResultPayload 返回一个有界文件块。数据为 base64，前端按 offset 顺序拼接。
+type FileReadResultPayload struct {
+	Path string `json:"path"`
+	Size int64 `json:"size"`
+	Offset int64 `json:"offset"`
+	Data string `json:"data"`
 }
 
 // FileReadBeginPayload 通知传输即将开始。
@@ -424,6 +435,11 @@ type FileAckPayload struct {
 
 // FileWritePayload 请求上传。
 type FileWritePayload struct {
+	SessionID string `json:"session_id"`
+	UploadID string `json:"upload_id"`
+	Offset int64 `json:"offset"`
+	Data string `json:"data"`
+	Final bool `json:"final"`
 	Path string `json:"path"`
 	Size int64  `json:"size"`
 	// Overwrite 默认为 false：目标已存在时拒绝。

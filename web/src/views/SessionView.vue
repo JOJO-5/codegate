@@ -33,7 +33,7 @@
  *   - `FlagBufferEnd` 只用来判断「重放结束」，不参与计数
  */
 
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -43,6 +43,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 
 import { useConnStore } from '../stores/conn'
 import { useSessionsStore } from '../stores/sessions'
+import { useDevicesStore } from '../stores/devices'
 import {
   FrameFlag,
   FrameType,
@@ -60,6 +61,7 @@ const props = defineProps<{ id: string }>()
 
 const conn = useConnStore()
 const sessions = useSessionsStore()
+const devices = useDevicesStore()
 const router = useRouter()
 
 const hostEl = ref<HTMLDivElement | null>(null)
@@ -89,6 +91,7 @@ const kind = computed(() => {
   return classifyCommand(s.name ?? '')
 })
 const isShell = computed(() => kind.value === 'shell')
+const windowsShell = computed(() => isShell.value && devices.byId(summary.value?.device_id ?? '')?.platform === 'windows')
 const isLive = computed(() => {
   const st = summary.value?.status
   return st === 'starting' || st === 'running' || st === 'detached'
@@ -142,11 +145,11 @@ function sendResize(): void {
   if (t.cols === sentCols && t.rows === sentRows) return
   sentCols = t.cols
   sentRows = t.rows
-  conn.notify(
+  void conn.request(
     MessageType.SessionResize,
     { session_id: sessionId.value, cols: t.cols, rows: t.rows },
     sessionId.value,
-  )
+  ).catch(() => {})
 }
 
 function onFrame(frame: DecodedFrame): void {
@@ -266,12 +269,12 @@ async function attach(since: number): Promise<void> {
 
 /** Ctrl+C：只有 tui 类命令可用（§6.5）。 */
 function sendInterrupt(): void {
-  if (isShell.value) return
-  conn.notify(
+  if (windowsShell.value || role.value !== 'controller' || !isLive.value) return
+  void conn.request(
     MessageType.SessionSignal,
     { session_id: sessionId.value, signal: 'int' },
     sessionId.value,
-  )
+  ).catch((e) => { errorText.value = humanizeError(e) })
 }
 
 /** 「终止会话」：shell 类命令的唯一可靠停止方式。 */
@@ -295,6 +298,11 @@ function goBack(): void {
     void router.push({ name: 'devices' })
   }
 }
+
+// Reattach only the current session after a new WebSocket connection.
+watch(() => conn.reconnectCount, () => {
+  if (conn.isOpen && term !== null) void attach(lastSeq)
+})
 
 // ---------------------------------------------------------------------------
 // 搜索
@@ -327,6 +335,7 @@ function findPrev(): void {
 
 onMounted(async () => {
   await nextTick()
+  await devices.load()
 
   const host = hostEl.value
   if (host === null) return
@@ -385,7 +394,13 @@ onMounted(async () => {
 
   // ---- 输入 ----
   t.onData((data) => {
-    sendText(data)
+    // Windows ConPTY treats Ctrl+C in a cooked shell as EOF, which can close
+    // the shell. Suppress it there; on Unix and in TUIs, keep native input.
+    if (windowsShell.value && data.includes('\x03')) {
+      errorText.value = 'Windows shell 无法安全接收 Ctrl+C；请在 CLI 内使用自己的停止命令。会话仍在运行。'
+      return
+    }
+    if (role.value === 'controller' && isLive.value) sendText(data)
   })
   // 8-bit 输入（鼠标协议、某些终端的粘贴）走这条
   t.onBinary((data) => {
@@ -438,6 +453,8 @@ onMounted(async () => {
   // ---- attach ----
   await attach(0)
 
+  // A new WebSocket has no server-side attachment. Reattach this exact
+  // session from its last output byte; never create a second process.
   // ---- resize ----
   ro = new ResizeObserver(() => {
     if (resizeTimer !== null) clearTimeout(resizeTimer)
@@ -475,7 +492,7 @@ onUnmounted(() => {
 
   // 主动 detach：让服务端把会话标成 detached（PTY 继续跑，I2 不变量）
   if (conn.isOpen) {
-    conn.notify(MessageType.SessionDetach, { session_id: sessionId.value, reason: 'client_close' }, sessionId.value)
+    void conn.request(MessageType.SessionDetach, { session_id: sessionId.value, reason: 'client_close' }, sessionId.value).catch(() => {})
   }
 
   term?.dispose()
@@ -490,6 +507,7 @@ onUnmounted(() => {
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
       <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 返回</button>
+      <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">文件</button>
 
       <span class="term__title" :title="summary?.name ?? sessionId">
         {{ summary?.name || summary?.command || sessionId }}
@@ -562,9 +580,8 @@ onUnmounted(() => {
         所以这里的责任是**如实告知 + 给替代动作**：
         绝不呈现一个点了没反应的按钮 —— 那比没有按钮更糟。
       -->
-      <div v-if="isShell" class="notice notice--warn small" style="margin-bottom: 6px">
-        该命令（shell 类）在 Windows 上无法接收中断信号，Ctrl+C 已禁用。
-        需要停下正在跑的命令时，请用右边的「终止会话」。
+      <div v-if="windowsShell" class="notice notice--warn small" style="margin-bottom: 6px">
+        Windows shell 的 Ctrl+C 会被 ConPTY 当成 EOF，因此已屏蔽该按键以保护会话。需要结束整个会话时，请点击「关闭会话」。
       </div>
 
       <div class="row" style="gap: 6px; flex-wrap: wrap">
@@ -578,8 +595,8 @@ onUnmounted(() => {
         <button
           class="btn btn--sm"
           type="button"
-          :disabled="isShell || !conn.isOpen || !isLive"
-          :title="isShell ? '该命令在 Windows 上无法接收中断信号' : '发送中断信号 (Ctrl+C)'"
+          :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive"
+          :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'"
           @click="sendInterrupt"
         >
           Ctrl+C
@@ -591,11 +608,11 @@ onUnmounted(() => {
           class="btn btn--sm btn--danger"
           type="button"
           :disabled="exiting || !conn.isOpen || !isLive"
-          title="强制结束这个会话的进程"
+          title="关闭这个会话并结束进程"
           @click="terminate"
         >
           <span v-if="exiting" class="spinner" />
-          终止会话
+          关闭会话
         </button>
       </div>
     </div>
