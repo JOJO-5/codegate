@@ -105,6 +105,7 @@ func TestDeviceIDOR(t *testing.T) {
 		{"改名", http.MethodPatch, "/api/v1/devices/" + victim, map[string]string{"name": "pwned"}},
 		{"删除", http.MethodDelete, "/api/v1/devices/" + victim, nil},
 		{"读会话", http.MethodGet, "/api/v1/devices/" + victim + "/sessions", nil},
+		{"读更新状态", http.MethodGet, "/api/v1/devices/" + victim + "/update-status", nil},
 	}
 
 	for _, tc := range cases {
@@ -192,6 +193,7 @@ func TestDeviceEndpointsAgreeOnForeignDevice(t *testing.T) {
 	}{
 		{"详情", http.MethodGet, "/api/v1/devices/%s", nil},
 		{"会话", http.MethodGet, "/api/v1/devices/%s/sessions", nil},
+		{"更新状态", http.MethodGet, "/api/v1/devices/%s/update-status", nil},
 		{"改名", http.MethodPatch, "/api/v1/devices/%s", map[string]string{"name": "x"}},
 		{"删除", http.MethodDelete, "/api/v1/devices/%s", nil},
 	}

@@ -59,6 +59,8 @@ type AgentConn struct {
 
 	lastSeen  atomic.Int64 // Unix 毫秒
 	caps      protocol.AgentCaps
+	updateMu sync.RWMutex
+	updateStatus *protocol.AgentUpdateStatus
 	agentVer  string
 	platform  string
 	connected time.Time
@@ -135,6 +137,21 @@ func (c *AgentConn) Caps() protocol.AgentCaps { return c.caps }
 
 // AgentVersion 返回 Agent 版本（审计与展示用）。
 func (c *AgentConn) AgentVersion() string { return c.agentVer }
+
+// UpdateStatus is scoped to this authenticated connection and cannot outlive it.
+func (c *AgentConn) UpdateStatus() *protocol.AgentUpdateStatus {
+	c.updateMu.RLock()
+	defer c.updateMu.RUnlock()
+	if c.updateStatus == nil { return nil }
+	copy := *c.updateStatus
+	return &copy
+}
+
+func (c *AgentConn) SetUpdateStatus(status protocol.AgentUpdateStatus) {
+	c.updateMu.Lock()
+	defer c.updateMu.Unlock()
+	c.updateStatus = &status
+}
 
 // SetSessions 整体替换该 Agent 持有的会话集合。
 //

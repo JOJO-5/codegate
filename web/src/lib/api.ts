@@ -249,6 +249,20 @@ export interface DeviceDTO {
   created_at: string
 }
 
+export interface AgentUpdateStatus {
+  enabled: boolean
+  state: 'disabled' | 'waiting' | 'checking' | 'current' | 'staged' | 'switching' | 'error'
+  version?: string
+  detail?: string
+  checked_at?: number
+  last_failure?: { version: string; reason: string; occurred_at: number }
+}
+
+export interface DeviceUpdateStatus {
+  online: boolean
+  update: AgentUpdateStatus | null
+}
+
 /** `pairPreviewResponse` —— 两阶段配对的核心（§10.4）。 */
 export interface PairPreview {
   device_id: string
@@ -350,6 +364,10 @@ export const api = {
 
   getDevice(id: string): Promise<DeviceDTO> {
     return request<DeviceDTO>('GET', `/devices/${encodeURIComponent(id)}`)
+  },
+
+  getDeviceUpdateStatus(id: string): Promise<DeviceUpdateStatus> {
+    return request<DeviceUpdateStatus>('GET', `/devices/${encodeURIComponent(id)}/update-status`)
   },
 
   renameDevice(id: string, name: string): Promise<DeviceDTO> {

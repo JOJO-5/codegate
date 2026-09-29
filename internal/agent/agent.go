@@ -38,6 +38,9 @@ type Agent struct {
 	// OnVerifiedUpdate is set by the supervised CLI before Run starts.
 	OnVerifiedUpdate func(path, version string) error
 
+	updateMu sync.RWMutex
+	updateStatus protocol.AgentUpdateStatus
+
 	connMu sync.RWMutex
 	conn   *Conn
 
@@ -99,6 +102,7 @@ func NewWithIdentity(cfg Config, id *Identity, log *slog.Logger) (*Agent, error)
 		mgr:       session.NewManager(factory, session.Config{BufferSize: cfg.BufferSize, MaxSessions: cfg.MaxSessions}),
 		log:       log,
 		startedAt: time.Now(),
+		updateStatus: protocol.AgentUpdateStatus{Enabled: cfg.UpdateEnabled && Version != "dev", State: "disabled"},
 		views:     make(map[uuid.UUID]map[string]struct{}),
 		uploads:   make(map[string]*fileUpload),
 	}, nil
@@ -225,6 +229,7 @@ func (a *Agent) runOnce(ctx context.Context) error {
 	// 它记录的旧会话已经不存在了，必须标成 terminated 而不是
 	// 在 UI 上留一个永远 attach 不上的幽灵。
 	a.sendSessionSync()
+	_ = a.sendHeartbeat(ctx)
 
 	// 心跳 + 分发切换到运行阶段。
 	hbCtx, cancelHB := context.WithCancel(ctx)

@@ -72,6 +72,8 @@ const summary = ref<SessionSummary | null>(null)
 const role = ref<'controller' | 'viewer'>('viewer')
 const replaying = ref(false)
 const exiting = ref(false)
+const confirmTerminate = ref(false)
+const replayWarning = ref(false)
 const exitInfo = ref<SessionExitPayload | null>(null)
 const errorText = ref<string | null>(null)
 
@@ -201,6 +203,7 @@ function onControl(env: Envelope): void {
     case MessageType.SessionExit: {
       const e = env.payload as SessionExitPayload
       exitInfo.value = e
+      if (summary.value) summary.value = { ...summary.value, status: 'exited' }
       sessions.patch(sessionId.value, {
         status: 'exited',
         ...(typeof e.exit_code === 'number' ? { exit_code: e.exit_code } : {}),
@@ -209,9 +212,11 @@ function onControl(env: Envelope): void {
     }
     case MessageType.SessionClosed:
       exitInfo.value = { session_id: sessionId.value, exit_code: -1, reason: 'terminated' }
+      if (summary.value) summary.value = { ...summary.value, status: 'terminated' }
       sessions.patch(sessionId.value, { status: 'terminated' })
       break
     case MessageType.SessionDetached:
+      if (summary.value) summary.value = { ...summary.value, status: 'detached' }
       sessions.patch(sessionId.value, { status: 'detached' })
       break
     case MessageType.SessionRoleChanged: {
@@ -258,9 +263,7 @@ async function attach(since: number): Promise<void> {
     lastSeq = p.seq_to
     replaying.value = p.seq_from < since && since > 0
 
-    if (p.seq_from > since && since > 0) {
-      errorText.value = null
-    }
+    replayWarning.value = p.seq_from > since && since > 0
   } catch (e) {
     errorText.value = humanizeError(e)
   }
@@ -286,6 +289,7 @@ async function terminate(): Promise<void> {
   errorText.value = null
   try {
     await sessions.close(sessionId.value)
+    confirmTerminate.value = false
   } catch (e) {
     errorText.value = humanizeError(e)
   } finally {
@@ -521,7 +525,7 @@ onUnmounted(() => {
         {{ statusLabel(summary.status) }}
       </span>
       <span v-if="role === 'viewer'" class="badge badge--idle">只读</span>
-      <span v-if="!conn.isOpen" class="badge badge--warn">连接中断</span>
+      <span v-if="!conn.isOpen" class="badge badge--warn">连接中断 · 会话保留</span>
     </div>
 
     <!-- ---- 终端 ---- -->
@@ -569,6 +573,9 @@ onUnmounted(() => {
         <button class="btn btn--ghost btn--sm" type="button" @click="closeSearch">关闭</button>
       </div>
 
+      <div v-if="replayWarning" class="notice notice--warn small" style="margin-bottom: 6px">
+        已接回原会话，但离线期间部分较早的输出已超过缓存范围；当前终端显示的是仍可恢复的内容。
+      </div>
       <div v-if="errorText !== null" class="notice notice--err small" style="margin-bottom: 6px">
         {{ errorText }}
       </div>
@@ -588,6 +595,15 @@ onUnmounted(() => {
         Windows shell 的 Ctrl+C 会被 ConPTY 当成 EOF，因此已屏蔽该按键以保护会话。需要结束整个会话时，请点击「关闭会话」。
       </div>
 
+      <div v-if="confirmTerminate" class="notice notice--warn small" role="alert" style="margin-bottom: 6px">
+        关闭「{{ summary?.name || summary?.command || sessionId }}」会结束远端进程；返回设备或关闭网页只会断开显示，会话会继续运行。
+        <div class="row" style="margin-top: 8px">
+          <button class="btn btn--danger btn--sm" type="button" :disabled="exiting || !conn.isOpen" @click="terminate">
+            <span v-if="exiting" class="spinner" />确定结束进程
+          </button>
+          <button class="btn btn--sm" type="button" :disabled="exiting" @click="confirmTerminate = false">取消</button>
+        </div>
+      </div>
       <div class="row" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" @click="sendText('\x1b')">Esc</button>
         <button class="btn btn--sm" type="button" @click="sendText('\t')">Tab</button>
@@ -613,7 +629,7 @@ onUnmounted(() => {
           type="button"
           :disabled="exiting || !conn.isOpen || !isLive"
           title="关闭这个会话并结束进程"
-          @click="terminate"
+          @click="confirmTerminate = true"
         >
           <span v-if="exiting" class="spinner" />
           关闭会话
