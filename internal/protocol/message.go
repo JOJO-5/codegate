@@ -36,6 +36,22 @@ type Envelope struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
+// WebStartPayload carries the trusted public authority for one DSH Web instance.
+// Agent always binds DSH to loopback; this field is only a DSH Host/Origin allowlist entry.
+type WebStartPayload struct {
+	Host string `json:"host"`
+}
+
+// WebStartedPayload holds DSH's browser cookie. It stays on the authenticated
+// Server-Agent connection and must never be returned to a browser or logged.
+type WebStartedPayload struct {
+	Cookie string `json:"cookie"`
+}
+
+type WebStreamPayload struct {
+	StreamID string `json:"stream_id"`
+}
+
 // NewEnvelope 构造一个信封并把 payload 序列化进去。
 // payload 传 nil 时 Payload 为空。
 func NewEnvelope(t Type, payload any) (*Envelope, error) {

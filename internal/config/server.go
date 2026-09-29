@@ -30,6 +30,9 @@ type Config struct {
 	// ---- 网络 ----
 	Listen  string // 形如 ":8080" 或 "127.0.0.1:8080"
 	BaseURL string // 对外地址，用于 Origin 校验与 cookie 作用域。为空则按请求 Host 推断
+	// DSHProxyDomain is a dedicated wildcard HTTPS domain, e.g. dsh.example.com.
+	// Each device uses <32 hex device id>.dsh.example.com. Empty disables Web proxy.
+	DSHProxyDomain string
 
 	TLS TLSConfig
 
@@ -120,6 +123,9 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	}
 	if v := getenv("CODEGATE_BASE_URL"); v != "" {
 		c.BaseURL = strings.TrimRight(v, "/")
+	}
+	if v := getenv("CODEGATE_DSH_PROXY_DOMAIN"); v != "" {
+		c.DSHProxyDomain = strings.ToLower(strings.TrimSpace(v))
 	}
 	if v := getenv("CODEGATE_DB_PATH"); v != "" {
 		c.DBPath = v
@@ -288,6 +294,18 @@ func (c *Config) Validate() error {
 		u, err := url.Parse(c.BaseURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 			problems = append(problems, fmt.Sprintf("base_url 不是合法 http(s) 地址: %q", c.BaseURL))
+		}
+	}
+	if c.DSHProxyDomain != "" {
+		if strings.ContainsAny(c.DSHProxyDomain, "/: ") || strings.HasPrefix(c.DSHProxyDomain, ".") ||
+			strings.HasSuffix(c.DSHProxyDomain, ".") || !strings.Contains(c.DSHProxyDomain, ".") {
+			problems = append(problems, "dsh_proxy_domain 必须是独立域名，不能包含 scheme、端口或路径")
+		}
+		if c.BaseURL == "" || !strings.HasPrefix(c.BaseURL, "https://") {
+			problems = append(problems, "启用 dsh_proxy_domain 时 base_url 必须是 HTTPS")
+		} else if u, err := url.Parse(c.BaseURL); err == nil &&
+			(u.Hostname() == c.DSHProxyDomain || strings.HasSuffix(u.Hostname(), "."+c.DSHProxyDomain)) {
+			problems = append(problems, "DSH 域名不能与 CodeGate 主站共用来源")
 		}
 	}
 	switch c.LogLevel {

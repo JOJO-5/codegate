@@ -724,8 +724,8 @@ func (s *Server) handleDeviceUpdateStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if agent, ok := s.reg.Agent(deviceID); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus(), "commands": agent.Commands()})
+		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus(), "commands": agent.Commands(), "web_proxy_enabled": s.cfg.DSHProxyDomain != ""})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil, "commands": []protocol.CommandAvailability{}})
+	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil, "commands": []protocol.CommandAvailability{}, "web_proxy_enabled": s.cfg.DSHProxyDomain != ""})
 }

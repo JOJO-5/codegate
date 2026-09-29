@@ -41,6 +41,7 @@ type Server struct {
 	// tickets 是浏览器 WS 连接用的一次性票据。
 	tickets *ticketStore
 	installTickets *installTicketStore
+	web *webGateway
 
 	// pairs 保存「已发配对码、等浏览器确认」的 Agent 连接。
 	//
@@ -123,6 +124,7 @@ func New(o Options) (*Server, error) {
 		tokens:  tokens,
 		tickets: newTicketStore(),
 		installTickets: newInstallTicketStore(),
+		web: newWebGateway(),
 		pairs:   newPairRegistry(),
 		pending: newPendingRegistry(),
 
@@ -342,6 +344,7 @@ func (s *Server) runCleanup() {
 	s.installTickets.sweep(now)
 	s.pairs.sweep(now)
 	s.pending.sweep(now)
+	s.web.sweep(now)
 }
 
 // Uptime 返回服务运行时长。

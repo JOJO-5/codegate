@@ -55,6 +55,15 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 		a.onFileCancel(env)
 	case protocol.TypePing:
 		a.reply(env, protocol.TypePong, nil)
+	case protocol.TypeWebStart:
+		a.onWebStart(env)
+	case protocol.TypeWebStop:
+		a.stopWeb()
+		a.reply(env, protocol.TypeWebStopped, nil)
+	case protocol.TypeWebOpen:
+		a.onWebOpen(env)
+	case protocol.TypeWebClose:
+		a.onWebClose(env)
 	case protocol.TypePong:
 		// 心跳应答，无需处理 —— 收到它本身已经重置了读超时。
 	default:
@@ -73,6 +82,10 @@ func (a *Agent) handleFrame(data []byte) {
 	frame, err := protocol.DecodeFrame(data)
 	if err != nil {
 		a.log.Warn("收到无法解析的二进制帧", "err", err, "bytes", len(data))
+		return
+	}
+	if frame.Type == protocol.FrameWebToAgent {
+		a.onWebFrame(frame)
 		return
 	}
 

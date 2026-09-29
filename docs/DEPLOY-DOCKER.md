@@ -185,4 +185,14 @@ dsh --profile tui
 }
 ```
 
-`web_url` 可选，必须是你**另外部署并完成 HTTPS 与登录保护**的 DSH Web 地址。设备页会显示“打开独立 Web UI”，它与 CodeGate 的终端会话不是同一个页面或认证系统。仅执行 `dsh web` 默认绑定的 `127.0.0.1:3080` 不会让远端浏览器自动可达；需要你自己的安全反向代理或访问隧道。CodeGate 当前只提供外部 Web 地址跳转；尚未内置从 Server 到 Agent 本机端口的 HTTP/WebSocket 转发。后续内置转发应通过现有 Agent 出站连接，只允许固定的 DSH loopback 目标，复用设备访问权限，并处理 DSH 的 Host/Origin 校验、浏览器令牌、Cookie 与 WebSocket；完成前不能将 `web_url` 当作内建代理。
+`web_url` 可选，仍表示你**另外部署并完成 HTTPS 与登录保护**的外部 DSH Web 地址。它与下方内建转发互不影响。
+
+### 内建 DSH Web 转发（可选）
+
+内建模式由 Agent 以其服务账户启动 `dsh web --no-open`，只访问本机 `127.0.0.1:3080`，通过 Agent 出站连接中继 HTTP 和 WebSocket。目标机器无需开放 3080 端口。DSH 本机的浏览器令牌由 Agent 换成 Cookie，Server 只在内存保存 Cookie；浏览器用 CodeGate 的单次打开票据和独立子域名会话。
+
+1. Server 设置 `CODEGATE_BASE_URL=https://codegate.example.com` 和 `CODEGATE_DSH_PROXY_DOMAIN=dsh.example.com` 并重启。Agent 的 `agent.json` 添加 `"dsh_web_enabled": true` 后重启。确保开机服务账户能找到 `dsh`，并能写自己的 DSH 配置和工作区。
+2. 为 `*.dsh.example.com` 配置指向同一 Server 的通配 DNS 和通配 TLS 证书。把证书和私钥分别放在 `secrets/dsh-tls/fullchain.pem`、`secrets/dsh-tls/privkey.pem`，使用 `docker compose -f compose.yaml -f deploy/compose.dsh.yaml --profile public up -d` 启动（后续更新也使用相同参数）。覆盖文件使用 `deploy/Caddyfile.dsh.example` 的独立域名路由。通配证书通常需要 DNS 验证，默认 Caddyfile 不会自动完成此项。
+3. 在设备页点击“启动并打开 DSH Web”。Agent 启动 DSH 并以本地令牌取得浏览器 Cookie，CodeGate 为该设备打开独立 HTTPS 子域名。如果 3080 端口已被另一个 DSH 实例占用，请先关闭旧实例。
+
+DSH Web 从根路径加载 `/api`、`/assets` 和 WebSocket，所以不能挂在 CodeGate 的子路径。同一 Server 可服务两个独立的 HTTPS 来源；CodeGate 只接受设备 ID 对应的 DSH 子域名，绝不使用浏览器提供的目标地址访问内网。内建登录会话有效一小时，过期或 Agent 重连后请从设备页重新打开。DSH 进程启动后会阻止 Agent 自动更新，以免打断后台任务；用设备页“停止 DSH Web”明确结束它后才会恢复空闲更新检查。没有配置通配 DNS/TLS 时，内建 Web 无法在公网访问；外部 `web_url` 依然可单独使用。

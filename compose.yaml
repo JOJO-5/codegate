@@ -6,6 +6,7 @@ services:
     environment:
       CODEGATE_LISTEN: ":8080"
       CODEGATE_BASE_URL: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
+      CODEGATE_DSH_PROXY_DOMAIN: "${CODEGATE_DSH_PROXY_DOMAIN:-}"
       CODEGATE_ALLOWED_ORIGINS: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
       CODEGATE_DB_PATH: /data/codegate.db
       CODEGATE_AGENT_UPDATES_DIR: /opt/codegate/agent-updates
@@ -30,6 +31,7 @@ services:
     restart: unless-stopped
     environment:
       CODEGATE_DOMAIN: "${CODEGATE_DOMAIN:-localhost}"
+      CODEGATE_DSH_PROXY_DOMAIN: "${CODEGATE_DSH_PROXY_DOMAIN:-}"
     ports:
       - "80:80"
       - "443:443"

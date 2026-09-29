@@ -80,13 +80,13 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 	// Count includes retained exited sessions: their scrollback must remain
 	// available until the user closes them or retention reaps them.
 	count, generation := a.mgr.UpdateState()
-	if count != 0 {
+	if count != 0 || a.webActive() {
 		a.setUpdateStatus("waiting", "", "有会话正在运行或等待回看")
 		return
 	}
 	idle := func() int {
 		count, current := a.mgr.UpdateState()
-		if current != generation { return 1 }
+		if current != generation || a.webActive() { return 1 }
 		return count
 	}
 	a.setUpdateStatus("checking", "", "")
