@@ -199,10 +199,8 @@ function sendResize(): void {
   //   resize 风暴 —— 每次 resize 在 ConPTY 里都是一次完整重排，
   //   而 Windows 上 resize 不是事件、要靠轮询发现，中间尺寸会被整个跳过。
   if (t.cols === sentCols && t.rows === sentRows) return
-  // The device-page estimate can differ from this actual xterm fit. Send
-  // the measured size after attach even if ResizeObserver sees no change.
-  sentCols = 0
-  sentRows = 0
+  sentCols = t.cols
+  sentRows = t.rows
   void conn.request(
     MessageType.SessionResize,
     { session_id: sessionId.value, cols: t.cols, rows: t.rows },
@@ -521,7 +519,12 @@ onMounted(async () => {
 
   // ---- attach ----
   await attach(0)
-  if (errorText.value === null) sendResize()
+  if (errorText.value === null) {
+    // The create-page estimate can differ from this actual xterm fit.
+    sentCols = 0
+    sentRows = 0
+    sendResize()
+  }
 
   // A new WebSocket has no server-side attachment. Reattach this exact
   // session from its last output byte; never create a second process.
