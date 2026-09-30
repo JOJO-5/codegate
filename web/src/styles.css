@@ -618,6 +618,15 @@ a.item:hover {
 .term__tools { overflow-x: auto; max-height: 80px; }
 .term__host { overflow: hidden; background: #101914; }
 .term__host .xterm-viewport { overflow-y: auto !important; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.term__workspace { display: flex; flex: 1; min-height: 0; }
+.term__workspace .term__host { flex: 1; min-width: 0; }
+.term__sidebar { width: 214px; flex: none; padding: 16px 10px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; background: #1a2b23; border-right: 1px solid #345445; color: #d8e8de; }
+.term__sidebar-heading { margin: 12px 8px 5px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #8cab99; }
+.term__session-link { border: 0; background: transparent; color: inherit; text-align: left; border-radius: 8px; padding: 10px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.term__session-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term__session-link small { color: #8cab99; }
+.term__session-link:hover, .term__session-link--active { background: #2a4638; }
+.term__panel-button { display: none; }
 @media (max-width: 640px) {
   .device-page { padding: 18px 12px 36px; gap: 12px; }
   .device-page .card { padding: 16px; }
@@ -626,6 +635,9 @@ a.item:hover {
   .term__footer { padding: 6px 6px calc(6px + var(--safe-bottom)); }
   .term__tools { flex-wrap: nowrap !important; }
   .term__tools .btn { flex: none; }
+  .term__sidebar { display: none; position: absolute; z-index: 7; top: 45px; bottom: 76px; left: 0; box-shadow: 12px 0 24px #0007; }
+  .term__sidebar--open { display: flex; }
+  .term__panel-button { display: inline-flex; }
 }
 
 /* ---- 登录页 ---- */

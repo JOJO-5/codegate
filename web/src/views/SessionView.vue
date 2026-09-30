@@ -78,6 +78,8 @@ const exitInfo = ref<SessionExitPayload | null>(null)
 const errorText = ref<string | null>(null)
 const mobileDraft = ref('')
 const composer = ref<HTMLTextAreaElement | null>(null)
+const showSessionPanel = ref(false)
+const siblingSessions = computed(() => sessions.forDevice(summary.value?.device_id.replace(/-/g, '') ?? '').filter(s => !s.archived))
 const termHeight = ref('100dvh')
 function syncViewport(): void {
   termHeight.value = `${window.visualViewport?.height ?? window.innerHeight}px`
@@ -306,6 +308,7 @@ async function attach(since: number): Promise<void> {
 
     summary.value = p.session
     role.value = p.role
+    void sessions.load(p.session.device_id.replace(/-/g, ''))
 
     // 落后太多、中间有丢帧：必须清屏后按 seq_from 重放，否则屏幕上会
     // 拼出错误的画面（新旧内容交错，光标位置也不对）。
@@ -348,7 +351,7 @@ async function terminate(): Promise<void> {
 }
 
 function goBack(): void {
-  const dev = summary.value?.device_id
+  const dev = summary.value?.device_id.replace(/-/g, '')
   if (dev !== undefined && dev !== '') {
     void router.push({ name: 'device', params: { id: dev } })
   } else {
@@ -559,6 +562,7 @@ onUnmounted(() => {
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
       <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 会话</button>
+      <button class="btn btn--ghost btn--sm term__panel-button" type="button" @click="showSessionPanel = !showSessionPanel">☰ 切换</button>
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">文件</button>
 
       <span class="term__title" :title="summary?.name ?? sessionId">
@@ -573,7 +577,18 @@ onUnmounted(() => {
     </div>
 
     <!-- ---- 终端 ---- -->
-    <div ref="hostEl" class="term__host" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
+    <div class="term__workspace">
+      <aside class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区">
+        <div class="term__sidebar-heading">工作区</div>
+        <button class="btn btn--primary" type="button" @click="goBack">＋ 新会话</button>
+        <div class="term__sidebar-heading">最近会话</div>
+        <button v-for="item in siblingSessions" :key="item.session_id" class="term__session-link" :class="{ 'term__session-link--active': item.session_id === sessionId }" type="button" @click="router.push({ name: 'session', params: { id: item.session_id } })">
+          <span>{{ item.name || item.command || '会话' }}</span>
+          <small>{{ statusLabel(item.status) }}</small>
+        </button>
+        <button class="term__session-link" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">▣ 工作区文件</button>
+      </aside>
+      <div ref="hostEl" class="term__host" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
       <div v-if="replaying" class="term__overlay">
         <span class="spinner" />
         <span class="small dim">正在重放历史输出…</span>
@@ -592,6 +607,7 @@ onUnmounted(() => {
         </div>
         <div class="small faint">上面的输出是它留下的最后内容</div>
         <button class="btn btn--sm" type="button" @click="goBack">返回设备</button>
+      </div>
       </div>
     </div>
 
