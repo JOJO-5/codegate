@@ -271,6 +271,7 @@ export interface CommandAvailability {
 export interface DeviceUpdateStatus {
   online: boolean
   web_proxy_enabled?: boolean
+  dsh_web_enabled?: boolean | null
   agent_version?: string
   commands?: CommandAvailability[]
   roots?: string[]
