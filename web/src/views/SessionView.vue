@@ -101,7 +101,9 @@ function scrollHistory(lines: number): void {
   if (term?.buffer.active.type === 'alternate') {
     // Full-screen TUIs own their history. Their alternate buffer has no
     // xterm scrollback; send the navigation key to the running program.
-    sendText(lines < 0 ? '\x1b[5~' : '\x1b[6~')
+    if (role.value === 'controller' && isLive.value && conn.isOpen) {
+      sendText(lines < 0 ? '\x1b[5~' : '\x1b[6~')
+    }
   } else {
     term?.scrollLines(lines)
   }
@@ -679,11 +681,11 @@ onUnmounted(() => {
         <button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
         <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
         <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>
-        <button class="btn btn--sm" type="button" @click="redraw">重绘</button>
-        <button class="btn btn--sm" type="button" @click="sendText('\x1b')">Esc</button>
-        <button class="btn btn--sm" type="button" @click="sendText('\t')">Tab</button>
-        <button class="btn btn--sm" type="button" @click="sendText('\x1b[A')">↑</button>
-        <button class="btn btn--sm" type="button" @click="sendText('\x1b[B')">↓</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="redraw">重绘</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b')">Esc</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\t')">Tab</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b[A')">↑</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b[B')">↓</button>
         <!-- 手机上没有 Ctrl+Shift+F，所以搜索也必须有个可点的入口 -->
         <button class="btn btn--sm" type="button" title="查找" @click="openSearch">查找</button>
 
