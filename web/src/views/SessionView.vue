@@ -193,14 +193,16 @@ function sendText(text: string): void {
 
 function sendResize(): void {
   const t = term
-  if (t === null) return
+  if (t === null || role.value !== 'controller' || !conn.isOpen) return
   // ★ 「值未变则不发」不是优化，是正确性：
   //   拖窗口时每个像素都会触发 ResizeObserver，不判断的话会产生
   //   resize 风暴 —— 每次 resize 在 ConPTY 里都是一次完整重排，
   //   而 Windows 上 resize 不是事件、要靠轮询发现，中间尺寸会被整个跳过。
   if (t.cols === sentCols && t.rows === sentRows) return
-  sentCols = t.cols
-  sentRows = t.rows
+  // The device-page estimate can differ from this actual xterm fit. Send
+  // the measured size after attach even if ResizeObserver sees no change.
+  sentCols = 0
+  sentRows = 0
   void conn.request(
     MessageType.SessionResize,
     { session_id: sessionId.value, cols: t.cols, rows: t.rows },
@@ -519,6 +521,7 @@ onMounted(async () => {
 
   // ---- attach ----
   await attach(0)
+  if (errorText.value === null) sendResize()
 
   // A new WebSocket has no server-side attachment. Reattach this exact
   // session from its last output byte; never create a second process.
