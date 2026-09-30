@@ -52,6 +52,11 @@ type WebStreamPayload struct {
 	StreamID string `json:"stream_id"`
 }
 
+type ToolSetPayload struct {
+	ID string `json:"id"`
+	Enabled bool `json:"enabled"`
+}
+
 // NewEnvelope 构造一个信封并把 payload 序列化进去。
 // payload 传 nil 时 Payload 为空。
 func NewEnvelope(t Type, payload any) (*Envelope, error) {
@@ -257,6 +262,7 @@ type CommandAvailability struct {
 	Kind string `json:"kind"`
 	Installed bool `json:"installed"`
 	Allowed bool `json:"allowed"`
+	Managed bool `json:"managed,omitempty"`
 	Resume bool `json:"resume,omitempty"`
 	WebURL string `json:"web_url,omitempty"`
 }
