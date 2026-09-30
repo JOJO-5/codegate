@@ -57,6 +57,8 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 		a.reply(env, protocol.TypePong, nil)
 	case protocol.TypeWebStart:
 		a.onWebStart(env)
+	case protocol.TypeToolSet:
+		a.onToolSet(env)
 	case protocol.TypeWebStop:
 		a.stopWeb()
 		a.reply(env, protocol.TypeWebStopped, nil)
@@ -152,7 +154,7 @@ func (a *Agent) onSessionCreate(env *protocol.Envelope) {
 // 起进程再杀掉，形成资源耗尽攻击。
 func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Session, error) {
 	// 1. 命令：只能从白名单里选（除非显式开启自定义命令）。
-	cmd, err := a.cfg.ResolveCommand(req.CommandID, req.Command, req.Args, req.Resume)
+	cmd, err := a.commandConfig().ResolveCommand(req.CommandID, req.Command, req.Args, req.Resume)
 	if err != nil {
 		return nil, err
 	}
