@@ -93,12 +93,12 @@ func TestValidateRejectsRelativeRoot(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsNoCommandsAtAll(t *testing.T) {
+func TestValidateAllowsEmptyCommandListForWebApproval(t *testing.T) {
 	c := validConfig(t)
 	c.AllowedCommands = nil
 	c.AllowCustomCommands = false
-	if err := c.Validate(); err == nil {
-		t.Error("既没有白名单也没开自定义命令，却通过了校验")
+	if err := c.Validate(); err != nil {
+		t.Errorf("空白名单应允许设备页授权固定工具: %v", err)
 	}
 
 	// 开了自定义命令就应该允许没有白名单。
