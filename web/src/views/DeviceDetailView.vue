@@ -113,24 +113,16 @@ const detectedUnapproved = computed(() =>
 const knownTools = computed(() => (reportedCommands.value ?? []).filter(c =>
   ['claude', 'codex', 'opencode', 'dsh'].includes(c.id),
 ))
-const configCopyStatus = ref('')
-function commandConfig(id: string): string {
-  const command = knownTools.value.find(c => c.id === id)
-  if (!command) return ''
-  const windows = device.value?.platform === 'windows'
-  const args = id === 'dsh' ? ['--profile', 'tui'] : []
-  return JSON.stringify({
-    id, label: command.label,
-    command: windows ? 'cmd.exe' : id,
-    ...(windows ? { args: ['/c', id, ...args] } : args.length ? { args } : {}),
-    kind: 'tui',
-  }, null, 2)
-}
-async function copyCommandConfig(id: string): Promise<void> {
+const toolBusy = ref('')
+const toolError = ref('')
+async function setTool(id: string, enabled: boolean): Promise<void> {
+  toolBusy.value = id
+  toolError.value = ''
   try {
-    await navigator.clipboard.writeText(commandConfig(id))
-    configCopyStatus.value = `已复制 ${knownTools.value.find(c => c.id === id)?.label ?? id} 的配置项`
-  } catch { configCopyStatus.value = '复制失败，请手动选择配置内容' }
+    await api.setDeviceTool(props.id, id, enabled)
+    await loadUpdateStatus()
+  } catch (e) { toolError.value = humanizeError(e) }
+  finally { toolBusy.value = '' }
 }
 const selectedPreset = computed(() => selectableCommands.value.find(p => p.id === presetId.value))
 const selectedWebURL = computed(() => reportedCommands.value?.find(c => c.id === presetId.value && c.allowed)?.web_url)
@@ -554,18 +546,19 @@ function canOpen(s: SessionSummary): boolean {
 
     <section class="card device-tools" aria-labelledby="device-tools-heading">
       <div class="card__title"><h2 id="device-tools-heading">本机工具</h2><span class="faint small">由 Agent 扫描</span></div>
-      <p class="dim small">找到程序后还需在目标电脑授权，才能从这里创建会话。</p>
+      <p class="dim small">Agent 扫描本机工具；授权后即可从网页新建会话，随时可关闭授权。</p>
       <div v-if="!updateInfo?.online" class="dim small">设备上线后显示扫描结果。</div>
       <div v-else-if="!reportedCommands" class="dim small">等待 Agent 上报工具清单。</div>
       <div v-else class="device-tools__list">
         <div v-for="tool in knownTools" :key="tool.id" class="device-tools__item">
           <span>{{ tool.label }}</span>
           <span class="badge" :class="tool.allowed && tool.installed ? 'badge--ok' : tool.installed ? 'badge--warn' : 'badge--idle'">{{ !tool.installed ? '未找到' : tool.allowed ? '可使用' : '待授权' }}</span>
-          <button v-if="tool.installed && !tool.allowed" class="btn btn--ghost btn--sm" type="button" @click="copyCommandConfig(tool.id)">复制配置项</button>
+          <button v-if="tool.installed && !tool.allowed" class="btn btn--primary btn--sm" type="button" :disabled="!!toolBusy" @click="setTool(tool.id, true)">{{ toolBusy === tool.id ? '授权中…' : '授权使用' }}</button>
+          <button v-else-if="tool.installed && tool.allowed && tool.managed" class="btn btn--ghost btn--sm" type="button" :disabled="!!toolBusy" @click="setTool(tool.id, false)">{{ toolBusy === tool.id ? '处理中…' : '关闭授权' }}</button>
         </div>
       </div>
-      <p v-if="configCopyStatus" class="small dim">{{ configCopyStatus }}</p>
-      <details v-if="detectedUnapproved.length" class="device-tools__help"><summary>如何授权工具</summary><p>把复制的对象加入目标电脑 agent.json 的 allowed_commands 数组，保存并重启 Agent。原有命令不要删除；本机白名单仍由 Agent 校验。</p></details>
+      <div v-if="toolError" class="notice notice--err small">{{ toolError }}</div>
+      <p class="small dim">旧版 Agent 或已有的 agent.json 手动白名单，需要更新 Agent 或在目标电脑修改配置。网页授权只适用于这四个识别工具。</p>
     </section>
 
     <!-- DSH Web is a separate browser experience, independent of TUI sessions. -->
