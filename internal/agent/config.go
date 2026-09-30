@@ -322,10 +322,8 @@ func (c Config) Validate() error {
 		}
 	}
 
-	if len(c.AllowedCommands) == 0 && !c.AllowCustomCommands {
-		return errors.New("agent: allowed_commands 为空且未开启 allow_custom_commands —— " +
-			"没有任何可执行的命令")
-	}
+	// An empty allowlist is safe: the paired owner may grant only the fixed
+	// discovered CLI set from the device page. Arbitrary commands remain off.
 
 	seen := make(map[string]bool, len(c.AllowedCommands))
 	for i, cmd := range c.AllowedCommands {
