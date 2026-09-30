@@ -193,6 +193,11 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
       </div>
 
       <div v-if="preview === null" class="stack">
+        <ol class="setup-steps" aria-label="添加设备步骤">
+          <li><strong>1. 选择系统并生成命令</strong><span>在目标电脑安装 Agent</span></li>
+          <li><strong>2. 配置并启动 Agent</strong><span>设置 Server 地址与可访问目录</span></li>
+          <li><strong>3. 输入配对码</strong><span>确认设备身份后绑定</span></li>
+        </ol>
         <div class="field">
           <span>目标电脑的系统</span>
           <div class="row" role="group" aria-label="目标电脑的系统">
@@ -222,7 +227,8 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
           </div>
         </div>
 
-        <div v-if="selectedOS === 'windows'" class="notice notice--info">
+        <details v-if="selectedOS === 'windows'" :open="!!installCommand" class="notice notice--info setup-details">
+          <summary>Windows：安装后的配置与开机自启</summary>
           在目标 Windows 电脑运行上方命令安装 Agent。设置 Server 地址与允许的工作目录后执行：
           <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">&amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" doctor
 &amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" pair</pre>
@@ -232,9 +238,10 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
           <code class="mono">powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\CodeGate\agent-autostart.ps1" install -AgentPath "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe"</code>
           （输入当前 Windows 账号密码，不是 PIN；先关闭手动运行的 Agent）。
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">查看完整配置示例</a>。
-        </div>
+        </details>
 
-        <div v-else class="notice notice--info">
+        <details v-else :open="!!installCommand" class="notice notice--info setup-details">
+          <summary>{{ selectedOS === 'linux' ? 'Linux' : 'macOS' }}：安装后的配置与开机自启</summary>
           在目标 {{ selectedOS === 'linux' ? 'Linux' : 'macOS' }} 电脑运行上方命令安装 Agent，然后配置 Agent，执行：
           <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">~/.local/bin/codegate-agent doctor
 ~/.local/bin/codegate-agent pair</pre>
@@ -253,7 +260,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
             <span v-if="copyError" role="alert">{{ copyError }}</span>
             <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">Server 部署指南</a>。
           </div>
-        </div>
+        </details>
       </div>
 
       <!-- 第一步：输入配对码 -->

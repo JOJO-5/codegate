@@ -79,6 +79,7 @@ const errorText = ref<string | null>(null)
 const mobileDraft = ref('')
 const composer = ref<HTMLTextAreaElement | null>(null)
 const showSessionPanel = ref(false)
+const showExtraKeys = ref(false)
 const siblingSessions = computed(() => sessions.forDevice(summary.value?.device_id.replace(/-/g, '') ?? '').filter(s => !s.archived))
 const termHeight = ref('100dvh')
 function syncViewport(): void {
@@ -681,6 +682,12 @@ onUnmounted(() => {
         <button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
         <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
         <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>
+        <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @click="sendInterrupt">Ctrl+C</button>
+        <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起按键' : '更多按键' }}</button>
+        <div class="grow" />
+        <button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button>
+      </div>
+      <div v-if="showExtraKeys" class="row term__tools term__extra-keys" aria-label="终端辅助按键" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="redraw">重绘</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b')">Esc</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\t')">Tab</button>
@@ -689,28 +696,6 @@ onUnmounted(() => {
         <!-- 手机上没有 Ctrl+Shift+F，所以搜索也必须有个可点的入口 -->
         <button class="btn btn--sm" type="button" title="查找" @click="openSearch">查找</button>
 
-        <button
-          class="btn btn--sm"
-          type="button"
-          :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive"
-          :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'"
-          @click="sendInterrupt"
-        >
-          Ctrl+C
-        </button>
-
-        <div class="grow" />
-
-        <button
-          class="btn btn--sm btn--danger"
-          type="button"
-          :disabled="exiting || !conn.isOpen || !isLive"
-          title="关闭这个会话并结束进程"
-          @click="confirmTerminate = true"
-        >
-          <span v-if="exiting" class="spinner" />
-          关闭会话
-        </button>
       </div>
     </div>
   </div>

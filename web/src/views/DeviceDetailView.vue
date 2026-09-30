@@ -29,7 +29,20 @@ const router = useRouter()
 const device = computed(() => devices.byId(props.id))
 const list = computed(() => sessions.forDevice(props.id))
 const showArchived = ref(false)
-const visibleSessions = computed(() => list.value.filter(s => Boolean(s.archived) === showArchived.value))
+const sessionQuery = ref('')
+const pinnedIds = ref<string[]>([])
+const pinKey = computed(() => `codegate.pins.${props.id}`)
+const visibleSessions = computed(() => {
+  const query = sessionQuery.value.trim().toLocaleLowerCase()
+  return list.value.filter(s => Boolean(s.archived) === showArchived.value &&
+    (!query || [s.name, s.command, s.cwd].some(v => v?.toLocaleLowerCase().includes(query))))
+    .sort((a, b) => Number(pinnedIds.value.includes(b.session_id)) - Number(pinnedIds.value.includes(a.session_id)) ||
+      (toMs(b.created_at) ?? 0) - (toMs(a.created_at) ?? 0))
+})
+function togglePin(id: string): void {
+  pinnedIds.value = pinnedIds.value.includes(id) ? pinnedIds.value.filter(x => x !== id) : [...pinnedIds.value, id]
+  localStorage.setItem(pinKey.value, JSON.stringify(pinnedIds.value))
+}
 const archivedCount = computed(() => list.value.filter(s => s.archived).length)
 const sessionActionError = ref<string | null>(null)
 const deletingSession = ref<string | null>(null)
@@ -41,7 +54,11 @@ async function toggleArchive(s: SessionSummary): Promise<void> {
 async function deleteRecord(s: SessionSummary): Promise<void> {
   if (deletingSession.value !== s.session_id) { deletingSession.value = s.session_id; return }
   sessionActionError.value = null
-  try { await sessions.remove(props.id, s.session_id); deletingSession.value = null }
+  try {
+    await sessions.remove(props.id, s.session_id)
+    if (pinnedIds.value.includes(s.session_id)) togglePin(s.session_id)
+    deletingSession.value = null
+  }
   catch (e) { sessionActionError.value = humanizeError(e) }
 }
 const updateInfo = ref<DeviceUpdateStatus | null>(null)
@@ -81,6 +98,29 @@ const updateLabel = computed(() => {
 const presetId = ref('claude')
 const cwd = ref('')
 const sessionName = ref('')
+interface LaunchShortcut { label: string; commandId: string; cwd: string; name: string }
+const shortcuts = ref<LaunchShortcut[]>([])
+const shortcutKey = computed(() => `codegate.shortcuts.${props.id}`)
+function saveShortcut(): void {
+  const command = selectedPreset.value
+  const path = cwd.value.trim()
+  if (!command || !path) return
+  const label = `${command.label} · ${path.split(/[\\/]/).filter(Boolean).pop() || path}`
+  const next = { label, commandId: command.id, cwd: path, name: sessionName.value.trim() }
+  shortcuts.value = [...shortcuts.value.filter(s => s.commandId !== next.commandId || s.cwd !== next.cwd), next].slice(-12)
+  localStorage.setItem(shortcutKey.value, JSON.stringify(shortcuts.value))
+}
+function selectShortcut(index: number): void {
+  const shortcut = shortcuts.value[index]
+  if (!shortcut) return
+  presetId.value = shortcut.commandId
+  cwd.value = shortcut.cwd
+  sessionName.value = shortcut.name
+}
+function removeShortcut(index: number): void {
+  shortcuts.value = shortcuts.value.filter((_, i) => i !== index)
+  localStorage.setItem(shortcutKey.value, JSON.stringify(shortcuts.value))
+}
 const creating = ref(false)
 const createError = ref<string | null>(null)
 
@@ -194,6 +234,13 @@ const confirmDelete = ref(false)
 let unsubscribeControl: (() => void) | null = null
 
 onMounted(async () => {
+  try {
+    const savedPins = JSON.parse(localStorage.getItem(pinKey.value) ?? '[]')
+    if (Array.isArray(savedPins)) pinnedIds.value = savedPins.filter((id): id is string => typeof id === 'string')
+    const savedShortcuts = JSON.parse(localStorage.getItem(shortcutKey.value) ?? '[]')
+    if (Array.isArray(savedShortcuts)) shortcuts.value = savedShortcuts.filter((s): s is LaunchShortcut =>
+      typeof s?.label === 'string' && typeof s?.commandId === 'string' && typeof s?.cwd === 'string' && typeof s?.name === 'string').slice(-12)
+  } catch { pinnedIds.value = []; shortcuts.value = [] }
   await devices.load()
   if (device.value !== undefined) {
     nameDraft.value = device.value.name
@@ -359,6 +406,17 @@ function canOpen(s: SessionSummary): boolean {
       </div>
 
       <form class="stack" @submit.prevent="createSession">
+        <div v-if="shortcuts.length" class="field">
+          <label for="launch-shortcut">常用启动组合</label>
+          <div class="row">
+            <select id="launch-shortcut" aria-label="选择常用启动组合" @change="selectShortcut(Number(($event.target as HTMLSelectElement).value)); ($event.target as HTMLSelectElement).value = ''">
+              <option value="">选择组合填入下方表单</option>
+              <option v-for="(shortcut, index) in shortcuts" :key="index" :value="index">{{ shortcut.label }}</option>
+            </select>
+            <button v-if="shortcuts.some(s => s.commandId === presetId && s.cwd === cwd.trim())" class="btn btn--sm" type="button" @click="removeShortcut(shortcuts.findIndex(s => s.commandId === presetId && s.cwd === cwd.trim()))">移除</button>
+          </div>
+          <span class="field__hint">选择后仍需点击“新建独立会话”；不会接续旧对话。</span>
+        </div>
         <div class="field">
           <label for="preset">命令</label>
           <select id="preset" v-model="presetId" :disabled="creating">
@@ -442,6 +500,7 @@ function canOpen(s: SessionSummary): boolean {
             <span v-if="creating" class="spinner" />
             新建独立会话 →
           </button>
+          <button class="btn btn--sm" type="button" :disabled="!selectedPreset || !cwd.trim()" @click="saveShortcut">保存组合</button>
         </div>
       </form>
     </div>
@@ -467,10 +526,11 @@ function canOpen(s: SessionSummary): boolean {
         <button class="btn btn--sm" :class="!showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = false">最近会话</button>
         <button class="btn btn--sm" :class="showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = true">归档 {{ archivedCount }}</button>
       </div>
+      <div class="field"><label for="session-query">查找会话</label><input id="session-query" v-model="sessionQuery" type="search" placeholder="按名称、命令或工作目录搜索" /></div>
 
       <p class="dim small session-help">离开终端后会话继续运行。设备在线时可接回；结束进程请在终端内关闭会话。</p>
 
-      <div v-if="visibleSessions.length === 0" class="empty">{{ showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
+      <div v-if="visibleSessions.length === 0" class="empty">{{ sessionQuery.trim() ? '没有匹配的会话。' : showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
 
       <div v-else class="list">
         <div
@@ -489,6 +549,7 @@ function canOpen(s: SessionSummary): boolean {
           </span>
           <span class="item__actions">
             <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
+            <button class="btn btn--ghost btn--sm" type="button" :aria-label="pinnedIds.includes(s.session_id) ? '取消置顶会话' : '置顶会话'" :aria-pressed="pinnedIds.includes(s.session_id)" @click="togglePin(s.session_id)">{{ pinnedIds.includes(s.session_id) ? '★ 已置顶' : '☆ 置顶' }}</button>
             <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : '设备离线，重新上线后可接回'" @click="openSession(s)">{{ canOpen(s) ? '接回' : '离线，暂不可接回' }}</button>
             <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
             <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">

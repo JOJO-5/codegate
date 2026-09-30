@@ -656,6 +656,13 @@ a.item:hover {
 .device-sessions .item__actions { justify-content: flex-end; }
 .device-sessions .btn--danger { border-color: transparent; background: transparent; }
 .session-filters { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+.setup-steps { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.setup-steps li { padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.setup-steps strong, .setup-steps span { display: block; }
+.setup-steps span { margin-top: 4px; font-size: 12px; color: var(--fg-dim); }
+.setup-details summary { cursor: pointer; font-weight: 600; }
+.setup-details[open] summary { margin-bottom: 10px; }
+.term__extra-keys { margin-top: 6px; }
 .session-filters .btn:not(.btn--primary) { border-color: transparent; background: transparent; }
 .session-help { margin: 0 0 10px; }
 @media (max-width: 840px) {
@@ -684,6 +691,7 @@ a.item:hover {
 .term__session-link:hover, .term__session-link--active { background: #2a4638; }
 .term__panel-button { display: none; }
 @media (max-width: 640px) {
+  .setup-steps { grid-template-columns: 1fr; }
   .device-page { padding: 18px 12px 36px; gap: 12px; }
   .device-page .card { padding: 16px; }
   .device-page .item__actions { width: 100%; justify-content: flex-start; }
