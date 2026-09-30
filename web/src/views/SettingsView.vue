@@ -112,6 +112,7 @@ function actionLabel(action: string): string {
     device_pair_failed: '配对失败',
     device_rename: '重命名设备',
     device_delete: '解绑设备',
+    'device.tool.set': '更改工具授权',
     session_create: '新建会话',
     session_attach: '接管会话',
     session_close: '终止会话',
