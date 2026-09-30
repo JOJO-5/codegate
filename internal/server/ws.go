@@ -181,3 +181,28 @@ func replyTo(req *protocol.Envelope) string {
 func refreshReadDeadline(ws *websocket.Conn, d time.Duration) {
 	_ = ws.SetReadDeadline(time.Now().Add(d))
 }
+
+// armReadDeadline 把读超时接到 Pong 上，并在**认证完成**后调用一次。
+//
+// # 为什么必须有它
+//
+// Server 是主动发 Ping 的一方（writePump 每 wsPingPeriod 发一个控制帧 Ping），
+// 对端（浏览器 / Agent）按 WebSocket 规范会自动回 Pong。但 gorilla 把收到的
+// Pong 当控制帧处理：advanceFrame 直接交给 PongHandler 后继续读，
+// **ReadMessage 根本不会返回** —— 而默认的 PongHandler 是空实现。
+// 于是 refreshReadDeadline 只在「对端主动发业务数据」时才被调到。
+//
+// 这个缺口在两端的表现不对称，所以很难被发现：
+//   - Agent 连接有 20s 的应用层心跳兜着，服务端这侧看不出任何问题；
+//   - 浏览器连接空闲时一个字都不发，于是每条客户端连接都在 wsPongWait(90s)
+//     处被服务端自己掐断，前端表现为「莫名其妙地周期性重连」。
+//
+// ★ 只能在认证完成后调用。握手阶段用的是 wsHandshakeTimeout(30s)：
+// 若那时就把读超时接到 Pong 上，一个只发 hello、不发 auth 的连接只要回一次
+// Pong 就能无限续命，那道防 goroutine/socket 耗尽的闸门就形同虚设。
+func armReadDeadline(ws *websocket.Conn, d time.Duration) {
+	_ = ws.SetReadDeadline(time.Now().Add(d))
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(d))
+	})
+}
