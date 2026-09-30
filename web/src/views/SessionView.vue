@@ -89,6 +89,11 @@ function submitDraft(event?: KeyboardEvent): void {
   mobileDraft.value = ''
   composer.value?.focus()
 }
+function onComposerKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  submitDraft()
+}
 function focusTerminal(): void { term?.focus() }
 function scrollHistory(lines: number): void {
   if (term?.buffer.active.type === 'alternate') {
@@ -644,7 +649,7 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="term__composer" v-if="role === 'controller' && isLive">
-        <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown.enter.exact.prevent="submitDraft($event)" />
+        <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown="onComposerKeydown" />
         <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !conn.isOpen" @click="submitDraft()">发送 ↵</button>
       </div>
       <div class="row term__tools" style="gap: 6px; flex-wrap: wrap">

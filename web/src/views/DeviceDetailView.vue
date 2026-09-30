@@ -544,7 +544,7 @@ function canOpen(s: SessionSummary): boolean {
       </div>
 
       <div v-if="sessions.source === 'cache'" class="notice notice--info" style="margin-bottom: 12px">
-        Agent 当前离线，下面是数据库里的快照 —— 状态可能已经过时。
+        实时列表暂不可用，下面是数据库记录；运行状态可能略有延迟。
       </div>
 
       <div v-if="sessions.error" class="notice notice--err" style="margin-bottom: 12px">
