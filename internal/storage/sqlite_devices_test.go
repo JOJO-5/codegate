@@ -321,7 +321,7 @@ func TestSessionUpsertAndPrune(t *testing.T) {
 		t.Errorf("心跳更新不应改动 name，实际: %q", got.Name)
 	}
 
-	// 对账：Agent 说「我只剩 ids[0] 和 ids[1]」，ids[2] 应当被清掉。
+	// 对账：Agent 不再持有 ids[2]；历史记录保留，状态改为已退出。
 	n, err := s.PruneSessions(ctx, dev.ID, []string{ids[0], ids[1]})
 	if err != nil {
 		t.Fatalf("对账清理失败: %v", err)
@@ -331,17 +331,23 @@ func TestSessionUpsertAndPrune(t *testing.T) {
 	}
 
 	list, _ = s.SessionsByDevice(ctx, dev.ID)
-	if len(list) != 2 {
-		t.Errorf("清理后应当剩 2 条，实际 %d", len(list))
+	if len(list) != 3 || list[0].Status != "exited" {
+		t.Errorf("对账应保留 3 条历史并将失联会话标为已退出，实际 %+v", list)
 	}
 
-	// keep 为空 = Agent 现在没有任何会话 → 全清。
+	if err := s.SetSessionArchived(ctx, ids[2], true); err != nil { t.Fatal(err) }
+	archived, err := s.SessionByID(ctx, ids[2])
+	if err != nil || !archived.Archived { t.Fatalf("归档未保存: %+v %v", archived, err) }
+
+	// keep 为空 = Agent 现在没有活跃会话，历史仍保留。
 	if _, err := s.PruneSessions(ctx, dev.ID, nil); err != nil {
 		t.Fatalf("全量清理失败: %v", err)
 	}
-	if list, _ = s.SessionsByDevice(ctx, dev.ID); len(list) != 0 {
-		t.Errorf("应当全部清空，实际剩 %d 条", len(list))
+	if list, _ = s.SessionsByDevice(ctx, dev.ID); len(list) != 3 {
+		t.Errorf("历史记录不应被对账删除，实际剩 %d 条", len(list))
 	}
+	if err := s.DeleteSession(ctx, ids[2]); err != nil { t.Fatal(err) }
+	if list, _ = s.SessionsByDevice(ctx, dev.ID); len(list) != 2 { t.Fatalf("删除历史记录失败: %d", len(list)) }
 }
 
 func TestSessionByIDNotFound(t *testing.T) {

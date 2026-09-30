@@ -28,6 +28,7 @@ const (
 	auditDevicePairFail     = "device.pair.fail"
 	auditDeviceRename       = "device.rename"
 	auditDeviceDelete       = "device.delete"
+	auditDeviceToolSet      = "device.tool.set"
 	auditAgentConnect       = "agent.connect"
 	auditAgentAuthFail      = "agent.auth.fail"
 	auditAgentDuplicateConn = "agent.duplicate_connection"

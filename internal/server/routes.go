@@ -92,7 +92,10 @@ func (s *Server) buildRouter() http.Handler {
 	mux.Handle("PATCH /api/v1/devices/{id}", authed(s.handleDeviceRename))
 	mux.Handle("DELETE /api/v1/devices/{id}", authed(s.handleDeviceDelete))
 	mux.Handle("GET /api/v1/devices/{id}/sessions", authed(s.handleDeviceSessions))
+	mux.Handle("PATCH /api/v1/devices/{id}/sessions/{session}", authed(s.handleSessionArchive))
+	mux.Handle("DELETE /api/v1/devices/{id}/sessions/{session}", authed(s.handleSessionDelete))
 	mux.Handle("GET /api/v1/devices/{id}/update-status", authed(s.handleDeviceUpdateStatus))
+	mux.Handle("PUT /api/v1/devices/{id}/tools/{tool}", authed(s.handleDeviceToolSet))
 	mux.Handle("POST /api/v1/devices/{id}/dsh-web/start", authed(s.handleDSHWebStart))
 	mux.Handle("POST /api/v1/devices/{id}/dsh-web/stop", authed(s.handleDSHWebStop))
 

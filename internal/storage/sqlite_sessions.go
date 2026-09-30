@@ -13,7 +13,7 @@ import (
 // ---------------------------------------------------------------------------
 
 const sessionCols = `id, device_id, user_id, name, command, args_json, cwd, status,
-	pid, exit_code, cols, rows, created_at, started_at, ended_at, last_attached_at, created_by`
+	pid, exit_code, cols, rows, created_at, started_at, ended_at, last_attached_at, created_by, archived`
 
 // UpsertSession 写入或覆盖一条会话元数据。
 //
@@ -107,6 +107,16 @@ func (s *SQLite) SessionsByUser(ctx context.Context, userID string, limit int) (
 	return collectSessions(rows)
 }
 
+func (s *SQLite) SetSessionArchived(ctx context.Context, id string, archived bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET archived = ? WHERE id = ?`, archived, id)
+	return wrapErr(err)
+}
+
+func (s *SQLite) DeleteSession(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
+	return wrapErr(err)
+}
+
 // PruneSessions 删除该设备下不在 keep 里的会话记录。
 //
 // 这是 Agent 重连对账的收尾动作（§7.4）：Agent 上报「我当前持有这些会话」，
@@ -117,7 +127,8 @@ func (s *SQLite) SessionsByUser(ctx context.Context, userID string, limit int) (
 func (s *SQLite) PruneSessions(ctx context.Context, deviceID string, keep []string) (int64, error) {
 	if len(keep) == 0 {
 		res, err := s.db.ExecContext(ctx,
-			`DELETE FROM sessions WHERE device_id = ?`, deviceID)
+			`UPDATE sessions SET status = 'exited', ended_at = COALESCE(ended_at, ?)
+			 WHERE device_id = ? AND status IN ('starting','running','detached')`, nowMs(), deviceID)
 		if err != nil {
 			return 0, wrapErr(err)
 		}
@@ -127,14 +138,16 @@ func (s *SQLite) PruneSessions(ctx context.Context, deviceID string, keep []stri
 	// 占位符个数受 Agent 的 max_sessions 限制（默认 20），
 	// 远低于 SQLite 的变量上限，不需要分批。
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keep)), ",")
-	args := make([]any, 0, len(keep)+1)
-	args = append(args, deviceID)
+	args := make([]any, 0, len(keep)+2)
+	args = append(args, nowMs(), deviceID)
 	for _, id := range keep {
 		args = append(args, id)
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM sessions WHERE device_id = ? AND id NOT IN (`+placeholders+`)`,
+		`UPDATE sessions SET status = 'exited', ended_at = COALESCE(ended_at, ?)
+		 WHERE device_id = ? AND id NOT IN (`+placeholders+`)
+		 AND status IN ('starting','running','detached')`,
 		args...)
 	if err != nil {
 		return 0, wrapErr(err)
@@ -167,10 +180,11 @@ func scanSession(sc rowScanner) (*SessionMeta, error) {
 		endedAt        sql.NullInt64
 		lastAttachedAt sql.NullInt64
 		createdBy      sql.NullString
+		archived       bool
 	)
 	err := sc.Scan(&m.ID, &m.DeviceID, &m.UserID, &m.Name, &m.Command, &argsJSON,
 		&m.Cwd, &m.Status, &pid, &exitCode, &cols, &rows, &createdAt,
-		&startedAt, &endedAt, &lastAttachedAt, &createdBy)
+		&startedAt, &endedAt, &lastAttachedAt, &createdBy, &archived)
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -193,6 +207,7 @@ func scanSession(sc rowScanner) (*SessionMeta, error) {
 	m.EndedAt = msPtr(endedAt)
 	m.LastAttachedAt = msPtr(lastAttachedAt)
 	m.CreatedBy = createdBy.String
+	m.Archived = archived
 	return &m, nil
 }
 

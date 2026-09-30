@@ -204,6 +204,53 @@ func (s *Server) handleDeviceSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
 }
 
+func (s *Server) sessionForDevice(w http.ResponseWriter, r *http.Request) *storage.SessionMeta {
+	userID, _ := userIDFromContext(r.Context())
+	deviceID := r.PathValue("id")
+	if _, err := s.authorizeDevice(r.Context(), userID, deviceID); err != nil {
+		writeDeviceError(w, err)
+		return nil
+	}
+	m, err := s.store.SessionByID(r.Context(), r.PathValue("session"))
+	if err != nil || m.DeviceID != deviceID || m.UserID != userID {
+		writeError(w, http.StatusNotFound, "not_found", "会话不存在")
+		return nil
+	}
+	return m
+}
+
+func (s *Server) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
+	m := s.sessionForDevice(w, r)
+	if m == nil { return }
+	body, ok := decodeJSON[struct { Archived *bool `json:"archived"` }](w, r)
+	if !ok { return }
+	if body.Archived == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "缺少 archived")
+		return
+	}
+	if err := s.store.SetSessionArchived(r.Context(), m.ID, *body.Archived); err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	m.Archived = *body.Archived
+	writeJSON(w, http.StatusOK, sessionSummary(m))
+}
+
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	m := s.sessionForDevice(w, r)
+	if m == nil { return }
+	ac, online := s.reg.Agent(m.DeviceID)
+	if online && ac.HasSession(m.ID) || m.Status == "running" || m.Status == "starting" || m.Status == "detached" {
+		writeError(w, http.StatusConflict, "session_running", "请先结束远端进程，再删除记录")
+		return
+	}
+	if err := s.store.DeleteSession(r.Context(), m.ID); err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // sessionSummary 把存储层的会话元数据转成协议层的对外快照。
 //
 // 复用 protocol.SessionSummary 而不是另造一个 DTO：这个结构同时出现在
@@ -218,6 +265,7 @@ func sessionSummary(m *storage.SessionMeta) protocol.SessionSummary {
 		Args:           m.Args,
 		Cwd:            m.Cwd,
 		Status:         m.Status,
+		Archived:       m.Archived,
 		PID:            m.PID,
 		ExitCode:       m.ExitCode,
 		Cols:           m.Cols,
@@ -724,7 +772,7 @@ func (s *Server) handleDeviceUpdateStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if agent, ok := s.reg.Agent(deviceID); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus(), "commands": agent.Commands(), "roots": agent.Roots(), "web_proxy_enabled": s.cfg.DSHProxyDomain != ""})
+		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus(), "commands": agent.Commands(), "roots": agent.Roots(), "web_proxy_enabled": s.cfg.DSHProxyDomain != "", "dsh_web_enabled": agent.DSHWebEnabled()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil, "commands": []protocol.CommandAvailability{}, "roots": []string{}, "web_proxy_enabled": s.cfg.DSHProxyDomain != ""})

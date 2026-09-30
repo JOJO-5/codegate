@@ -1,12 +1,24 @@
 name: OpenCode TUI e2e
 
 on:
+  workflow_dispatch:
   push:
     branches: [test/opencode-tui-e2e]
   pull_request:
     paths:
       - 'scripts/e2e-*'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/opencode-tui-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   opencode:

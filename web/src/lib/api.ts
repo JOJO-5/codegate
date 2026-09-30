@@ -264,6 +264,7 @@ export interface CommandAvailability {
   kind: 'shell' | 'tui'
   installed: boolean
   allowed: boolean
+  managed?: boolean
   resume?: boolean
   web_url?: string
 }
@@ -271,6 +272,7 @@ export interface CommandAvailability {
 export interface DeviceUpdateStatus {
   online: boolean
   web_proxy_enabled?: boolean
+  dsh_web_enabled?: boolean | null
   agent_version?: string
   commands?: CommandAvailability[]
   roots?: string[]
@@ -392,6 +394,10 @@ export const api = {
     return request<{ stopped: boolean }>('POST', `/devices/${encodeURIComponent(id)}/dsh-web/stop`)
   },
 
+  setDeviceTool(deviceId: string, toolId: string, enabled: boolean): Promise<{ id: string; enabled: boolean }> {
+    return request<{ id: string; enabled: boolean }>('PUT', `/devices/${encodeURIComponent(deviceId)}/tools/${encodeURIComponent(toolId)}`, { enabled })
+  },
+
   renameDevice(id: string, name: string): Promise<DeviceDTO> {
     return request<DeviceDTO>('PATCH', `/devices/${encodeURIComponent(id)}`, { name })
   },
@@ -407,6 +413,14 @@ export const api = {
       `/devices/${encodeURIComponent(id)}/sessions`,
     )
     return r.sessions ?? []
+  },
+
+  archiveSession(deviceId: string, sessionId: string, archived: boolean): Promise<SessionSummary> {
+    return request<SessionSummary>('PATCH', `/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}`, { archived })
+  },
+
+  async deleteSession(deviceId: string, sessionId: string): Promise<void> {
+    await request<void>('DELETE', `/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}`)
   },
 
   // ---- 配对（两阶段）----

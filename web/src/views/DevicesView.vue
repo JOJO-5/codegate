@@ -20,6 +20,7 @@ import { humanizeError, platformGlyph, platformLabel, relativeTime, toMs } from 
 import { api, type PairPreview } from '../lib/api'
 
 const devices = useDevicesStore()
+const showAddDevice = ref(false)
 
 // ---- 配对 ----
 const pairCode = ref('')
@@ -81,8 +82,9 @@ async function copyServerCommand(): Promise<void> {
   }
 }
 
-onMounted(() => {
-  void devices.load()
+onMounted(async () => {
+  await devices.load()
+  if (devices.items.length === 0) showAddDevice.value = true
 })
 
 async function submitCode(): Promise<void> {
@@ -135,10 +137,13 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
   <main class="page">
     <div class="row row--between" style="margin-bottom: 16px">
       <h1>设备</h1>
+      <div class="row">
+      <button class="btn btn--primary btn--sm" type="button" :aria-expanded="showAddDevice" @click="showAddDevice = !showAddDevice">{{ showAddDevice ? '收起添加设备' : '添加设备' }}</button>
       <button class="btn btn--sm" type="button" :disabled="devices.loading" @click="devices.load(true)">
         <span v-if="devices.loading" class="spinner" />
         刷新
       </button>
+      </div>
     </div>
 
     <div v-if="devices.error" class="notice notice--err" style="margin-bottom: 14px">
@@ -153,7 +158,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
     <div v-else-if="devices.items.length === 0" class="empty">
       <div>还没有绑定任何设备。</div>
       <div class="small" style="margin-top: 6px">
-        在下方选择目标电脑的系统，按步骤启动 Agent 后填写配对码。
+        选择“添加设备”，按步骤启动 Agent 后填写配对码。
       </div>
     </div>
 
@@ -182,12 +187,17 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
     </div>
 
     <!-- ---- 配对 ---- -->
-    <div class="card" style="margin-top: 18px">
+    <div v-if="showAddDevice" class="card" style="margin-top: 18px">
       <div class="card__title">
         <h2>添加设备</h2>
       </div>
 
       <div v-if="preview === null" class="stack">
+        <ol class="setup-steps" aria-label="添加设备步骤">
+          <li><strong>1. 选择系统并生成命令</strong><span>在目标电脑安装 Agent</span></li>
+          <li><strong>2. 配置并启动 Agent</strong><span>设置 Server 地址与可访问目录</span></li>
+          <li><strong>3. 输入配对码</strong><span>确认设备身份后绑定</span></li>
+        </ol>
         <div class="field">
           <span>目标电脑的系统</span>
           <div class="row" role="group" aria-label="目标电脑的系统">
@@ -211,31 +221,33 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
           </button>
           <div v-if="installError" class="notice notice--err">{{ installError }}</div>
           <div v-if="installCommand" class="notice notice--info">
-            仅限所选系统，10 分钟内使用一次。运行后配置工作目录和命令，再配对。
+            仅限所选系统，10 分钟内使用一次。运行后设置允许的工作目录并配对；CLI 可在设备页授权。
             <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">{{ installCommand }}</pre>
             <button class="btn btn--sm" type="button" @click="copyInstallCommand">{{ installCopied ? '已复制' : '复制安装命令' }}</button>
           </div>
         </div>
 
-        <div v-if="selectedOS === 'windows'" class="notice notice--info">
-          在目标 Windows 电脑运行上方命令安装 Agent。安装完成后先配置 Agent，再执行：
+        <details v-if="selectedOS === 'windows'" :open="!!installCommand" class="notice notice--info setup-details">
+          <summary>Windows：安装后的配置与开机自启</summary>
+          在目标 Windows 电脑运行上方命令安装 Agent。设置 Server 地址与允许的工作目录后执行：
           <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">&amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" doctor
 &amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" pair</pre>
-          运行前先配置 <code class="mono">%APPDATA%\CodeGate\agent.json</code> 中的 Server 地址、工作目录和允许的命令。
+          运行前先配置 <code class="mono">%APPDATA%\CodeGate\agent.json</code> 中的 Server 地址和工作目录。配对后在设备页授权已识别的 CLI。
           运行 <code class="mono">pair</code> 后，把输出的配对码填在下面。绑定完成后运行
           <code class="mono">&amp; "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe" run</code>。若希望开机后未解锁也能使用，可在仓库根目录执行
           <code class="mono">powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\CodeGate\agent-autostart.ps1" install -AgentPath "$env:LOCALAPPDATA\CodeGate\bin\codegate-agent.exe"</code>
           （输入当前 Windows 账号密码，不是 PIN；先关闭手动运行的 Agent）。
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">查看完整配置示例</a>。
-        </div>
+        </details>
 
-        <div v-else class="notice notice--info">
+        <details v-else :open="!!installCommand" class="notice notice--info setup-details">
+          <summary>{{ selectedOS === 'linux' ? 'Linux' : 'macOS' }}：安装后的配置与开机自启</summary>
           在目标 {{ selectedOS === 'linux' ? 'Linux' : 'macOS' }} 电脑运行上方命令安装 Agent，然后配置 Agent，执行：
           <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">~/.local/bin/codegate-agent doctor
 ~/.local/bin/codegate-agent pair</pre>
           先配置
           <code class="mono">{{ selectedOS === 'linux' ? '~/.config/codegate/agent.json' : '~/Library/Application Support/codegate/agent.json' }}</code>
-          中的 Server 地址、允许目录和命令。配对后可运行
+          中的 Server 地址和允许目录。配对后在设备页授权已识别的 CLI，再运行
           <code class="mono">~/.local/bin/codegate-agent run</code>，或安装登录前自启：
           <pre class="mono" style="overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere">CODEGATE_AGENT_BINARY="$HOME/.local/bin/codegate-agent" sh "$HOME/.local/share/codegate/agent-autostart.sh" install</pre>
           <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-AGENT-UNIX.md" target="_blank" rel="noopener noreferrer">查看 Linux/macOS Agent 完整配置</a>。
@@ -248,7 +260,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
             <span v-if="copyError" role="alert">{{ copyError }}</span>
             <a href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md" target="_blank" rel="noopener noreferrer">Server 部署指南</a>。
           </div>
-        </div>
+        </details>
       </div>
 
       <!-- 第一步：输入配对码 -->

@@ -744,6 +744,9 @@ func TestAttachSinceDeliversIncrement(t *testing.T) {
 	if !bytes.Contains(got, []byte("BBBB")) {
 		t.Errorf("应补上 BBBB:\n%q", got)
 	}
+	if bytes.Contains(got, resetSeq) || bytes.Contains(got, clearSeq) {
+		t.Errorf("增量接回不应清掉已有画面: %q", got)
+	}
 	if res.SeqFrom != mark {
 		t.Errorf("SeqFrom = %d, 期望 %d", res.SeqFrom, mark)
 	}

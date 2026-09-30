@@ -51,14 +51,33 @@ export const useSessionsStore = defineStore('sessions', () => {
 
     const conn = useConnStore()
 
-    // ---- 1. 优先走 WS（实时）----
+    // Server 保存已结束和归档的记录，Agent 只提供当前存活会话。
+    let saved: SessionSummary[] = []
+    try {
+      saved = await api.deviceSessions(deviceId)
+      setFor(deviceId, saved)
+      source.value = 'cache'
+    } catch (e) {
+      error.value = humanizeError(e)
+    }
+
     if (conn.isOpen) {
       try {
         const env = await conn.request<SessionListedPayload>(
           MessageType.SessionList,
           { device_id: deviceId },
         )
-        setFor(deviceId, env.payload?.sessions ?? [])
+        const live = env.payload?.sessions ?? []
+        const active = new Set(live.map(s => s.session_id))
+        const archived = new Map(saved.map(s => [s.session_id, s.archived]))
+        setFor(deviceId, [
+          ...live.map(s => ({ ...s, archived: archived.get(s.session_id) ?? false })),
+          ...saved.filter(s => !active.has(s.session_id)).map(s =>
+            s.status === 'running' || s.status === 'starting' || s.status === 'detached'
+              ? { ...s, status: 'exited' as const }
+              : s,
+          ),
+        ])
         source.value = 'live'
         loading.value = false
         return
@@ -68,16 +87,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       }
     }
 
-    // ---- 2. 回落 REST 缓存 ----
-    try {
-      const list = await api.deviceSessions(deviceId)
-      setFor(deviceId, list)
-      source.value = 'cache'
-    } catch (e) {
-      error.value = humanizeError(e)
-    } finally {
-      loading.value = false
-    }
+    loading.value = false
   }
 
   /**
@@ -131,6 +141,16 @@ export const useSessionsStore = defineStore('sessions', () => {
     await conn.request(MessageType.SessionClose, { session_id: sessionId, force }, sessionId)
   }
 
+  async function archive(deviceId: string, sessionId: string, archived: boolean): Promise<void> {
+    await api.archiveSession(deviceId, sessionId, archived)
+    patch(sessionId, { archived })
+  }
+
+  async function remove(deviceId: string, sessionId: string): Promise<void> {
+    await api.deleteSession(deviceId, sessionId)
+    removeFromList(sessionId)
+  }
+
   /** 用一条新快照替换列表里的某个会话（收到 session.exit / closed 时用）。 */
   function patch(sessionId: string, changes: Partial<SessionSummary>): void {
     const next: Record<string, SessionSummary[]> = {}
@@ -164,6 +184,8 @@ export const useSessionsStore = defineStore('sessions', () => {
     load,
     create,
     close,
+    archive,
+    remove,
     patch,
     removeFromList,
     reset,

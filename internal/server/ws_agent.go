@@ -517,9 +517,12 @@ func (s *agentSession) handlePairBegin(env *protocol.Envelope) error {
 // ---------------------------------------------------------------------------
 
 func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
+	if (env.Type == protocol.TypeToolUpdated || env.Type == protocol.TypeError) && s.srv.acceptToolReply(s.ac, env) { return nil }
 	switch env.Type {
 	case protocol.TypeWebStarted, protocol.TypeWebStopped:
 		s.srv.acceptWebReply(s.ac, env)
+		return nil
+	case protocol.TypeToolUpdated:
 		return nil
 	case protocol.TypeWebClose:
 		p, err := protocol.DecodePayload[protocol.WebStreamPayload](env)
@@ -696,6 +699,7 @@ func (s *agentSession) handleHeartbeat(env *protocol.Envelope) error {
 	s.ac.SetSessions(ids)
 	s.ac.SetUpdateStatus(p.Update)
 	s.ac.SetCommands(p.Commands)
+	s.ac.SetDSHWebEnabled(p.DSHWebEnabled)
 	s.ac.SetRoots(p.Roots)
 	return nil
 }

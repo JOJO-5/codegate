@@ -2,10 +2,20 @@ name: DSH Web integration
 on:
   pull_request:
     paths:
-      - 'internal/agent/dsh_web*'
+      - 'internal/agent/**'
+      - 'internal/protocol/**'
+      - 'go.mod'
+      - 'go.sum'
       - 'internal/server/dsh_*'
       - '.github/workflows/dsh-web-integration.yml'
   workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   real-dsh:
     runs-on: ubuntu-latest

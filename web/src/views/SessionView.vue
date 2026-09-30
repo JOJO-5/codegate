@@ -76,6 +76,51 @@ const confirmTerminate = ref(false)
 const replayWarning = ref(false)
 const exitInfo = ref<SessionExitPayload | null>(null)
 const errorText = ref<string | null>(null)
+const mobileDraft = ref('')
+const composer = ref<HTMLTextAreaElement | null>(null)
+const showSessionPanel = ref(false)
+const showExtraKeys = ref(false)
+const siblingSessions = computed(() => sessions.forDevice(summary.value?.device_id.replace(/-/g, '') ?? '').filter(s => !s.archived))
+const termHeight = ref('100dvh')
+function syncViewport(): void {
+  termHeight.value = `${window.visualViewport?.height ?? window.innerHeight}px`
+  scheduleFit()
+}
+function submitDraft(event?: KeyboardEvent): void {
+  if (event?.isComposing || !mobileDraft.value || role.value !== 'controller' || !isLive.value || !conn.isOpen) return
+  sendText(mobileDraft.value + '\r')
+  mobileDraft.value = ''
+  composer.value?.focus()
+}
+function onComposerKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  submitDraft()
+}
+function focusTerminal(): void { term?.focus() }
+function scrollHistory(lines: number): void {
+  if (term?.buffer.active.type === 'alternate') {
+    // Full-screen TUIs own their history. Their alternate buffer has no
+    // xterm scrollback; send the navigation key to the running program.
+    if (role.value === 'controller' && isLive.value && conn.isOpen) {
+      sendText(lines < 0 ? '\x1b[5~' : '\x1b[6~')
+    }
+  } else {
+    term?.scrollLines(lines)
+  }
+}
+let touchY = 0
+function onTerminalTouchStart(e: TouchEvent): void { touchY = e.changedTouches[0]?.clientY ?? 0 }
+function onTerminalTouchEnd(e: TouchEvent): void {
+  if (term?.buffer.active.type !== 'alternate' || !touchY) return
+  const delta = (e.changedTouches[0]?.clientY ?? touchY) - touchY
+  if (Math.abs(delta) > 55) scrollHistory(delta > 0 ? -12 : 12)
+  touchY = 0
+}
+function redraw(): void {
+  if (role.value !== 'controller' || !isLive.value) return
+  sendText('\x0c') // Most interactive CLIs repaint on Ctrl+L.
+}
 
 // ---- 搜索（Ctrl+Shift+F，规格 §5.3 要求拦这个组合键）----
 const searchOpen = ref(false)
@@ -119,6 +164,15 @@ let sentCols = 0
 let sentRows = 0
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleFit(): void {
+  if (resizeTimer !== null) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null
+    if (!term || !fit) return
+    try { fit.fit() } catch { return }
+    sendResize()
+  }, RESIZE_DEBOUNCE_MS)
+}
 let unsubFrame: (() => void) | null = null
 let unsubControl: (() => void) | null = null
 
@@ -142,7 +196,7 @@ function sendText(text: string): void {
 
 function sendResize(): void {
   const t = term
-  if (t === null) return
+  if (t === null || role.value !== 'controller' || !conn.isOpen) return
   // ★ 「值未变则不发」不是优化，是正确性：
   //   拖窗口时每个像素都会触发 ResizeObserver，不判断的话会产生
   //   resize 风暴 —— 每次 resize 在 ConPTY 里都是一次完整重排，
@@ -166,7 +220,11 @@ function onFrame(frame: DecodedFrame): void {
     case FrameType.Buffer:
     case FrameType.Stdout:
       // ★ 直接写字节，不解码、不转字符串。见文件头第 1 条纪律。
-      t.write(frame.payload)
+      if (frame.type === FrameType.Buffer && (frame.flags & FrameFlag.BufferEnd) !== 0) {
+        t.write(frame.payload, () => { replaying.value = false })
+      } else {
+        t.write(frame.payload)
+      }
       break
     default:
       // Stdin / FileData 不该出现在这条路径上。忽略而不是断连 ——
@@ -188,10 +246,7 @@ function onFrame(frame: DecodedFrame): void {
     return
   }
 
-  if (frame.type === FrameType.Buffer && (frame.flags & FrameFlag.BufferEnd) !== 0) {
-    // 重放结束，后面就是实时流了
-    replaying.value = false
-  }
+  // BufferEnd clears the overlay in xterm's write callback, after rendering.
 }
 
 function onControl(env: Envelope): void {
@@ -256,6 +311,7 @@ async function attach(since: number): Promise<void> {
 
     summary.value = p.session
     role.value = p.role
+    void sessions.load(p.session.device_id.replace(/-/g, ''))
 
     // 落后太多、中间有丢帧：必须清屏后按 seq_from 重放，否则屏幕上会
     // 拼出错误的画面（新旧内容交错，光标位置也不对）。
@@ -298,7 +354,7 @@ async function terminate(): Promise<void> {
 }
 
 function goBack(): void {
-  const dev = summary.value?.device_id
+  const dev = summary.value?.device_id.replace(/-/g, '')
   if (dev !== undefined && dev !== '') {
     void router.push({ name: 'device', params: { id: dev } })
   } else {
@@ -308,7 +364,10 @@ function goBack(): void {
 
 // Reattach only the current session after a new WebSocket connection.
 watch(() => conn.reconnectCount, () => {
-  if (conn.isOpen && term !== null) void attach(lastSeq)
+  if (conn.isOpen && term !== null) {
+    replaying.value = true
+    void attach(lastSeq)
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -341,6 +400,9 @@ function findPrev(): void {
 // ---------------------------------------------------------------------------
 
 onMounted(async () => {
+  syncViewport()
+  window.visualViewport?.addEventListener('resize', syncViewport)
+  window.addEventListener('resize', syncViewport)
   await nextTick()
   await devices.load()
 
@@ -460,29 +522,23 @@ onMounted(async () => {
 
   // ---- attach ----
   await attach(0)
+  if (errorText.value === null) {
+    // The create-page estimate can differ from this actual xterm fit.
+    sentCols = 0
+    sentRows = 0
+    sendResize()
+  }
 
   // A new WebSocket has no server-side attachment. Reattach this exact
   // session from its last output byte; never create a second process.
   // ---- resize ----
-  ro = new ResizeObserver(() => {
-    if (resizeTimer !== null) clearTimeout(resizeTimer)
-    resizeTimer = setTimeout(() => {
-      resizeTimer = null
-      const tt = term
-      const ff = fit
-      if (tt === null || ff === null) return
-      try {
-        ff.fit()
-      } catch {
-        return
-      }
-      sendResize()
-    }, RESIZE_DEBOUNCE_MS)
-  })
+  ro = new ResizeObserver(scheduleFit)
   ro.observe(host)
 })
 
 onUnmounted(() => {
+  window.visualViewport?.removeEventListener('resize', syncViewport)
+  window.removeEventListener('resize', syncViewport)
   // 先退订，再销毁 —— 反过来的话，dispose 过程中触发的帧会打到已销毁的实例上
   unsubFrame?.()
   unsubControl?.()
@@ -511,10 +567,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="term">
+  <div class="term" :style="{ height: termHeight }">
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
-      <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 返回</button>
+      <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 会话</button>
+      <button class="btn btn--ghost btn--sm term__panel-button" type="button" @click="showSessionPanel = !showSessionPanel">☰ 切换</button>
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">文件</button>
 
       <span class="term__title" :title="summary?.name ?? sessionId">
@@ -529,7 +586,18 @@ onUnmounted(() => {
     </div>
 
     <!-- ---- 终端 ---- -->
-    <div ref="hostEl" class="term__host">
+    <div class="term__workspace">
+      <aside class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区">
+        <div class="term__sidebar-heading">工作区</div>
+        <button class="btn btn--primary" type="button" @click="goBack">＋ 新会话</button>
+        <div class="term__sidebar-heading">最近会话</div>
+        <button v-for="item in siblingSessions" :key="item.session_id" class="term__session-link" :class="{ 'term__session-link--active': item.session_id === sessionId }" type="button" @click="router.push({ name: 'session', params: { id: item.session_id } })">
+          <span>{{ item.name || item.command || '会话' }}</span>
+          <small>{{ statusLabel(item.status) }}</small>
+        </button>
+        <button class="term__session-link" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">▣ 工作区文件</button>
+      </aside>
+      <div ref="hostEl" class="term__host" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
       <div v-if="replaying" class="term__overlay">
         <span class="spinner" />
         <span class="small dim">正在重放历史输出…</span>
@@ -548,6 +616,7 @@ onUnmounted(() => {
         </div>
         <div class="small faint">上面的输出是它留下的最后内容</div>
         <button class="btn btn--sm" type="button" @click="goBack">返回设备</button>
+      </div>
       </div>
     </div>
 
@@ -604,36 +673,29 @@ onUnmounted(() => {
           <button class="btn btn--sm" type="button" :disabled="exiting" @click="confirmTerminate = false">取消</button>
         </div>
       </div>
-      <div class="row" style="gap: 6px; flex-wrap: wrap">
-        <button class="btn btn--sm" type="button" @click="sendText('\x1b')">Esc</button>
-        <button class="btn btn--sm" type="button" @click="sendText('\t')">Tab</button>
-        <button class="btn btn--sm" type="button" @click="sendText('\x1b[A')">↑</button>
-        <button class="btn btn--sm" type="button" @click="sendText('\x1b[B')">↓</button>
+      <div class="term__composer" v-if="role === 'controller' && isLive">
+        <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown="onComposerKeydown" />
+        <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !conn.isOpen" @click="submitDraft()">发送 ↵</button>
+      </div>
+      <div class="row term__tools" style="gap: 6px; flex-wrap: wrap">
+        <button class="btn btn--sm" type="button" @click="focusTerminal">⌨ 键盘</button>
+        <button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
+        <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
+        <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>
+        <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @click="sendInterrupt">Ctrl+C</button>
+        <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起按键' : '更多按键' }}</button>
+        <div class="grow" />
+        <button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button>
+      </div>
+      <div v-if="showExtraKeys" class="row term__tools term__extra-keys" aria-label="终端辅助按键" style="gap: 6px; flex-wrap: wrap">
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="redraw">重绘</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b')">Esc</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\t')">Tab</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b[A')">↑</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b[B')">↓</button>
         <!-- 手机上没有 Ctrl+Shift+F，所以搜索也必须有个可点的入口 -->
         <button class="btn btn--sm" type="button" title="查找" @click="openSearch">查找</button>
 
-        <button
-          class="btn btn--sm"
-          type="button"
-          :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive"
-          :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'"
-          @click="sendInterrupt"
-        >
-          Ctrl+C
-        </button>
-
-        <div class="grow" />
-
-        <button
-          class="btn btn--sm btn--danger"
-          type="button"
-          :disabled="exiting || !conn.isOpen || !isLive"
-          title="关闭这个会话并结束进程"
-          @click="confirmTerminate = true"
-        >
-          <span v-if="exiting" class="spinner" />
-          关闭会话
-        </button>
       </div>
     </div>
   </div>

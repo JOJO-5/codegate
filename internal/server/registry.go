@@ -63,6 +63,7 @@ type AgentConn struct {
 	updateStatus *protocol.AgentUpdateStatus
 	commands []protocol.CommandAvailability
 	roots []string
+	dshWebEnabled *bool
 	agentVer  string
 	platform  string
 	connected time.Time
@@ -172,6 +173,20 @@ func (c *AgentConn) SetCommands(commands []protocol.CommandAvailability) {
 	c.updateMu.Lock()
 	defer c.updateMu.Unlock()
 	c.commands = append([]protocol.CommandAvailability(nil), commands...)
+}
+
+func (c *AgentConn) SetDSHWebEnabled(enabled *bool) {
+	c.updateMu.Lock()
+	defer c.updateMu.Unlock()
+	c.dshWebEnabled = enabled
+}
+
+func (c *AgentConn) DSHWebEnabled() *bool {
+	c.updateMu.RLock()
+	defer c.updateMu.RUnlock()
+	if c.dshWebEnabled == nil { return nil }
+	value := *c.dshWebEnabled
+	return &value
 }
 
 func (c *AgentConn) Commands() []protocol.CommandAvailability {

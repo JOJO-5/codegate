@@ -52,6 +52,11 @@ type WebStreamPayload struct {
 	StreamID string `json:"stream_id"`
 }
 
+type ToolSetPayload struct {
+	ID string `json:"id"`
+	Enabled bool `json:"enabled"`
+}
+
 // NewEnvelope 构造一个信封并把 payload 序列化进去。
 // payload 传 nil 时 Payload 为空。
 func NewEnvelope(t Type, payload any) (*Envelope, error) {
@@ -204,6 +209,7 @@ type SessionSummary struct {
 	Args           []string `json:"args,omitempty"`
 	Cwd            string   `json:"cwd"`
 	Status         string   `json:"status"` // starting|running|detached|exited|failed|terminated
+	Archived       bool     `json:"archived,omitempty"`
 	PID            int      `json:"pid,omitempty"`
 	ExitCode       *int     `json:"exit_code,omitempty"`
 	Cols           uint16   `json:"cols"`
@@ -223,6 +229,7 @@ type HeartbeatPayload struct {
 	Sessions []HeartbeatSession `json:"sessions"`
 	Update AgentUpdateStatus `json:"update"`
 	Commands []CommandAvailability `json:"commands,omitempty"`
+	DSHWebEnabled *bool `json:"dsh_web_enabled,omitempty"`
 	// Roots 是该 Agent 允许作为工作目录的根路径白名单（对应 agent.json
 	// 的 allowed_roots）。仅用于让界面自动带出与提供候选，**不是**授权
 	// 依据 —— 真正的校验始终在 Agent 侧的 Workspace.Resolve。
@@ -255,6 +262,7 @@ type CommandAvailability struct {
 	Kind string `json:"kind"`
 	Installed bool `json:"installed"`
 	Allowed bool `json:"allowed"`
+	Managed bool `json:"managed,omitempty"`
 	Resume bool `json:"resume,omitempty"`
 	WebURL string `json:"web_url,omitempty"`
 }

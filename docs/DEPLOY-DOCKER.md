@@ -163,7 +163,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\Code
 
 ## 终端与 DSH
 
-设备上的 Agent 可以启动配置中授权的普通 Shell 和交互式 CLI，浏览器中使用的是该机器的真实 PTY。新 Agent 会在心跳中检查已配置命令是否能从开机服务的 PATH 找到，并额外检测 Claude Code、Codex、OpenCode、DSH 的可执行文件。检测结果仅用于展示，**不会自动授权**。想让一个程序出现在“新建会话”菜单，仍需在目标机器的 `agent.json` 添加 `allowed_commands` 并重启 Agent。
+设备上的 Agent 可以启动授权的普通 Shell 和交互式 CLI，浏览器中使用的是该机器的真实 PTY。Agent 会扫描 Claude Code、Codex、OpenCode、DSH；扫描本身不会授权。在设备页的“本机工具”中点击“授权使用”，Agent 仅接受这四个固定工具 ID，并将选择保存在本机状态目录的 `approved-tools.json`，无需手改 JSON 或重启。取消授权后不能再新建该工具的会话，已运行会话不受影响。自定义程序仍需在目标机器的 `agent.json` 中添加 `allowed_commands`。旧版 Agent 不支持网页授权，需要先更新 Agent。
 
 DeepSeek Harness 的 `dsh` 命令本身是 profile 启动器；CodeGate 检测到它不代表 TUI 插件已就绪。在目标机器以运行 Agent 的同一用户安装官方文档给出的示例插件，并确认能启动交互界面：
 
@@ -172,7 +172,7 @@ dsh plugin --profile tui add github:deepseek-harness/turtle-ui
 dsh --profile tui
 ```
 
-插件管理需要 `pnpm`；安装 Git 源码插件时，可能还需按 DSH 提示在该 profile 的 `pnpm-workspace.yaml` 允许构建后重试。验证成功再在 `allowed_commands` 添加：
+插件管理需要 `pnpm`；安装 Git 源码插件时，可能还需按 DSH 提示在该 profile 的 `pnpm-workspace.yaml` 允许构建后重试。验证成功后可在设备页授权 DSH。需要特殊参数或独立 Web 地址时，仍可手动在 `allowed_commands` 添加：
 
 ```json
 {

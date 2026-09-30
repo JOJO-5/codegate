@@ -28,6 +28,39 @@ const router = useRouter()
 
 const device = computed(() => devices.byId(props.id))
 const list = computed(() => sessions.forDevice(props.id))
+const showArchived = ref(false)
+const sessionQuery = ref('')
+const pinnedIds = ref<string[]>([])
+const pinKey = computed(() => `codegate.pins.${props.id}`)
+const visibleSessions = computed(() => {
+  const query = sessionQuery.value.trim().toLocaleLowerCase()
+  return list.value.filter(s => Boolean(s.archived) === showArchived.value &&
+    (!query || [s.name, s.command, s.cwd].some(v => v?.toLocaleLowerCase().includes(query))))
+    .sort((a, b) => Number(pinnedIds.value.includes(b.session_id)) - Number(pinnedIds.value.includes(a.session_id)) ||
+      (toMs(b.created_at) ?? 0) - (toMs(a.created_at) ?? 0))
+})
+function togglePin(id: string): void {
+  pinnedIds.value = pinnedIds.value.includes(id) ? pinnedIds.value.filter(x => x !== id) : [...pinnedIds.value, id]
+  localStorage.setItem(pinKey.value, JSON.stringify(pinnedIds.value))
+}
+const archivedCount = computed(() => list.value.filter(s => s.archived).length)
+const sessionActionError = ref<string | null>(null)
+const deletingSession = ref<string | null>(null)
+async function toggleArchive(s: SessionSummary): Promise<void> {
+  sessionActionError.value = null
+  try { await sessions.archive(props.id, s.session_id, !s.archived) }
+  catch (e) { sessionActionError.value = humanizeError(e) }
+}
+async function deleteRecord(s: SessionSummary): Promise<void> {
+  if (deletingSession.value !== s.session_id) { deletingSession.value = s.session_id; return }
+  sessionActionError.value = null
+  try {
+    await sessions.remove(props.id, s.session_id)
+    if (pinnedIds.value.includes(s.session_id)) togglePin(s.session_id)
+    deletingSession.value = null
+  }
+  catch (e) { sessionActionError.value = humanizeError(e) }
+}
 const updateInfo = ref<DeviceUpdateStatus | null>(null)
 let updateTimer: ReturnType<typeof setInterval> | null = null
 let updateLoading = false
@@ -65,6 +98,29 @@ const updateLabel = computed(() => {
 const presetId = ref('claude')
 const cwd = ref('')
 const sessionName = ref('')
+interface LaunchShortcut { label: string; commandId: string; cwd: string; name: string }
+const shortcuts = ref<LaunchShortcut[]>([])
+const shortcutKey = computed(() => `codegate.shortcuts.${props.id}`)
+function saveShortcut(): void {
+  const command = selectedPreset.value
+  const path = cwd.value.trim()
+  if (!command || !path) return
+  const label = `${command.label} · ${path.split(/[\\/]/).filter(Boolean).pop() || path}`
+  const next = { label, commandId: command.id, cwd: path, name: sessionName.value.trim() }
+  shortcuts.value = [...shortcuts.value.filter(s => s.commandId !== next.commandId || s.cwd !== next.cwd), next].slice(-12)
+  localStorage.setItem(shortcutKey.value, JSON.stringify(shortcuts.value))
+}
+function selectShortcut(index: number): void {
+  const shortcut = shortcuts.value[index]
+  if (!shortcut) return
+  presetId.value = shortcut.commandId
+  cwd.value = shortcut.cwd
+  sessionName.value = shortcut.name
+}
+function removeShortcut(index: number): void {
+  shortcuts.value = shortcuts.value.filter((_, i) => i !== index)
+  localStorage.setItem(shortcutKey.value, JSON.stringify(shortcuts.value))
+}
 const creating = ref(false)
 const createError = ref<string | null>(null)
 
@@ -91,9 +147,20 @@ const selectableCommands = computed<CommandPreset[]>(() => {
     ...(c.resume ? { resume: true } : {}),
   }))
 })
-const detectedUnapproved = computed(() =>
-  (reportedCommands.value ?? []).filter(c => c.installed && !c.allowed),
-)
+const knownTools = computed(() => (reportedCommands.value ?? []).filter(c =>
+  ['claude', 'codex', 'opencode', 'dsh'].includes(c.id),
+))
+const toolBusy = ref('')
+const toolError = ref('')
+async function setTool(id: string, enabled: boolean): Promise<void> {
+  toolBusy.value = id
+  toolError.value = ''
+  try {
+    await api.setDeviceTool(props.id, id, enabled)
+    await loadUpdateStatus()
+  } catch (e) { toolError.value = humanizeError(e) }
+  finally { toolBusy.value = '' }
+}
 const selectedPreset = computed(() => selectableCommands.value.find(p => p.id === presetId.value))
 const selectedWebURL = computed(() => reportedCommands.value?.find(c => c.id === presetId.value && c.allowed)?.web_url)
 const dshCommand = computed(() => reportedCommands.value?.find(c => c.id === 'dsh'))
@@ -167,6 +234,13 @@ const confirmDelete = ref(false)
 let unsubscribeControl: (() => void) | null = null
 
 onMounted(async () => {
+  try {
+    const savedPins = JSON.parse(localStorage.getItem(pinKey.value) ?? '[]')
+    if (Array.isArray(savedPins)) pinnedIds.value = savedPins.filter((id): id is string => typeof id === 'string')
+    const savedShortcuts = JSON.parse(localStorage.getItem(shortcutKey.value) ?? '[]')
+    if (Array.isArray(savedShortcuts)) shortcuts.value = savedShortcuts.filter((s): s is LaunchShortcut =>
+      typeof s?.label === 'string' && typeof s?.commandId === 'string' && typeof s?.cwd === 'string' && typeof s?.name === 'string').slice(-12)
+  } catch { pinnedIds.value = []; shortcuts.value = [] }
   await devices.load()
   if (device.value !== undefined) {
     nameDraft.value = device.value.name
@@ -257,7 +331,7 @@ async function createSession(): Promise<void> {
       cols: size.cols,
       rows: size.rows,
       ...(name === '' ? {} : { name }),
-      ...(preset.resume === true ? { resume: true } : {}),
+      // 新建始终是全新 CLI 对话；接回原会话请使用下方的会话列表。
     })
 
     localStorage.setItem(cwdKey.value, cwd.value.trim())
@@ -297,18 +371,20 @@ async function doDelete(): Promise<void> {
 }
 
 function openSession(s: SessionSummary): void {
+  if (!canOpen(s)) return
   void router.push({ name: 'session', params: { id: s.session_id } })
 }
 
 /** 会话是否还活着（可进入）。 */
 function canOpen(s: SessionSummary): boolean {
-  return isLiveStatus(s.status)
+  return isLiveStatus(s.status) && device.value?.online === true
 }
 </script>
 
 <template>
-  <main class="page">
-    <div class="row row--between" style="margin-bottom: 16px">
+  <main class="page device-page">
+    <div class="device-heading">
+      <div class="row row--between">
       <div class="row">
         <RouterLink class="btn btn--ghost btn--sm" :to="{ name: 'devices' }">‹ 设备</RouterLink>
         <h1 style="margin: 0">{{ device?.name ?? '设备' }}</h1>
@@ -317,10 +393,219 @@ function canOpen(s: SessionSummary): boolean {
         <span v-if="sessions.loading" class="spinner" />
         刷新
       </button>
+      </div>
+      <p class="device-heading__summary"><span class="health__dot" :style="{ background: device?.online ? 'var(--ok)' : 'var(--fg-faint)' }" />{{ device?.online ? '设备在线' : '设备离线' }}<span v-if="device">· {{ platformLabel(device.platform) }} · Agent {{ device.agent_version || '—' }}</span></p>
     </div>
 
+    <div class="device-workspace">
+    <!-- ---- 新建会话 ---- -->
+    <div class="card device-create">
+      <div class="card__title">
+        <h2>新建会话</h2>
+        <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
+      </div>
+
+      <form class="stack" @submit.prevent="createSession">
+        <div v-if="shortcuts.length" class="field">
+          <label for="launch-shortcut">常用启动组合</label>
+          <div class="row">
+            <select id="launch-shortcut" aria-label="选择常用启动组合" @change="selectShortcut(Number(($event.target as HTMLSelectElement).value)); ($event.target as HTMLSelectElement).value = ''">
+              <option value="">选择组合填入下方表单</option>
+              <option v-for="(shortcut, index) in shortcuts" :key="index" :value="index">{{ shortcut.label }}</option>
+            </select>
+            <button v-if="shortcuts.some(s => s.commandId === presetId && s.cwd === cwd.trim())" class="btn btn--sm" type="button" @click="removeShortcut(shortcuts.findIndex(s => s.commandId === presetId && s.cwd === cwd.trim()))">移除</button>
+          </div>
+          <span class="field__hint">选择后仍需点击“新建独立会话”；不会接续旧对话。</span>
+        </div>
+        <div class="field">
+          <label for="preset">命令</label>
+          <select id="preset" v-model="presetId" :disabled="creating">
+            <option v-for="p in selectableCommands" :key="p.id" :value="p.id">
+              {{ p.label }} —— {{ p.hint }}
+            </option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="cwd">工作目录</label>
+          <input
+            id="cwd"
+            v-model="cwd"
+            class="mono"
+            type="text"
+            list="cwd-roots"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            :placeholder="cwdPlaceholder"
+            :disabled="creating"
+          />
+          <datalist id="cwd-roots">
+            <option v-for="root in allowedRoots" :key="root" :value="root" />
+          </datalist>
+          <span class="field__hint">
+            <template v-if="allowedRoots.length > 0">
+              可在 Agent 允许的目录内选择：{{ allowedRoots.join('、') }}
+            </template>
+            <template v-else>
+              必须是 Agent 的 allowed_roots 里的目录，否则会被拒绝（Agent 离线或版本过低，未上报允许目录）。
+            </template>
+          </span>
+        </div>
+
+        <div class="field">
+          <label for="sname">会话名（可选）</label>
+          <input
+            id="sname"
+            v-model="sessionName"
+            type="text"
+            placeholder="留空则用命令名"
+            :disabled="creating"
+          />
+        </div>
+
+        <div v-if="reportedCommands === undefined" class="notice notice--warn small">
+          当前 Agent 尚未上报本机命令清单；预置列表仅供旧版本兼容，是否可运行仍由本机 allowed_commands 决定。
+        </div>
+        <div v-else-if="selectableCommands.length === 0" class="notice notice--warn small">
+          还没有可启动的工具。<a href="#device-tools-heading">在“本机工具”中授权已安装的 CLI</a>。
+        </div>
+        <details class="device-advanced"><summary>命令与 DSH 设置</summary>
+        <div v-if="selectedWebURL" class="notice small">
+          外部 Web 地址：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。此链接由你另行部署，与下方 CodeGate 内建转发互不影响。
+        </div>
+        <div v-if="dshCommand" class="notice small">
+          <strong>DSH TUI：</strong>
+          <span v-if="!dshCommand.installed">本机服务的 PATH 中未找到 dsh。</span>
+          <span v-else-if="!dshCommand.allowed">已找到 dsh，可在下方“本机工具”中授权。</span>
+          <span v-else>已授权 dsh；TUI 插件状态尚未自动验证。</span>
+          <p>要在终端使用，先在目标机器以运行 Agent 的同一用户执行：</p>
+          <div class="row"><code class="mono">{{ dshInstallCommand }}</code><button class="btn btn--ghost btn--sm" type="button" @click="copyDshInstallCommand">复制命令</button></div>
+          <span v-if="dshCopyStatus" class="field__hint">{{ dshCopyStatus }}</span>
+          <p>在该用户环境验证 <code class="mono">dsh --profile tui</code> 能打开 TUI，再在“本机工具”中授权 dsh。安装过程可能需要 pnpm 按提示允许插件构建；CodeGate 不会自动安装插件。</p>
+        </div>
+        </details>
+
+        <!-- Windows shell 的 ConPTY 中断限制。 -->
+        <div v-if="selectedPreset?.kind === 'shell' && device?.platform === 'windows'" class="notice notice--warn">
+          <strong>{{ selectedPreset.label }}</strong> 属于 shell 类程序。在 Windows 上，
+          系统自带的 ConPTY 无法把中断信号送达它 —— 会话里的 Ctrl+C 按钮会被禁用。
+          终端内的 Ctrl+C 会被屏蔽以免关闭会话；结束整个会话需在终端页确认「关闭会话」。
+        </div>
+
+        <div v-if="createError" class="notice notice--err">{{ createError }}</div>
+
+        <div class="row">
+          <button class="btn btn--primary" type="submit" :disabled="creating || !conn.isOpen || selectableCommands.length === 0">
+            <span v-if="creating" class="spinner" />
+            新建独立会话 →
+          </button>
+          <button class="btn btn--sm" type="button" :disabled="!selectedPreset || !cwd.trim()" @click="saveShortcut">保存组合</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ---- 会话列表 ---- -->
+    <div class="card device-sessions">
+      <div class="card__title">
+        <h2>会话</h2>
+        <span v-if="sessions.source !== null" class="badge" :class="sessions.source === 'live' ? 'badge--ok' : 'badge--idle'">
+          {{ sessions.source === 'live' ? '实时' : '缓存快照' }}
+        </span>
+      </div>
+
+
+
+      <div v-if="sessions.error" class="notice notice--err" style="margin-bottom: 12px">
+        {{ sessions.error }}
+      </div>
+
+      <div v-if="sessionActionError" class="notice notice--err" style="margin-bottom: 12px">{{ sessionActionError }}</div>
+
+      <div class="row session-filters">
+        <button class="btn btn--sm" :class="!showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = false">最近会话</button>
+        <button class="btn btn--sm" :class="showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = true">归档 {{ archivedCount }}</button>
+      </div>
+      <div class="field"><label for="session-query">查找会话</label><input id="session-query" v-model="sessionQuery" type="search" placeholder="按名称、命令或工作目录搜索" /></div>
+
+      <p class="dim small session-help">离开终端后会话继续运行。设备在线时可接回；结束进程请在终端内关闭会话。</p>
+
+      <div v-if="visibleSessions.length === 0" class="empty">{{ sessionQuery.trim() ? '没有匹配的会话。' : showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
+
+      <div v-else class="list">
+        <div
+          v-for="s in visibleSessions"
+          :key="s.session_id"
+          class="item"
+        >
+          <span class="item__main">
+            <span class="item__title">
+              {{ s.name || s.command || '会话' }}
+              <span class="badge" :class="`badge--${statusKind(s.status)}`">
+                {{ statusLabel(s.status) }}
+              </span>
+            </span>
+            <span class="item__meta" :title="describeSession(s)">{{ s.command || '命令' }} · {{ s.cwd || '工作目录未知' }}</span>
+          </span>
+          <span class="item__actions">
+            <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
+            <button class="btn btn--ghost btn--sm" type="button" :aria-label="pinnedIds.includes(s.session_id) ? '取消置顶会话' : '置顶会话'" :aria-pressed="pinnedIds.includes(s.session_id)" @click="togglePin(s.session_id)">{{ pinnedIds.includes(s.session_id) ? '★ 已置顶' : '☆ 置顶' }}</button>
+            <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : '设备离线，重新上线后可接回'" @click="openSession(s)">{{ canOpen(s) ? '接回' : '离线，暂不可接回' }}</button>
+            <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
+            <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
+              {{ deletingSession === s.session_id ? '确认删除' : '删除记录' }}
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+    <section class="card device-tools" aria-labelledby="device-tools-heading">
+      <div class="card__title"><h2 id="device-tools-heading">本机工具</h2><span class="faint small">由 Agent 扫描</span></div>
+      <p class="dim small">Agent 扫描本机工具；授权后即可从网页新建会话，随时可关闭授权。</p>
+      <div v-if="!updateInfo?.online" class="dim small">设备上线后显示扫描结果。</div>
+      <div v-else-if="!reportedCommands" class="dim small">等待 Agent 上报工具清单。</div>
+      <div v-else class="device-tools__list">
+        <div v-for="tool in knownTools" :key="tool.id" class="device-tools__item">
+          <span>{{ tool.label }}</span>
+          <span class="badge" :class="tool.allowed && tool.installed ? 'badge--ok' : tool.installed ? 'badge--warn' : 'badge--idle'">{{ !tool.installed ? '未找到' : tool.allowed ? '可使用' : '待授权' }}</span>
+          <button v-if="tool.installed && !tool.allowed" class="btn btn--primary btn--sm" type="button" :disabled="!!toolBusy" @click="setTool(tool.id, true)">{{ toolBusy === tool.id ? '授权中…' : '授权使用' }}</button>
+          <button v-else-if="tool.installed && tool.allowed && tool.managed" class="btn btn--ghost btn--sm" type="button" :disabled="!!toolBusy" @click="setTool(tool.id, false)">{{ toolBusy === tool.id ? '处理中…' : '关闭授权' }}</button>
+        </div>
+      </div>
+      <div v-if="toolError" class="notice notice--err small">{{ toolError }}</div>
+      <p class="small dim">网页授权适用于这四个工具；自定义命令仍由目标电脑配置。旧版 Agent 需要先更新。</p>
+    </section>
+
+    <!-- DSH Web is a separate browser experience, independent of TUI sessions. -->
+    <section class="card device-dsh" aria-labelledby="dsh-web-heading">
+      <div class="card__title"><h2 id="dsh-web-heading">DSH Web</h2><span class="badge" :class="updateInfo?.web_proxy_enabled ? 'badge--ok' : 'badge--idle'">{{ updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></div>
+      <p class="dim small">在目标电脑启动 DSH Web，通过 CodeGate 的独立 HTTPS 地址打开。</p>
+      <ol class="device-dsh__checklist">
+        <li :class="updateInfo?.web_proxy_enabled ? 'device-dsh__ready' : ''">
+          <span>{{ updateInfo?.web_proxy_enabled ? '✓' : '1' }}</span>
+          <div><strong>Server 域名与 HTTPS</strong><small>{{ updateInfo?.web_proxy_enabled ? '转发已启用' : '设置 CODEGATE_DSH_PROXY_DOMAIN，并为通配子域名配置 DNS 和 TLS 证书' }}</small></div>
+        </li>
+        <li :class="dshCommand?.installed ? 'device-dsh__ready' : ''">
+          <span>{{ dshCommand?.installed ? '✓' : '2' }}</span>
+          <div><strong>目标电脑上的 DSH</strong><small>{{ dshCommand?.installed ? 'Agent 服务账户已找到 dsh' : updateInfo?.online ? 'Agent 服务账户未找到 dsh；安装后重启 Agent' : '设备上线后检查安装状态' }}</small></div>
+        </li>
+        <li :class="updateInfo?.dsh_web_enabled ? 'device-dsh__ready' : ''">
+          <span>{{ updateInfo?.dsh_web_enabled ? '✓' : '3' }}</span>
+          <div><strong>允许启动 Web</strong><small>{{ updateInfo?.dsh_web_enabled ? 'Agent 已允许' : '在目标电脑的 agent.json 设置 "dsh_web_enabled": true，然后重启 Agent' }}</small></div>
+        </li>
+      </ol>
+      <a class="small" href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md#%E5%86%85%E5%BB%BA-dsh-web-%E8%BD%AC%E5%8F%91%E5%8F%AF%E9%80%89" target="_blank" rel="noopener noreferrer">查看 Server 域名和证书设置 ↗</a>
+      <div v-if="updateInfo && !updateInfo.online" class="notice notice--warn small">设备离线，连接后才能启动 DSH Web。</div>
+      <div class="row device-dsh__actions">
+        <button class="btn btn--primary btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled || !dshCommand?.installed || updateInfo?.dsh_web_enabled === false" @click="openDSHWeb">{{ dshOpening ? '正在启动…' : '启动并打开 Web ↗' }}</button>
+        <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online || !updateInfo?.web_proxy_enabled" @click="stopDSHWeb">{{ dshStopping ? '正在停止…' : '停止' }}</button>
+      </div>
+      <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">浏览器阻止了新窗口，点此打开 DSH Web ↗</a>
+      <div v-if="dshOpenError" class="notice notice--err small">{{ dshOpenError }}</div>
+    </section>
+
     <!-- ---- 设备信息 ---- -->
-    <div class="card">
+    <details class="card device-admin"><summary>设备设置 <span class="faint small">改名、设备信息与解绑</span></summary>
       <div class="card__title">
         <h2>设备信息</h2>
         <button class="btn btn--ghost btn--sm" type="button" @click="renaming = !renaming">
@@ -383,9 +668,9 @@ function canOpen(s: SessionSummary): boolean {
           </template>
         </div>
       </template>
-    </div>
+    </details>
 
-    <div class="card">
+    <details class="card device-update"><summary>Agent 更新 <span class="badge" :class="updateInfo?.update?.state === 'error' ? 'badge--err' : 'badge--idle'">{{ updateLabel }}</span></summary>
       <div class="card__title">
         <h2>Agent 更新</h2>
         <span class="badge" :class="updateInfo?.update?.state === 'error' ? 'badge--err' : updateInfo?.update?.state === 'waiting' || updateInfo?.update?.state === 'switching' ? 'badge--warn' : 'badge--idle'">
@@ -407,159 +692,8 @@ function canOpen(s: SessionSummary): boolean {
       <p v-if="updateInfo?.online && updateInfo.update?.state === 'disabled'" class="dim small">
         要启用空闲自动更新，请在本机 agent.json 设置 update_enabled，并使用 supervise 开机服务。
       </p>
-    </div>
+    </details>
 
-    <!-- ---- 新建会话 ---- -->
-    <div class="card">
-      <div class="card__title">
-        <h2>新建会话</h2>
-        <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
-      </div>
-
-      <form class="stack" @submit.prevent="createSession">
-        <div class="field">
-          <label for="preset">命令</label>
-          <select id="preset" v-model="presetId" :disabled="creating">
-            <option v-for="p in selectableCommands" :key="p.id" :value="p.id">
-              {{ p.label }} —— {{ p.hint }}
-            </option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="cwd">工作目录</label>
-          <input
-            id="cwd"
-            v-model="cwd"
-            class="mono"
-            type="text"
-            list="cwd-roots"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            :placeholder="cwdPlaceholder"
-            :disabled="creating"
-          />
-          <datalist id="cwd-roots">
-            <option v-for="root in allowedRoots" :key="root" :value="root" />
-          </datalist>
-          <span class="field__hint">
-            <template v-if="allowedRoots.length > 0">
-              必须是 Agent 的 allowed_roots 里的目录，否则会被拒绝。可选：{{ allowedRoots.join('、') }}
-            </template>
-            <template v-else>
-              必须是 Agent 的 allowed_roots 里的目录，否则会被拒绝（Agent 离线或版本过低，未上报允许目录）。
-            </template>
-          </span>
-        </div>
-
-        <div class="field">
-          <label for="sname">会话名（可选）</label>
-          <input
-            id="sname"
-            v-model="sessionName"
-            type="text"
-            placeholder="留空则用命令名"
-            :disabled="creating"
-          />
-        </div>
-
-        <div v-if="reportedCommands === undefined" class="notice notice--warn small">
-          当前 Agent 尚未上报本机命令清单；预置列表仅供旧版本兼容，是否可运行仍由本机 allowed_commands 决定。
-        </div>
-        <div v-else-if="selectableCommands.length === 0" class="notice notice--warn small">
-          本机没有已授权且可找到的命令。请检查 Agent 的 allowed_commands 和开机服务使用的 PATH。
-        </div>
-        <div v-if="selectedWebURL" class="notice small">
-          外部 Web 地址：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。此链接由你另行部署，与下方 CodeGate 内建转发互不影响。
-        </div>
-        <div v-if="dshCommand" class="notice small">
-          <strong>DSH TUI：</strong>
-          <span v-if="!dshCommand.installed">本机服务的 PATH 中未找到 dsh。</span>
-          <span v-else-if="!dshCommand.allowed">已找到 dsh，但尚未配置为可启动命令。</span>
-          <span v-else>已找到 dsh 且入口已配置；TUI 插件状态尚未自动验证。</span>
-          <p>要在终端使用，先在目标机器以运行 Agent 的同一用户执行：</p>
-          <div class="row"><code class="mono">{{ dshInstallCommand }}</code><button class="btn btn--ghost btn--sm" type="button" @click="copyDshInstallCommand">复制命令</button></div>
-          <span v-if="dshCopyStatus" class="field__hint">{{ dshCopyStatus }}</span>
-          <p>然后在该用户环境验证 <code class="mono">dsh --profile tui</code> 能打开 TUI，再把 dsh 配置到 agent.json 的 allowed_commands（args 为 ["--profile", "tui"]）。安装过程可能需要 pnpm 按提示允许插件构建；CodeGate 不会自动安装。</p>
-        </div>
-        <div v-if="dshCommand?.installed && updateInfo?.web_proxy_enabled" class="notice small">
-          <strong>DSH Web（内建转发）：</strong>目标机器需在 agent.json 启用 dsh_web_enabled；CodeGate 会在该机器启动仅监听本机的 DSH，并通过 Agent 出站连接打开独立 HTTPS 子域名。
-          <button class="btn btn--ghost btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online" @click="openDSHWeb">
-            {{ dshOpening ? '正在启动…' : '启动并打开 DSH Web ↗' }}
-          </button>
-          <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online" @click="stopDSHWeb">
-            {{ dshStopping ? '正在停止…' : '停止 DSH Web' }}
-          </button>
-          <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">打开 DSH Web ↗</a>
-          <span v-if="dshOpenError" class="notice notice--err">{{ dshOpenError }}</span>
-        </div>
-        <div v-if="detectedUnapproved.length" class="notice small">
-          检测到但尚未授权：{{ detectedUnapproved.map(c => c.label).join('、') }}。在本机 agent.json 的 allowed_commands 中配置后才能从网页启动。
-          仅找到 dsh 命令并不代表 TUI 插件已就绪。
-        </div>
-
-        <!-- Windows shell 的 ConPTY 中断限制。 -->
-        <div v-if="selectedPreset?.kind === 'shell' && device?.platform === 'windows'" class="notice notice--warn">
-          <strong>{{ selectedPreset.label }}</strong> 属于 shell 类程序。在 Windows 上，
-          系统自带的 ConPTY 无法把中断信号送达它 —— 会话里的 Ctrl+C 按钮会被禁用。
-          终端内的 Ctrl+C 会被屏蔽以免关闭会话；结束整个会话需在终端页确认「关闭会话」。
-        </div>
-
-        <div v-if="createError" class="notice notice--err">{{ createError }}</div>
-
-        <div class="row">
-          <button class="btn btn--primary" type="submit" :disabled="creating || !conn.isOpen || selectableCommands.length === 0">
-            <span v-if="creating" class="spinner" />
-            创建并进入
-          </button>
-        </div>
-      </form>
-    </div>
-
-    <!-- ---- 会话列表 ---- -->
-    <div class="card">
-      <div class="card__title">
-        <h2>会话</h2>
-        <span v-if="sessions.source !== null" class="badge" :class="sessions.source === 'live' ? 'badge--ok' : 'badge--idle'">
-          {{ sessions.source === 'live' ? '实时' : '缓存快照' }}
-        </span>
-      </div>
-
-      <div v-if="sessions.source === 'cache'" class="notice notice--info" style="margin-bottom: 12px">
-        Agent 当前离线，下面是数据库里的快照 —— 状态可能已经过时。
-      </div>
-
-      <div v-if="sessions.error" class="notice notice--err" style="margin-bottom: 12px">
-        {{ sessions.error }}
-      </div>
-
-      <p class="dim small">离开终端页面不会结束远端进程；点击运行中的会话可接回原会话。只有在终端页确认关闭才会结束进程。</p>
-
-      <div v-if="list.length === 0" class="empty">这个设备上还没有会话。</div>
-
-      <div v-else class="list">
-        <button
-          v-for="s in list"
-          :key="s.session_id"
-          class="item"
-          type="button"
-          style="cursor: pointer; text-align: left; font: inherit; width: 100%"
-          @click="openSession(s)"
-        >
-          <span class="item__main">
-            <span class="item__title">
-              {{ s.name || s.command || '会话' }}
-              <span class="badge" :class="`badge--${statusKind(s.status)}`">
-                {{ statusLabel(s.status) }}
-              </span>
-              <span v-if="!canOpen(s)" class="faint small">已结束</span>
-            </span>
-            <span class="item__meta">{{ describeSession(s) }}</span>
-          </span>
-          <span class="faint small nowrap">{{ createdText(s) }}</span>
-        </button>
-      </div>
     </div>
   </main>
 </template>

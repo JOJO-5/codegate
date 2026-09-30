@@ -78,8 +78,10 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatalf("读取迁移记录失败: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("迁移记录应当只有 1 条，实际 %d 条（说明被重复执行了）", n)
+	migrations, err := loadMigrations()
+	if err != nil { t.Fatal(err) }
+	if n != len(migrations) {
+		t.Errorf("迁移记录应有 %d 条，实际 %d 条（说明被重复执行了）", len(migrations), n)
 	}
 }
 

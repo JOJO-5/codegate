@@ -20,6 +20,10 @@ const error = ref('')
 const previewName = ref('')
 const previewText = ref('')
 const previewURL = ref('')
+const previewEntry = ref<Entry | null>(null)
+const transferLabel = ref('')
+const transferPercent = ref(0)
+const transferDone = ref('')
 const uploading = ref(false)
 const overwrite = ref(false)
 const selected = ref<File | null>(null)
@@ -31,6 +35,7 @@ function clearPreview(): void {
   previewURL.value = ''
   previewText.value = ''
   previewName.value = ''
+  previewEntry.value = null
 }
 
 async function list(path = folder.value): Promise<void> {
@@ -57,7 +62,7 @@ async function stat(path: string): Promise<Stat> {
   return env.payload
 }
 
-async function read(path: string, size: number): Promise<Blob> {
+async function read(path: string, size: number, track = false): Promise<Blob> {
   if (size > 100 * 1024 * 1024) throw new Error('浏览器单次下载上限为 100 MB')
   const chunks: BlobPart[] = []
   for (let offset = 0; offset < size;) {
@@ -72,6 +77,7 @@ async function read(path: string, size: number): Promise<Blob> {
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
     chunks.push(bytes)
     offset += bytes.length
+    if (track) transferPercent.value = Math.round(offset / size * 100)
   }
   return new Blob(chunks)
 }
@@ -92,6 +98,7 @@ async function preview(e: Entry): Promise<void> {
       throw new Error('仅预览 1 MB 内的 UTF-8 文本或 5 MB 内的常见图片；可使用下载')
     }
     previewName.value = e.name
+    previewEntry.value = e
   } catch (err) { error.value = humanizeError(err) }
   finally { busy.value = false }
 }
@@ -99,16 +106,21 @@ async function preview(e: Entry): Promise<void> {
 async function download(e: Entry): Promise<void> {
   busy.value = true
   error.value = ''
+  transferDone.value = ''
+  transferLabel.value = `下载 ${e.name}`
+  transferPercent.value = 0
   try {
     const info = await stat(e.path)
-    const url = URL.createObjectURL(await read(e.path, info.size))
+    const url = URL.createObjectURL(await read(e.path, info.size, true))
     const link = document.createElement('a')
     link.href = url
     link.download = e.name
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 60000)
+    transferPercent.value = 100
+    transferDone.value = `已下载 ${e.name}`
   } catch (err) { error.value = humanizeError(err) }
-  finally { busy.value = false }
+  finally { busy.value = false; transferLabel.value = '' }
 }
 
 async function upload(): Promise<void> {
@@ -117,6 +129,9 @@ async function upload(): Promise<void> {
   if (file.size > 100 * 1024 * 1024) { error.value = '上传上限为 100 MB'; return }
   uploading.value = true
   error.value = ''
+  transferDone.value = ''
+  transferLabel.value = `上传 ${file.name}`
+  transferPercent.value = 0
   const uploadId = crypto.randomUUID()
   const path = [folder.value, file.name].filter(Boolean).join('/')
   try {
@@ -131,14 +146,17 @@ async function upload(): Promise<void> {
       }, props.id)
       if (file.size === 0) break
       offset = next
+      transferPercent.value = Math.round(offset / file.size * 100)
     }
     selected.value = null
     if (picker.value) picker.value.value = ''
     await list()
+    transferPercent.value = 100
+    transferDone.value = `已上传 ${file.name}`
   } catch (e) {
     error.value = humanizeError(e)
     if (conn.isOpen) void conn.request(MessageType.FileCancel, { session_id: props.id, transfer_id: uploadId }, props.id).catch(() => {})
-  } finally { uploading.value = false }
+  } finally { uploading.value = false; transferLabel.value = '' }
 }
 
 onMounted(async () => {
@@ -161,6 +179,8 @@ onUnmounted(clearPreview)
       <button class="btn btn--sm" type="button" :disabled="busy" @click="list()">刷新</button>
     </div>
     <div class="card">
+      <div v-if="transferLabel" class="notice notice--info" role="status">{{ transferLabel }} · {{ transferPercent }}%<progress :value="transferPercent" max="100" style="display: block; width: 100%; margin-top: 6px" /></div>
+      <div v-if="transferDone" class="notice notice--info" role="status">{{ transferDone }}</div>
       <div class="small dim mono">{{ cwd }} / {{ folderLabel }}</div>
       <div class="row" style="margin: 12px 0">
         <button class="btn btn--sm" type="button" :disabled="!folder || busy" @click="up">上一级</button>
@@ -179,7 +199,7 @@ onUnmounted(clearPreview)
       </div>
     </div>
     <div v-if="previewName" class="card" style="margin-top: 14px">
-      <div class="card__title"><h2>{{ previewName }}</h2><button class="btn btn--sm" type="button" @click="clearPreview">关闭预览</button></div>
+      <div class="card__title"><h2>{{ previewName }}</h2><div class="row"><button v-if="previewEntry" class="btn btn--sm" type="button" :disabled="busy" @click="download(previewEntry)">下载</button><button class="btn btn--sm" type="button" @click="clearPreview">关闭预览</button></div></div>
       <img v-if="previewURL" :src="previewURL" alt="文件预览" style="max-width: 100%; max-height: 70vh" />
       <pre v-else style="overflow: auto; white-space: pre-wrap; max-height: 70vh">{{ previewText }}</pre>
     </div>

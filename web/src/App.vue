@@ -68,6 +68,6 @@ async function onLogout(): Promise<void> {
       <button class="btn btn--ghost btn--sm" type="button" @click="onLogout">登出</button>
     </header>
 
-    <RouterView />
+    <RouterView :key="route.fullPath" />
   </div>
 </template>

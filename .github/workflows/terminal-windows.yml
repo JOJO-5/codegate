@@ -1,6 +1,7 @@
 name: Windows terminal tests
 
 on:
+  workflow_dispatch:
   push:
     branches: [fix/terminal-close-and-env]
   pull_request:
@@ -9,9 +10,19 @@ on:
       - 'internal/agent/**'
       - 'internal/server/**'
       - 'internal/protocol/**'
+      - 'internal/session/**'
+      - 'cmd/codegate-agent/**'
+      - 'cmd/codegate-server/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/terminal-windows.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   terminal:

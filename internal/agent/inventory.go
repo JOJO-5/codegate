@@ -28,12 +28,16 @@ func commandInstalled(command string) bool {
 }
 
 func (a *Agent) commandInventory() []protocol.CommandAvailability {
-	out := make([]protocol.CommandAvailability, 0, len(knownCLIs)+len(a.cfg.AllowedCommands))
+	cfg := a.commandConfig()
+	out := make([]protocol.CommandAvailability, 0, len(knownCLIs)+len(cfg.AllowedCommands))
 	seen := make(map[string]bool)
-	for _, spec := range a.cfg.AllowedCommands {
+	for _, spec := range cfg.AllowedCommands {
+		_, localConfig := a.cfg.FindCommand(spec.ID)
+		installed := commandInstalled(spec.Command)
+		if !localConfig && runtime.GOOS == "windows" { installed = installed && commandInstalled(spec.ID) }
 		out = append(out, protocol.CommandAvailability{
 			ID: spec.ID, Label: spec.Label, Kind: string(spec.Kind),
-			Installed: commandInstalled(spec.Command), Allowed: true,
+			Installed: installed, Allowed: true, Managed: !localConfig,
 			Resume: len(spec.ResumeArgs) > 0, WebURL: spec.WebURL,
 		})
 		seen[spec.ID] = true

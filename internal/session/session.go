@@ -348,16 +348,25 @@ func (s *Session) Attach(req AttachRequest) (AttachResult, error) {
 	data, truncated := s.ring.Since(req.Since)
 	seqFrom := seqTo - uint64(len(data))
 
-	// ---- 六步重放 ----
-	req.Sink.SendBuffer(resetSeq, false)           // 1
-	if pre := s.tracker.Preamble(); len(pre) > 0 { // 2
-		req.Sink.SendBuffer(pre, false)
+	// An incremental attach retains the browser's existing screen. Resetting
+	// it and then sending only the tail leaves an incomplete TUI frame.
+	// A new browser (Since=0), or one whose ring window was overrun, needs
+	// the full replay and the mode preamble.
+	send := func(data []byte, end bool) error {
+		if !req.Sink.SendBuffer(data, end) { return fmt.Errorf("会话历史重放队列已满，请稍后重试") }
+		return nil
 	}
-	req.Sink.SendBuffer(clearSeq, false) // 3
+	if req.Since == 0 || truncated {
+		if err := send(resetSeq, false); err != nil { return AttachResult{}, err }
+		if pre := s.tracker.Preamble(); len(pre) > 0 {
+			if err := send(pre, false); err != nil { return AttachResult{}, err }
+		}
+		if err := send(clearSeq, false); err != nil { return AttachResult{}, err }
+	}
 	if len(data) > 0 {                   // 4
-		req.Sink.SendBuffer(data, false)
+		if err := send(data, false); err != nil { return AttachResult{}, err }
 	}
-	req.Sink.SendBuffer(syncOffSeq, true) // 5（同时标记 end）
+	if err := send(syncOffSeq, true); err != nil { return AttachResult{}, err }
 
 	// ---- 6. 登记 ----
 	s.views[req.ConnID] = &View{
