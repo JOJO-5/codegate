@@ -534,12 +534,24 @@ function canOpen(s: SessionSummary): boolean {
     <section class="card device-dsh" aria-labelledby="dsh-web-heading">
       <div class="card__title"><h2 id="dsh-web-heading">DSH Web</h2><span class="badge" :class="updateInfo?.web_proxy_enabled ? 'badge--ok' : 'badge--idle'">{{ updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></div>
       <p class="dim small">在目标电脑启动 DSH Web，通过 CodeGate 的独立 HTTPS 地址打开。</p>
-      <div v-if="updateInfo && !updateInfo.web_proxy_enabled" class="notice notice--info small">Server 尚未启用 DSH Web 转发。配置 CODEGATE_DSH_PROXY_DOMAIN、通配域名和 TLS 后再使用。</div>
-      <div v-else-if="updateInfo && !updateInfo.online" class="notice notice--warn small">设备离线，连接后才能启动 DSH Web。</div>
-      <div v-else-if="updateInfo && !dshCommand?.installed" class="notice notice--warn small">Agent 的运行账户未检测到 dsh。安装后重启 Agent 并刷新设备状态。</div>
-      <div v-else-if="updateInfo?.web_proxy_enabled" class="dim small">Agent 还需在 agent.json 中启用 dsh_web_enabled；未启用时启动请求会返回错误。</div>
+      <ol class="device-dsh__checklist">
+        <li :class="updateInfo?.web_proxy_enabled ? 'device-dsh__ready' : ''">
+          <span>{{ updateInfo?.web_proxy_enabled ? '✓' : '1' }}</span>
+          <div><strong>Server 域名与 HTTPS</strong><small>{{ updateInfo?.web_proxy_enabled ? '转发已启用' : '设置 CODEGATE_DSH_PROXY_DOMAIN，并为通配子域名配置 DNS 和 TLS 证书' }}</small></div>
+        </li>
+        <li :class="dshCommand?.installed ? 'device-dsh__ready' : ''">
+          <span>{{ dshCommand?.installed ? '✓' : '2' }}</span>
+          <div><strong>目标电脑上的 DSH</strong><small>{{ dshCommand?.installed ? 'Agent 服务账户已找到 dsh' : updateInfo?.online ? 'Agent 服务账户未找到 dsh；安装后重启 Agent' : '设备上线后检查安装状态' }}</small></div>
+        </li>
+        <li :class="updateInfo?.dsh_web_enabled ? 'device-dsh__ready' : ''">
+          <span>{{ updateInfo?.dsh_web_enabled ? '✓' : '3' }}</span>
+          <div><strong>允许启动 Web</strong><small>{{ updateInfo?.dsh_web_enabled ? 'Agent 已允许' : '在目标电脑的 agent.json 设置 "dsh_web_enabled": true，然后重启 Agent' }}</small></div>
+        </li>
+      </ol>
+      <a class="small" href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md#%E5%86%85%E5%BB%BA-dsh-web-%E8%BD%AC%E5%8F%91%E5%8F%AF%E9%80%89" target="_blank" rel="noopener noreferrer">查看 Server 域名和证书设置 ↗</a>
+      <div v-if="updateInfo && !updateInfo.online" class="notice notice--warn small">设备离线，连接后才能启动 DSH Web。</div>
       <div class="row device-dsh__actions">
-        <button class="btn btn--primary btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled || !dshCommand?.installed" @click="openDSHWeb">{{ dshOpening ? '正在启动…' : '启动并打开 Web ↗' }}</button>
+        <button class="btn btn--primary btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled || !dshCommand?.installed || updateInfo?.dsh_web_enabled === false" @click="openDSHWeb">{{ dshOpening ? '正在启动…' : '启动并打开 Web ↗' }}</button>
         <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online || !updateInfo?.web_proxy_enabled" @click="stopDSHWeb">{{ dshStopping ? '正在停止…' : '停止' }}</button>
       </div>
       <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">浏览器阻止了新窗口，点此打开 DSH Web ↗</a>
