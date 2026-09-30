@@ -620,10 +620,14 @@ a.item:hover {
 .device-workspace { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .device-workspace > * { min-width: 0; }
 .device-create { grid-column: 1; grid-row: 1; position: sticky; top: 74px; }
-.device-sessions { grid-column: 2; grid-row: 1 / span 3; min-height: 380px; }
-.device-admin, .device-update { grid-column: 1; }
-.device-admin { grid-row: 2; }
-.device-update { grid-row: 3; }
+.device-sessions { grid-column: 2; grid-row: 1 / span 4; min-height: 380px; }
+.device-dsh, .device-admin, .device-update { grid-column: 1; }
+.device-dsh { grid-row: 2; }
+.device-admin { grid-row: 3; }
+.device-update { grid-row: 4; }
+.device-dsh p { margin: 0 0 12px; }
+.device-dsh__actions { flex-wrap: wrap; margin: 12px 0 0; }
+.device-dsh .notice { margin-top: 10px; }
 .device-page .card { box-shadow: none; }
 .device-create { background: var(--bg-elev); border-color: var(--border); }
 .device-workspace details > summary { cursor: pointer; font-weight: 600; list-style-position: inside; }
@@ -647,7 +651,12 @@ a.item:hover {
 .session-help { margin: 0 0 10px; }
 @media (max-width: 840px) {
   .device-workspace { grid-template-columns: minmax(0, 1fr); }
-  .device-create, .device-sessions, .device-admin, .device-update { grid-column: 1; grid-row: auto; position: static; }
+  .device-create, .device-dsh, .device-sessions, .device-admin, .device-update { grid-column: 1; grid-row: auto; position: static; }
+  .device-create { order: 1; }
+  .device-dsh { order: 2; }
+  .device-sessions { order: 3; }
+  .device-admin { order: 4; }
+  .device-update { order: 5; }
   .device-sessions { min-height: 0; }
 }
 .term__composer { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
