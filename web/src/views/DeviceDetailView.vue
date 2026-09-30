@@ -325,19 +325,23 @@ function canOpen(s: SessionSummary): boolean {
 
 <template>
   <main class="page device-page">
-    <div class="row row--between" style="margin-bottom: 16px">
+    <div class="device-heading">
+      <div class="row row--between">
       <div class="row">
         <RouterLink class="btn btn--ghost btn--sm" :to="{ name: 'devices' }">‹ 设备</RouterLink>
-        <h1 style="margin: 0">{{ device?.name ?? '设备' }} <span class="device-subtitle">/ 工作空间</span></h1>
+        <h1 style="margin: 0">{{ device?.name ?? '设备' }}</h1>
       </div>
       <button class="btn btn--sm" type="button" :disabled="sessions.loading" @click="sessions.load(id, true)">
         <span v-if="sessions.loading" class="spinner" />
         刷新
       </button>
+      </div>
+      <p class="device-heading__summary"><span class="health__dot" :style="{ background: device?.online ? 'var(--ok)' : 'var(--fg-faint)' }" />{{ device?.online ? '设备在线' : '设备离线' }}<span v-if="device">· {{ platformLabel(device.platform) }} · Agent {{ device.agent_version || '—' }}</span></p>
     </div>
 
+    <div class="device-workspace">
     <!-- ---- 设备信息 ---- -->
-    <div class="card device-admin">
+    <details class="card device-admin"><summary>设备设置 <span class="faint small">改名、设备信息与解绑</span></summary>
       <div class="card__title">
         <h2>设备信息</h2>
         <button class="btn btn--ghost btn--sm" type="button" @click="renaming = !renaming">
@@ -400,9 +404,9 @@ function canOpen(s: SessionSummary): boolean {
           </template>
         </div>
       </template>
-    </div>
+    </details>
 
-    <div class="card device-update">
+    <details class="card device-update"><summary>Agent 更新 <span class="badge" :class="updateInfo?.update?.state === 'error' ? 'badge--err' : 'badge--idle'">{{ updateLabel }}</span></summary>
       <div class="card__title">
         <h2>Agent 更新</h2>
         <span class="badge" :class="updateInfo?.update?.state === 'error' ? 'badge--err' : updateInfo?.update?.state === 'waiting' || updateInfo?.update?.state === 'switching' ? 'badge--warn' : 'badge--idle'">
@@ -424,12 +428,12 @@ function canOpen(s: SessionSummary): boolean {
       <p v-if="updateInfo?.online && updateInfo.update?.state === 'disabled'" class="dim small">
         要启用空闲自动更新，请在本机 agent.json 设置 update_enabled，并使用 supervise 开机服务。
       </p>
-    </div>
+    </details>
 
     <!-- ---- 新建会话 ---- -->
     <div class="card device-create">
       <div class="card__title">
-        <h2>开始新的工作</h2>
+        <h2>新建会话</h2>
         <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
       </div>
 
@@ -487,6 +491,7 @@ function canOpen(s: SessionSummary): boolean {
         <div v-else-if="selectableCommands.length === 0" class="notice notice--warn small">
           本机没有已授权且可找到的命令。请检查 Agent 的 allowed_commands 和开机服务使用的 PATH。
         </div>
+        <details class="device-advanced"><summary>命令与 DSH 设置</summary>
         <div v-if="selectedWebURL" class="notice small">
           外部 Web 地址：<a :href="selectedWebURL" target="_blank" rel="noopener noreferrer">打开独立 Web UI ↗</a>。此链接由你另行部署，与下方 CodeGate 内建转发互不影响。
         </div>
@@ -516,6 +521,8 @@ function canOpen(s: SessionSummary): boolean {
           仅找到 dsh 命令并不代表 TUI 插件已就绪。
         </div>
 
+        </details>
+
         <!-- Windows shell 的 ConPTY 中断限制。 -->
         <div v-if="selectedPreset?.kind === 'shell' && device?.platform === 'windows'" class="notice notice--warn">
           <strong>{{ selectedPreset.label }}</strong> 属于 shell 类程序。在 Windows 上，
@@ -537,15 +544,13 @@ function canOpen(s: SessionSummary): boolean {
     <!-- ---- 会话列表 ---- -->
     <div class="card device-sessions">
       <div class="card__title">
-        <h2>我的会话</h2>
+        <h2>会话</h2>
         <span v-if="sessions.source !== null" class="badge" :class="sessions.source === 'live' ? 'badge--ok' : 'badge--idle'">
           {{ sessions.source === 'live' ? '实时' : '缓存快照' }}
         </span>
       </div>
 
-      <div v-if="sessions.source === 'cache'" class="notice notice--info" style="margin-bottom: 12px">
-        实时列表暂不可用，下面是数据库记录；运行状态可能略有延迟。
-      </div>
+
 
       <div v-if="sessions.error" class="notice notice--err" style="margin-bottom: 12px">
         {{ sessions.error }}
@@ -558,7 +563,7 @@ function canOpen(s: SessionSummary): boolean {
         <button class="btn btn--sm" :class="showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = true">归档 {{ archivedCount }}</button>
       </div>
 
-      <p class="dim small">离开终端页面不会结束远端进程；点击运行中的会话可接回原会话。只有在终端页确认关闭才会结束进程。</p>
+      <p class="dim small session-help">离开终端后会话继续运行。点击“接回”恢复，结束进程请在终端内关闭会话。</p>
 
       <div v-if="visibleSessions.length === 0" class="empty">{{ showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
 
@@ -574,12 +579,11 @@ function canOpen(s: SessionSummary): boolean {
               <span class="badge" :class="`badge--${statusKind(s.status)}`">
                 {{ statusLabel(s.status) }}
               </span>
-              <span v-if="!canOpen(s)" class="faint small">已结束</span>
             </span>
-            <span class="item__meta">{{ describeSession(s) }}</span>
+            <span class="item__meta" :title="describeSession(s)">{{ s.command || '命令' }} · {{ s.cwd || '工作目录未知' }}</span>
           </span>
           <span class="item__actions">
-            <span class="faint small nowrap">{{ createdText(s) }}</span>
+            <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
             <button v-if="canOpen(s)" class="btn btn--primary btn--sm" type="button" @click="openSession(s)">接回</button>
             <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
             <button v-if="!canOpen(s)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
@@ -588,6 +592,7 @@ function canOpen(s: SessionSummary): boolean {
           </span>
         </div>
       </div>
+    </div>
     </div>
   </main>
 </template>
