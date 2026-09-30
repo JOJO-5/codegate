@@ -572,11 +572,19 @@ func (s *sessionSink) SendOutput(p []byte, dropped bool) bool {
 }
 
 func (s *sessionSink) SendBuffer(p []byte, end bool) bool {
-	var flags uint16
-	if end {
-		flags |= protocol.FlagBufferEnd
+	// Large snapshots must be split: one huge WebSocket message can exceed
+	// intermediary limits, and losing a middle chunk must fail the attach.
+	const chunkSize = 16 << 10
+	if len(p) == 0 { return true }
+	for len(p) > 0 {
+		n := len(p)
+		if n > chunkSize { n = chunkSize }
+		var flags uint16
+		if end && n == len(p) { flags = protocol.FlagBufferEnd }
+		if !s.a.sendTerminalFrame(s.sid, protocol.FrameBuffer, flags, p[:n]) { return false }
+		p = p[n:]
 	}
-	return s.a.sendTerminalFrame(s.sid, protocol.FrameBuffer, flags, p)
+	return true
 }
 
 // sendTerminalFrame 编码并发送一个终端帧。
