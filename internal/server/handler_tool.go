@@ -42,6 +42,7 @@ func (s *Server) handleDeviceToolSet(w http.ResponseWriter, r *http.Request) {
 	select {
 	case err := <-reply:
 		if err != nil { writeError(w, http.StatusConflict, "tool_unavailable", err.Error()); return }
+		s.auditRequest(r, auditEntry{UserID: userID, DeviceID: deviceID, Action: auditDeviceToolSet, Result: auditResultOK, Meta: map[string]any{"tool": id, "enabled": *p.Enabled}})
 		writeJSON(w, http.StatusOK, map[string]any{"id": id, "enabled": *p.Enabled})
 	case <-ac.Done():
 		writeError(w, http.StatusServiceUnavailable, "device_offline", "Agent 已断开")
