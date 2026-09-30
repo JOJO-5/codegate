@@ -277,6 +277,7 @@ export interface SessionSummary {
   cwd: string
   /** starting | running | detached | exited | failed | terminated */
   status: SessionStatus
+  archived?: boolean
   pid?: number
   exit_code?: number | null
   cols: number

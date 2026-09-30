@@ -11,24 +11,24 @@
 
 :root {
   /* 背景层次：三层足够。再多就会出现"这个卡片该用哪一层"的犹豫。 */
-  --bg: #0f1115;
-  --bg-elev: #161a21;
-  --bg-elev-2: #1d222b;
+  --bg: #f5f6f3;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #edf2ef;
 
-  --border: #262c37;
-  --border-strong: #39424f;
+  --border: #dce4df;
+  --border-strong: #b6c9c0;
 
-  --fg: #e6e9ef;
-  --fg-dim: #9aa4b2;
-  --fg-faint: #6b7684;
+  --fg: #20342d;
+  --fg-dim: #50685e;
+  --fg-faint: #75877d;
 
-  --accent: #4c8dff;
-  --accent-hover: #6ba0ff;
+  --accent: #146b55;
+  --accent-hover: #1b8268;
   --accent-fg: #ffffff;
 
-  --ok: #3fb950;
-  --warn: #d29922;
-  --err: #f85149;
+  --ok: #177954;
+  --warn: #a36316;
+  --err: #bd4840;
 
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'PingFang SC',
@@ -274,8 +274,8 @@ pre {
   transition: background 0.12s, border-color 0.12s;
 }
 .btn:hover:not(:disabled) {
-  background: #252b36;
-  border-color: #48525f;
+  background: #e2ece6;
+  border-color: #8da99a;
 }
 .btn:disabled {
   opacity: 0.45;
@@ -295,7 +295,7 @@ pre {
   border-color: #5a2b2b;
 }
 .btn--danger:hover:not(:disabled) {
-  background: #2a1a1a;
+  background: #fff0ee;
   border-color: var(--err);
 }
 .btn--ghost {
@@ -399,17 +399,17 @@ textarea.mono {
 .badge--ok {
   color: var(--ok);
   border-color: #24502c;
-  background: #12210f;
+  background: #e7f5eb;
 }
 .badge--warn {
   color: var(--warn);
   border-color: #4d3d13;
-  background: #221c0c;
+  background: #fff6e5;
 }
 .badge--err {
   color: var(--err);
   border-color: #5a2b2b;
-  background: #2a1414;
+  background: #fff0ee;
 }
 .badge--idle {
   color: var(--fg-dim);
@@ -479,14 +479,14 @@ a.item:hover {
   color: var(--fg-dim);
 }
 .notice--err {
-  color: #ffb4ae;
+  color: #a33e37;
   border-color: #5a2b2b;
-  background: #221010;
+  background: #fff0ee;
 }
 .notice--warn {
-  color: #f0d38a;
+  color: #865518;
   border-color: #4d3d13;
-  background: #201a0c;
+  background: #fff7e7;
 }
 .notice--info {
   color: var(--fg-dim);
@@ -556,7 +556,8 @@ a.item:hover {
   gap: 10px;
   padding: 7px 10px;
   padding-top: calc(7px + var(--safe-top));
-  background: var(--bg-elev);
+  background: #17241f;
+  color: #e8f4ec;
   border-bottom: 1px solid var(--border);
   flex: none;
 }
@@ -568,7 +569,7 @@ a.item:hover {
   white-space: nowrap;
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--fg-dim);
+  color: #c8d8cf;
 }
 .term__host {
   flex: 1;
@@ -592,8 +593,39 @@ a.item:hover {
 .term__footer {
   flex: none;
   padding: 6px 10px calc(6px + var(--safe-bottom));
-  background: var(--bg-elev);
+  background: #17241f;
+  color: #e8f4ec;
   border-top: 1px solid var(--border);
+}
+
+/* 会话是工作区的中心；设备配置放在下方。 */
+.device-page { display: flex; flex-direction: column; gap: 18px; max-width: 1100px; }
+.device-page > .row { order: 0; }
+.device-create { order: 1; border-color: #9fc5af; background: linear-gradient(145deg, #ffffff, #f2f8f3); }
+.device-sessions { order: 2; }
+.device-admin { order: 3; }
+.device-update { order: 4; }
+.device-page .card { margin-top: 0; border-radius: 16px; box-shadow: 0 8px 24px rgba(23, 55, 39, .035); }
+.device-page h1 { font-size: clamp(22px, 4vw, 30px); letter-spacing: -.03em; }
+.device-subtitle { color: var(--fg-faint); font-weight: 400; font-size: .55em; vertical-align: middle; letter-spacing: 0; }
+.device-page .card__title h2 { font-size: 18px; letter-spacing: -.02em; }
+.session-filters { margin: 12px 0; }
+.device-sessions .item { border-radius: 12px; background: #fafcf9; flex-wrap: wrap; }
+.device-sessions .item__title { white-space: normal; }
+.device-sessions .item__actions { flex-wrap: wrap; }
+.term__composer { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+.term__composer textarea { min-width: 0; flex: 1; resize: none; font-size: 16px; min-height: 40px; background: #f6faf6; color: #20342d; }
+.term__tools { overflow-x: auto; max-height: 80px; }
+.term__host { overflow: hidden; background: #101914; }
+.term__host .xterm-viewport { overflow-y: auto !important; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+@media (max-width: 640px) {
+  .device-page { padding: 18px 12px 36px; gap: 12px; }
+  .device-page .card { padding: 16px; }
+  .device-page .item__actions { width: 100%; justify-content: flex-start; }
+  .term__bar { gap: 5px; }
+  .term__footer { padding: 6px 6px calc(6px + var(--safe-bottom)); }
+  .term__tools { flex-wrap: nowrap !important; }
+  .term__tools .btn { flex: none; }
 }
 
 /* ---- 登录页 ---- */

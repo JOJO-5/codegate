@@ -348,12 +348,17 @@ func (s *Session) Attach(req AttachRequest) (AttachResult, error) {
 	data, truncated := s.ring.Since(req.Since)
 	seqFrom := seqTo - uint64(len(data))
 
-	// ---- 六步重放 ----
-	req.Sink.SendBuffer(resetSeq, false)           // 1
-	if pre := s.tracker.Preamble(); len(pre) > 0 { // 2
-		req.Sink.SendBuffer(pre, false)
+	// An incremental attach retains the browser's existing screen. Resetting
+	// it and then sending only the tail leaves an incomplete TUI frame.
+	// A new browser (Since=0), or one whose ring window was overrun, needs
+	// the full replay and the mode preamble.
+	if req.Since == 0 || truncated {
+		req.Sink.SendBuffer(resetSeq, false)
+		if pre := s.tracker.Preamble(); len(pre) > 0 {
+			req.Sink.SendBuffer(pre, false)
+		}
+		req.Sink.SendBuffer(clearSeq, false)
 	}
-	req.Sink.SendBuffer(clearSeq, false) // 3
 	if len(data) > 0 {                   // 4
 		req.Sink.SendBuffer(data, false)
 	}

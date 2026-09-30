@@ -76,6 +76,41 @@ const confirmTerminate = ref(false)
 const replayWarning = ref(false)
 const exitInfo = ref<SessionExitPayload | null>(null)
 const errorText = ref<string | null>(null)
+const mobileDraft = ref('')
+const composer = ref<HTMLTextAreaElement | null>(null)
+const termHeight = ref('100dvh')
+function syncViewport(): void {
+  termHeight.value = `${window.visualViewport?.height ?? window.innerHeight}px`
+  scheduleFit()
+}
+function submitDraft(event?: KeyboardEvent): void {
+  if (event?.isComposing || !mobileDraft.value || role.value !== 'controller' || !isLive.value || !conn.isOpen) return
+  sendText(mobileDraft.value + '\r')
+  mobileDraft.value = ''
+  composer.value?.focus()
+}
+function focusTerminal(): void { term?.focus() }
+function scrollHistory(lines: number): void {
+  if (term?.buffer.active.type === 'alternate') {
+    // Full-screen TUIs own their history. Their alternate buffer has no
+    // xterm scrollback; send the navigation key to the running program.
+    sendText(lines < 0 ? '\x1b[5~' : '\x1b[6~')
+  } else {
+    term?.scrollLines(lines)
+  }
+}
+let touchY = 0
+function onTerminalTouchStart(e: TouchEvent): void { touchY = e.changedTouches[0]?.clientY ?? 0 }
+function onTerminalTouchEnd(e: TouchEvent): void {
+  if (term?.buffer.active.type !== 'alternate' || !touchY) return
+  const delta = (e.changedTouches[0]?.clientY ?? touchY) - touchY
+  if (Math.abs(delta) > 55) scrollHistory(delta > 0 ? -12 : 12)
+  touchY = 0
+}
+function redraw(): void {
+  if (role.value !== 'controller' || !isLive.value) return
+  sendText('\x0c') // Most interactive CLIs repaint on Ctrl+L.
+}
 
 // ---- 搜索（Ctrl+Shift+F，规格 §5.3 要求拦这个组合键）----
 const searchOpen = ref(false)
@@ -119,6 +154,15 @@ let sentCols = 0
 let sentRows = 0
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleFit(): void {
+  if (resizeTimer !== null) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null
+    if (!term || !fit) return
+    try { fit.fit() } catch { return }
+    sendResize()
+  }, RESIZE_DEBOUNCE_MS)
+}
 let unsubFrame: (() => void) | null = null
 let unsubControl: (() => void) | null = null
 
@@ -166,7 +210,11 @@ function onFrame(frame: DecodedFrame): void {
     case FrameType.Buffer:
     case FrameType.Stdout:
       // ★ 直接写字节，不解码、不转字符串。见文件头第 1 条纪律。
-      t.write(frame.payload)
+      if (frame.type === FrameType.Buffer && (frame.flags & FrameFlag.BufferEnd) !== 0) {
+        t.write(frame.payload, () => { replaying.value = false })
+      } else {
+        t.write(frame.payload)
+      }
       break
     default:
       // Stdin / FileData 不该出现在这条路径上。忽略而不是断连 ——
@@ -188,10 +236,7 @@ function onFrame(frame: DecodedFrame): void {
     return
   }
 
-  if (frame.type === FrameType.Buffer && (frame.flags & FrameFlag.BufferEnd) !== 0) {
-    // 重放结束，后面就是实时流了
-    replaying.value = false
-  }
+  // BufferEnd clears the overlay in xterm's write callback, after rendering.
 }
 
 function onControl(env: Envelope): void {
@@ -308,7 +353,10 @@ function goBack(): void {
 
 // Reattach only the current session after a new WebSocket connection.
 watch(() => conn.reconnectCount, () => {
-  if (conn.isOpen && term !== null) void attach(lastSeq)
+  if (conn.isOpen && term !== null) {
+    replaying.value = true
+    void attach(lastSeq)
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -341,6 +389,9 @@ function findPrev(): void {
 // ---------------------------------------------------------------------------
 
 onMounted(async () => {
+  syncViewport()
+  window.visualViewport?.addEventListener('resize', syncViewport)
+  window.addEventListener('resize', syncViewport)
   await nextTick()
   await devices.load()
 
@@ -464,25 +515,13 @@ onMounted(async () => {
   // A new WebSocket has no server-side attachment. Reattach this exact
   // session from its last output byte; never create a second process.
   // ---- resize ----
-  ro = new ResizeObserver(() => {
-    if (resizeTimer !== null) clearTimeout(resizeTimer)
-    resizeTimer = setTimeout(() => {
-      resizeTimer = null
-      const tt = term
-      const ff = fit
-      if (tt === null || ff === null) return
-      try {
-        ff.fit()
-      } catch {
-        return
-      }
-      sendResize()
-    }, RESIZE_DEBOUNCE_MS)
-  })
+  ro = new ResizeObserver(scheduleFit)
   ro.observe(host)
 })
 
 onUnmounted(() => {
+  window.visualViewport?.removeEventListener('resize', syncViewport)
+  window.removeEventListener('resize', syncViewport)
   // 先退订，再销毁 —— 反过来的话，dispose 过程中触发的帧会打到已销毁的实例上
   unsubFrame?.()
   unsubControl?.()
@@ -511,10 +550,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="term">
+  <div class="term" :style="{ height: termHeight }">
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
-      <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 返回</button>
+      <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 会话</button>
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">文件</button>
 
       <span class="term__title" :title="summary?.name ?? sessionId">
@@ -529,7 +568,7 @@ onUnmounted(() => {
     </div>
 
     <!-- ---- 终端 ---- -->
-    <div ref="hostEl" class="term__host">
+    <div ref="hostEl" class="term__host" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
       <div v-if="replaying" class="term__overlay">
         <span class="spinner" />
         <span class="small dim">正在重放历史输出…</span>
@@ -604,7 +643,16 @@ onUnmounted(() => {
           <button class="btn btn--sm" type="button" :disabled="exiting" @click="confirmTerminate = false">取消</button>
         </div>
       </div>
-      <div class="row" style="gap: 6px; flex-wrap: wrap">
+      <div class="term__composer" v-if="role === 'controller' && isLive">
+        <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown.enter.exact.prevent="submitDraft($event)" />
+        <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !conn.isOpen" @click="submitDraft()">发送 ↵</button>
+      </div>
+      <div class="row term__tools" style="gap: 6px; flex-wrap: wrap">
+        <button class="btn btn--sm" type="button" @click="focusTerminal">⌨ 键盘</button>
+        <button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
+        <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
+        <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>
+        <button class="btn btn--sm" type="button" @click="redraw">重绘</button>
         <button class="btn btn--sm" type="button" @click="sendText('\x1b')">Esc</button>
         <button class="btn btn--sm" type="button" @click="sendText('\t')">Tab</button>
         <button class="btn btn--sm" type="button" @click="sendText('\x1b[A')">↑</button>

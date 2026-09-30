@@ -409,6 +409,14 @@ export const api = {
     return r.sessions ?? []
   },
 
+  archiveSession(deviceId: string, sessionId: string, archived: boolean): Promise<SessionSummary> {
+    return request<SessionSummary>('PATCH', `/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}`, { archived })
+  },
+
+  async deleteSession(deviceId: string, sessionId: string): Promise<void> {
+    await request<void>('DELETE', `/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}`)
+  },
+
   // ---- 配对（两阶段）----
 
   /** 第一步：提交配对码，拿回待确认设备的信息。这一步**不**产生绑定。 */

@@ -126,6 +126,7 @@ type SessionMeta struct {
 	EndedAt        *time.Time
 	LastAttachedAt *time.Time
 	CreatedBy      string
+	Archived       bool
 }
 
 // SessionRuntime 是会话的**运行态**字段集合。
@@ -233,6 +234,8 @@ type Store interface {
 	SessionByID(ctx context.Context, id string) (*SessionMeta, error)
 	SessionsByDevice(ctx context.Context, deviceID string) ([]*SessionMeta, error)
 	SessionsByUser(ctx context.Context, userID string, limit int) ([]*SessionMeta, error)
+	SetSessionArchived(ctx context.Context, id string, archived bool) error
+	DeleteSession(ctx context.Context, id string) error
 	// PruneSessions 删除该设备下不在 keep 列表里的会话，返回删除行数。
 	// 用于 Agent 重连后的对账：Agent 说「我只有这些」，其余都是历史残留。
 	PruneSessions(ctx context.Context, deviceID string, keep []string) (int64, error)

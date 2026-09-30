@@ -28,6 +28,22 @@ const router = useRouter()
 
 const device = computed(() => devices.byId(props.id))
 const list = computed(() => sessions.forDevice(props.id))
+const showArchived = ref(false)
+const visibleSessions = computed(() => list.value.filter(s => Boolean(s.archived) === showArchived.value))
+const archivedCount = computed(() => list.value.filter(s => s.archived).length)
+const sessionActionError = ref<string | null>(null)
+const deletingSession = ref<string | null>(null)
+async function toggleArchive(s: SessionSummary): Promise<void> {
+  sessionActionError.value = null
+  try { await sessions.archive(props.id, s.session_id, !s.archived) }
+  catch (e) { sessionActionError.value = humanizeError(e) }
+}
+async function deleteRecord(s: SessionSummary): Promise<void> {
+  if (deletingSession.value !== s.session_id) { deletingSession.value = s.session_id; return }
+  sessionActionError.value = null
+  try { await sessions.remove(props.id, s.session_id); deletingSession.value = null }
+  catch (e) { sessionActionError.value = humanizeError(e) }
+}
 const updateInfo = ref<DeviceUpdateStatus | null>(null)
 let updateTimer: ReturnType<typeof setInterval> | null = null
 let updateLoading = false
@@ -257,7 +273,7 @@ async function createSession(): Promise<void> {
       cols: size.cols,
       rows: size.rows,
       ...(name === '' ? {} : { name }),
-      ...(preset.resume === true ? { resume: true } : {}),
+      // 新建始终是全新 CLI 对话；接回原会话请使用下方的会话列表。
     })
 
     localStorage.setItem(cwdKey.value, cwd.value.trim())
@@ -297,6 +313,7 @@ async function doDelete(): Promise<void> {
 }
 
 function openSession(s: SessionSummary): void {
+  if (!canOpen(s)) return
   void router.push({ name: 'session', params: { id: s.session_id } })
 }
 
@@ -307,11 +324,11 @@ function canOpen(s: SessionSummary): boolean {
 </script>
 
 <template>
-  <main class="page">
+  <main class="page device-page">
     <div class="row row--between" style="margin-bottom: 16px">
       <div class="row">
         <RouterLink class="btn btn--ghost btn--sm" :to="{ name: 'devices' }">‹ 设备</RouterLink>
-        <h1 style="margin: 0">{{ device?.name ?? '设备' }}</h1>
+        <h1 style="margin: 0">{{ device?.name ?? '设备' }} <span class="device-subtitle">/ 工作空间</span></h1>
       </div>
       <button class="btn btn--sm" type="button" :disabled="sessions.loading" @click="sessions.load(id, true)">
         <span v-if="sessions.loading" class="spinner" />
@@ -320,7 +337,7 @@ function canOpen(s: SessionSummary): boolean {
     </div>
 
     <!-- ---- 设备信息 ---- -->
-    <div class="card">
+    <div class="card device-admin">
       <div class="card__title">
         <h2>设备信息</h2>
         <button class="btn btn--ghost btn--sm" type="button" @click="renaming = !renaming">
@@ -385,7 +402,7 @@ function canOpen(s: SessionSummary): boolean {
       </template>
     </div>
 
-    <div class="card">
+    <div class="card device-update">
       <div class="card__title">
         <h2>Agent 更新</h2>
         <span class="badge" :class="updateInfo?.update?.state === 'error' ? 'badge--err' : updateInfo?.update?.state === 'waiting' || updateInfo?.update?.state === 'switching' ? 'badge--warn' : 'badge--idle'">
@@ -410,9 +427,9 @@ function canOpen(s: SessionSummary): boolean {
     </div>
 
     <!-- ---- 新建会话 ---- -->
-    <div class="card">
+    <div class="card device-create">
       <div class="card__title">
-        <h2>新建会话</h2>
+        <h2>开始新的工作</h2>
         <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
       </div>
 
@@ -511,16 +528,16 @@ function canOpen(s: SessionSummary): boolean {
         <div class="row">
           <button class="btn btn--primary" type="submit" :disabled="creating || !conn.isOpen || selectableCommands.length === 0">
             <span v-if="creating" class="spinner" />
-            创建并进入
+            新建独立会话 →
           </button>
         </div>
       </form>
     </div>
 
     <!-- ---- 会话列表 ---- -->
-    <div class="card">
+    <div class="card device-sessions">
       <div class="card__title">
-        <h2>会话</h2>
+        <h2>我的会话</h2>
         <span v-if="sessions.source !== null" class="badge" :class="sessions.source === 'live' ? 'badge--ok' : 'badge--idle'">
           {{ sessions.source === 'live' ? '实时' : '缓存快照' }}
         </span>
@@ -534,18 +551,22 @@ function canOpen(s: SessionSummary): boolean {
         {{ sessions.error }}
       </div>
 
+      <div v-if="sessionActionError" class="notice notice--err" style="margin-bottom: 12px">{{ sessionActionError }}</div>
+
+      <div class="row session-filters">
+        <button class="btn btn--sm" :class="!showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = false">最近会话</button>
+        <button class="btn btn--sm" :class="showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = true">归档 {{ archivedCount }}</button>
+      </div>
+
       <p class="dim small">离开终端页面不会结束远端进程；点击运行中的会话可接回原会话。只有在终端页确认关闭才会结束进程。</p>
 
-      <div v-if="list.length === 0" class="empty">这个设备上还没有会话。</div>
+      <div v-if="visibleSessions.length === 0" class="empty">{{ showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
 
       <div v-else class="list">
-        <button
-          v-for="s in list"
+        <div
+          v-for="s in visibleSessions"
           :key="s.session_id"
           class="item"
-          type="button"
-          style="cursor: pointer; text-align: left; font: inherit; width: 100%"
-          @click="openSession(s)"
         >
           <span class="item__main">
             <span class="item__title">
@@ -557,8 +578,15 @@ function canOpen(s: SessionSummary): boolean {
             </span>
             <span class="item__meta">{{ describeSession(s) }}</span>
           </span>
-          <span class="faint small nowrap">{{ createdText(s) }}</span>
-        </button>
+          <span class="item__actions">
+            <span class="faint small nowrap">{{ createdText(s) }}</span>
+            <button v-if="canOpen(s)" class="btn btn--primary btn--sm" type="button" @click="openSession(s)">接回</button>
+            <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
+            <button v-if="!canOpen(s)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
+              {{ deletingSession === s.session_id ? '确认删除' : '删除记录' }}
+            </button>
+          </span>
+        </div>
       </div>
     </div>
   </main>

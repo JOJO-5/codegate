@@ -204,6 +204,7 @@ type SessionSummary struct {
 	Args           []string `json:"args,omitempty"`
 	Cwd            string   `json:"cwd"`
 	Status         string   `json:"status"` // starting|running|detached|exited|failed|terminated
+	Archived       bool     `json:"archived,omitempty"`
 	PID            int      `json:"pid,omitempty"`
 	ExitCode       *int     `json:"exit_code,omitempty"`
 	Cols           uint16   `json:"cols"`
