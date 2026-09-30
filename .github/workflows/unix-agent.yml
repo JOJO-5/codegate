@@ -9,6 +9,7 @@ on:
       - 'internal/session/**'
       - 'internal/protocol/**'
       - 'internal/server/**'
+      - 'internal/storage/**'
       - 'cmd/codegate-agent/**'
       - 'cmd/codegate-server/**'
       - 'scripts/agent-autostart-linux.sh'

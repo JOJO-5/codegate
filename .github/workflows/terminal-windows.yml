@@ -9,6 +9,7 @@ on:
       - 'internal/terminal/**'
       - 'internal/agent/**'
       - 'internal/server/**'
+      - 'internal/storage/**'
       - 'internal/protocol/**'
       - 'internal/session/**'
       - 'cmd/codegate-agent/**'

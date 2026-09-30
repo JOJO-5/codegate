@@ -21,7 +21,8 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/devices' },
+  { path: '/', redirect: '/projects' },
+  { path: '/projects', name: 'projects', component: () => import('./views/ProjectsView.vue'), meta: { title: '项目' } },
 
   {
     path: '/login',
@@ -90,7 +91,7 @@ router.beforeEach(async (to) => {
 
   if (to.meta['public'] === true) {
     // 已登录还去登录页 → 直接送去设备列表
-    return auth.isLoggedIn ? { name: 'devices' } : true
+    return auth.isLoggedIn ? { name: 'projects' } : true
   }
 
   if (!auth.isLoggedIn) {

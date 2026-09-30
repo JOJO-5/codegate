@@ -235,6 +235,14 @@ export interface MeResponse {
   role: string
 }
 
+export interface ProjectPreference {
+  label: string
+  device_id: string
+  command_id: string
+  cwd: string
+  name: string
+}
+
 /** `internal/server/handler_device.go: deviceDTO`。 */
 export interface DeviceDTO {
   id: string
@@ -324,6 +332,15 @@ export interface WSTicketResponse {
 // ---------------------------------------------------------------------------
 
 export const api = {
+  preferences(): Promise<{ values: Record<string, unknown> }> {
+    return request('GET', '/preferences')
+  },
+  setPreference(key: string, value: unknown): Promise<{ key: string; value: unknown }> {
+    return request('PUT', `/preferences/${encodeURIComponent(key)}`, { value })
+  },
+  deletePreference(key: string): Promise<void> {
+    return request('DELETE', `/preferences/${encodeURIComponent(key)}`)
+  },
   // ---- 认证 ----
 
   async register(email: string, password: string): Promise<TokenResponse> {

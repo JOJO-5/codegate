@@ -603,6 +603,12 @@ a.item:hover {
 }
 
 /* Device workspace */
+.project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; margin-top: 18px; }
+.project-card .row { flex-wrap: wrap; }
+.project-path { overflow-wrap: anywhere; font-size: 13px; }
+.project-sessions { border-top: 1px solid var(--border); margin-top: 14px; }
+.project-sessions .row { padding: 8px 0; }
+.project-management { margin-top: 14px; }
 .device-page { display: flex; flex-direction: column; max-width: 1280px; gap: 20px; }
 .device-page .card { margin-top: 0; border-radius: 16px; }
 .device-page h1 { font-size: clamp(22px, 4vw, 30px); letter-spacing: -.03em; }
@@ -663,6 +669,8 @@ a.item:hover {
 .setup-details summary { cursor: pointer; font-weight: 600; }
 .setup-details[open] summary { margin-bottom: 10px; }
 .term__extra-keys { margin-top: 6px; }
+.clipboard-panel { padding: 10px; margin: 8px 0; max-height: 45dvh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.clipboard-panel textarea { min-height: 80px; font-size: 16px; }
 .session-filters .btn:not(.btn--primary) { border-color: transparent; background: transparent; }
 .session-help { margin: 0 0 10px; }
 @media (max-width: 840px) {

@@ -60,7 +60,7 @@ async function submit(): Promise<void> {
 
   if (!ok) return
 
-  const next = typeof route.query['next'] === 'string' ? route.query['next'] : '/devices'
+  const next = typeof route.query['next'] === 'string' ? route.query['next'] : '/projects'
   await router.replace(next)
 }
 
