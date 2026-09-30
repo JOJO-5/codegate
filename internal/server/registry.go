@@ -62,7 +62,7 @@ type AgentConn struct {
 	updateMu sync.RWMutex
 	updateStatus *protocol.AgentUpdateStatus
 	commands []protocol.CommandAvailability
-	roots []string
+	dshWebEnabled *bool
 	agentVer  string
 	platform  string
 	connected time.Time
@@ -174,22 +174,24 @@ func (c *AgentConn) SetCommands(commands []protocol.CommandAvailability) {
 	c.commands = append([]protocol.CommandAvailability(nil), commands...)
 }
 
+func (c *AgentConn) SetDSHWebEnabled(enabled *bool) {
+	c.updateMu.Lock()
+	defer c.updateMu.Unlock()
+	c.dshWebEnabled = enabled
+}
+
+func (c *AgentConn) DSHWebEnabled() *bool {
+	c.updateMu.RLock()
+	defer c.updateMu.RUnlock()
+	if c.dshWebEnabled == nil { return nil }
+	value := *c.dshWebEnabled
+	return &value
+}
+
 func (c *AgentConn) Commands() []protocol.CommandAvailability {
 	c.updateMu.RLock()
 	defer c.updateMu.RUnlock()
 	return append([]protocol.CommandAvailability(nil), c.commands...)
-}
-
-func (c *AgentConn) SetRoots(roots []string) {
-	c.updateMu.Lock()
-	defer c.updateMu.Unlock()
-	c.roots = append([]string(nil), roots...)
-}
-
-func (c *AgentConn) Roots() []string {
-	c.updateMu.RLock()
-	defer c.updateMu.RUnlock()
-	return append([]string(nil), c.roots...)
 }
 
 // SetSessions 整体替换该 Agent 持有的会话集合。
