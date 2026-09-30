@@ -33,6 +33,8 @@ type Agent struct {
 	ws  *Workspace
 	mgr *session.Manager
 	log *slog.Logger
+	toolMu sync.RWMutex
+	approvedTools map[string]bool
 
 	startedAt time.Time
 
@@ -102,8 +104,11 @@ func NewWithIdentity(cfg Config, id *Identity, log *slog.Logger) (*Agent, error)
 		return t, nil
 	}
 
+	approvedTools, err := loadApprovedTools(cfg.StateDir)
+	if err != nil { return nil, err }
 	return &Agent{
 		cfg:       cfg,
+		approvedTools: approvedTools,
 		id:        id,
 		ws:        NewWorkspace(cfg.AllowedRoots),
 		mgr:       session.NewManager(factory, session.Config{BufferSize: cfg.BufferSize, MaxSessions: cfg.MaxSessions}),
