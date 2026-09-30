@@ -620,11 +620,19 @@ a.item:hover {
 .device-workspace { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .device-workspace > * { min-width: 0; }
 .device-create { grid-column: 1; grid-row: 1; position: sticky; top: 74px; }
-.device-sessions { grid-column: 2; grid-row: 1 / span 4; min-height: 380px; }
-.device-dsh, .device-admin, .device-update { grid-column: 1; }
-.device-dsh { grid-row: 2; }
-.device-admin { grid-row: 3; }
-.device-update { grid-row: 4; }
+.device-sessions { grid-column: 2; grid-row: 1 / span 5; min-height: 380px; }
+.device-tools, .device-dsh, .device-admin, .device-update { grid-column: 1; }
+.device-tools { grid-row: 2; }
+.device-dsh { grid-row: 3; }
+.device-admin { grid-row: 4; }
+.device-update { grid-row: 5; }
+.device-tools p { margin: 0 0 12px; }
+.device-tools__list { border-top: 1px solid var(--border); }
+.device-tools__item { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.device-tools__item > span:first-child { flex: 1; min-width: 0; }
+.device-tools__help { padding-top: 12px; color: var(--fg-dim); font-size: 12px; }
+.device-tools__help summary { cursor: pointer; }
+.device-tools__help p { margin: 8px 0 0; }
 .device-dsh p { margin: 0 0 12px; }
 .device-dsh__actions { flex-wrap: wrap; margin: 12px 0 0; }
 .device-dsh .notice { margin-top: 10px; }
@@ -657,12 +665,13 @@ a.item:hover {
 .session-help { margin: 0 0 10px; }
 @media (max-width: 840px) {
   .device-workspace { grid-template-columns: minmax(0, 1fr); }
-  .device-create, .device-dsh, .device-sessions, .device-admin, .device-update { grid-column: 1; grid-row: auto; position: static; }
+  .device-create, .device-tools, .device-dsh, .device-sessions, .device-admin, .device-update { grid-column: 1; grid-row: auto; position: static; }
   .device-create { order: 1; }
-  .device-dsh { order: 2; }
-  .device-sessions { order: 3; }
-  .device-admin { order: 4; }
-  .device-update { order: 5; }
+  .device-tools { order: 2; }
+  .device-dsh { order: 3; }
+  .device-sessions { order: 4; }
+  .device-admin { order: 5; }
+  .device-update { order: 6; }
   .device-sessions { min-height: 0; }
 }
 .term__composer { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
