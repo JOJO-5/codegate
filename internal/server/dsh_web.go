@@ -39,6 +39,10 @@ type webStartWait struct {
 	agent *AgentConn
 	reply chan webStartReply
 }
+type toolWait struct {
+	agent *AgentConn
+	reply chan error
+}
 type proxyStream struct {
 	agent *AgentConn
 	pipe net.Conn
@@ -54,13 +58,14 @@ type webGateway struct {
 	sessions map[string]webGrant
 	upstreams map[string]webUpstream
 	pending map[string]webStartWait
+	toolPending map[string]toolWait
 	streams map[uuid.UUID]*proxyStream
 }
 
 func newWebGateway() *webGateway {
 	return &webGateway{
 		tickets: make(map[string]webGrant), sessions: make(map[string]webGrant),
-		upstreams: make(map[string]webUpstream), pending: make(map[string]webStartWait),
+		upstreams: make(map[string]webUpstream), pending: make(map[string]webStartWait), toolPending: make(map[string]toolWait),
 		streams: make(map[uuid.UUID]*proxyStream),
 	}
 }
