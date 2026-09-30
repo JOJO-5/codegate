@@ -224,6 +224,7 @@ type HeartbeatPayload struct {
 	Sessions []HeartbeatSession `json:"sessions"`
 	Update AgentUpdateStatus `json:"update"`
 	Commands []CommandAvailability `json:"commands,omitempty"`
+	DSHWebEnabled *bool `json:"dsh_web_enabled,omitempty"`
 	// Roots 是该 Agent 允许作为工作目录的根路径白名单（对应 agent.json
 	// 的 allowed_roots）。仅用于让界面自动带出与提供候选，**不是**授权
 	// 依据 —— 真正的校验始终在 Agent 侧的 Workspace.Resolve。
