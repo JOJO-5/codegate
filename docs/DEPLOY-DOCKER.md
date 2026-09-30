@@ -172,7 +172,7 @@ dsh plugin --profile tui add github:deepseek-harness/turtle-ui
 dsh --profile tui
 ```
 
-插件管理需要 `pnpm`；安装 Git 源码插件时，可能还需按 DSH 提示在该 profile 的 `pnpm-workspace.yaml` 允许构建后重试。验证成功再在 `allowed_commands` 添加：
+插件管理需要 `pnpm`；安装 Git 源码插件时，可能还需按 DSH 提示在该 profile 的 `pnpm-workspace.yaml` 允许构建后重试。验证成功后可在设备页授权 DSH。需要特殊参数或独立 Web 地址时，仍可手动在 `allowed_commands` 添加：
 
 ```json
 {
