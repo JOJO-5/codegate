@@ -90,7 +90,11 @@ func (s *Server) handleWSClient(w http.ResponseWriter, r *http.Request) {
 func (s *clientSession) run() (int, string) {
 	// 浏览器连接**已经是认证过的**（票据就是凭证），所以一开始就用
 	// 正常的读超时，没有握手窗口。
-	refreshReadDeadline(s.c.conn, wsPongWait)
+	//
+	// 用 armReadDeadline 而不是 refreshReadDeadline：浏览器只在被 Ping 时
+	// 回一个 Pong，空闲时一个字节都不发 —— 只有把超时接到 Pong 上，
+	// 这条连接才真正由 Ping/Pong 保活（见 armReadDeadline 的说明）。
+	armReadDeadline(s.c.conn, wsPongWait)
 
 	for {
 		mt, data, err := s.c.conn.ReadMessage()

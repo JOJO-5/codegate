@@ -403,7 +403,9 @@ func (s *agentSession) handleAuth(env *protocol.Envelope) error {
 	}
 
 	s.authed = true
-	refreshReadDeadline(s.ac.conn, wsPongWait)
+	// 认证完成，握手窗口就此结束：从这一行起读超时改由 Pong 续命，
+	// 不再依赖 Agent 的业务数据（见 armReadDeadline 的说明）。
+	armReadDeadline(s.ac.conn, wsPongWait)
 
 	if err := s.srv.store.TouchDeviceLastSeen(ctx, d.ID, s.srv.now()); err != nil {
 		// 只影响设备页的"最后在线"，不该让认证失败。

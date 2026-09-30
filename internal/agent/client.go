@@ -270,10 +270,23 @@ func (c *Conn) readPump() {
 
 	c.ws.SetReadLimit(maxReadSize)
 	_ = c.ws.SetReadDeadline(time.Now().Add(readTimeout))
-	// Server 每 30s 发 Ping；收到就把读超时往后推。
-	// gorilla 会自动回 Pong，这里只需要重置 deadline。
-	c.ws.SetPongHandler(func(string) error {
-		return c.ws.SetReadDeadline(time.Now().Add(readTimeout))
+	// ★ Server 每 30s 发一次 WS Ping，这是空闲时段里**唯一**的入站帧，
+	// 必须用它来续读超时。
+	//
+	// 它要挂在 PingHandler 上，**不是 PongHandler**。
+	//
+	// gorilla 的 PongHandler 只在**收到 Pong** 时触发；而这条链路上 Ping 是
+	// 从 Server 单向发来的 —— Agent 只会被动回 Pong，永远不会收到 Pong。
+	// 挂在 PongHandler 上等于没挂：读超时依旧只靠业务数据续命，于是空闲时
+	// 每 readTimeout(90s) 断一次。而因为 Server 侧确实在正常发 Ping、也在
+	// 正常收 Pong，两边日志都看不出异常 —— 症状只剩「每 90 秒重连一次」。
+	//
+	// 回 Pong 用 WriteControl：它是 gorilla 里少数允许与 writePump 并发调用的
+	// 方法（关闭帧同理），不破坏「单写者」约束。
+	c.ws.SetPingHandler(func(data string) error {
+		_ = c.ws.SetReadDeadline(time.Now().Add(readTimeout))
+		return c.ws.WriteControl(
+			websocket.PongMessage, []byte(data), time.Now().Add(writeTimeout))
 	})
 
 	for {
