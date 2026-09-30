@@ -264,6 +264,7 @@ export interface CommandAvailability {
   kind: 'shell' | 'tui'
   installed: boolean
   allowed: boolean
+  managed?: boolean
   resume?: boolean
   web_url?: string
 }
@@ -391,6 +392,10 @@ export const api = {
 
   stopDSHWeb(id: string): Promise<{ stopped: boolean }> {
     return request<{ stopped: boolean }>('POST', `/devices/${encodeURIComponent(id)}/dsh-web/stop`)
+  },
+
+  setDeviceTool(deviceId: string, toolId: string, enabled: boolean): Promise<{ id: string; enabled: boolean }> {
+    return request<{ id: string; enabled: boolean }>('PUT', `/devices/${encodeURIComponent(deviceId)}/tools/${encodeURIComponent(toolId)}`, { enabled })
   },
 
   renameDevice(id: string, name: string): Promise<DeviceDTO> {
