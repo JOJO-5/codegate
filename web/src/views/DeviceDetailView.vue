@@ -330,7 +330,7 @@ function openSession(s: SessionSummary): void {
 
 /** 会话是否还活着（可进入）。 */
 function canOpen(s: SessionSummary): boolean {
-  return isLiveStatus(s.status)
+  return isLiveStatus(s.status) && device.value?.online === true
 }
 </script>
 
@@ -468,7 +468,7 @@ function canOpen(s: SessionSummary): boolean {
         <button class="btn btn--sm" :class="showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = true">归档 {{ archivedCount }}</button>
       </div>
 
-      <p class="dim small session-help">离开终端后会话继续运行。点击“接回”恢复，结束进程请在终端内关闭会话。</p>
+      <p class="dim small session-help">离开终端后会话继续运行。设备在线时可接回；结束进程请在终端内关闭会话。</p>
 
       <div v-if="visibleSessions.length === 0" class="empty">{{ showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
 
@@ -489,14 +489,15 @@ function canOpen(s: SessionSummary): boolean {
           </span>
           <span class="item__actions">
             <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
-            <button v-if="canOpen(s)" class="btn btn--primary btn--sm" type="button" @click="openSession(s)">接回</button>
+            <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : '设备离线，重新上线后可接回'" @click="openSession(s)">{{ canOpen(s) ? '接回' : '离线，暂不可接回' }}</button>
             <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
-            <button v-if="!canOpen(s)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
+            <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
               {{ deletingSession === s.session_id ? '确认删除' : '删除记录' }}
             </button>
           </span>
         </div>
       </div>
+    </div>
     <section class="card device-tools" aria-labelledby="device-tools-heading">
       <div class="card__title"><h2 id="device-tools-heading">本机工具</h2><span class="faint small">由 Agent 扫描</span></div>
       <p class="dim small">Agent 扫描本机工具；授权后即可从网页新建会话，随时可关闭授权。</p>
@@ -632,7 +633,6 @@ function canOpen(s: SessionSummary): boolean {
       </p>
     </details>
 
-    </div>
     </div>
   </main>
 </template>
