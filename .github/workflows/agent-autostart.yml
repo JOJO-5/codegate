@@ -1,14 +1,23 @@
 name: Windows Agent autostart
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'scripts/agent-autostart.ps1'
       - '.github/workflows/agent-autostart.yml'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   syntax:
     runs-on: windows-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Parse PowerShell script

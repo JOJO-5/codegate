@@ -1,18 +1,29 @@
 name: Unix Agent
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'internal/terminal/**'
       - 'internal/agent/**'
       - 'internal/session/**'
+      - 'internal/protocol/**'
+      - 'internal/server/**'
       - 'cmd/codegate-agent/**'
+      - 'cmd/codegate-server/**'
       - 'scripts/agent-autostart-linux.sh'
       - 'scripts/agent-autostart-macos.sh'
       - 'web/src/views/DevicesView.vue'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/unix-agent.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   agent:
