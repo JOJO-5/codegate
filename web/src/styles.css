@@ -628,6 +628,12 @@ a.item:hover {
 .device-dsh p { margin: 0 0 12px; }
 .device-dsh__actions { flex-wrap: wrap; margin: 12px 0 0; }
 .device-dsh .notice { margin-top: 10px; }
+.device-dsh__checklist { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 10px; }
+.device-dsh__checklist li { display: flex; align-items: start; gap: 10px; }
+.device-dsh__checklist li > span { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-elev-2); color: var(--fg-dim); font-size: 12px; }
+.device-dsh__checklist .device-dsh__ready > span { background: #e7f5eb; color: var(--ok); }
+.device-dsh__checklist strong, .device-dsh__checklist small { display: block; }
+.device-dsh__checklist small { color: var(--fg-dim); line-height: 1.4; }
 .device-page .card { box-shadow: none; }
 .device-create { background: var(--bg-elev); border-color: var(--border); }
 .device-workspace details > summary { cursor: pointer; font-weight: 600; list-style-position: inside; }
