@@ -505,17 +505,6 @@ function canOpen(s: SessionSummary): boolean {
           <span v-if="dshCopyStatus" class="field__hint">{{ dshCopyStatus }}</span>
           <p>然后在该用户环境验证 <code class="mono">dsh --profile tui</code> 能打开 TUI，再把 dsh 配置到 agent.json 的 allowed_commands（args 为 ["--profile", "tui"]）。安装过程可能需要 pnpm 按提示允许插件构建；CodeGate 不会自动安装。</p>
         </div>
-        <div v-if="dshCommand?.installed && updateInfo?.web_proxy_enabled" class="notice small">
-          <strong>DSH Web（内建转发）：</strong>目标机器需在 agent.json 启用 dsh_web_enabled；CodeGate 会在该机器启动仅监听本机的 DSH，并通过 Agent 出站连接打开独立 HTTPS 子域名。
-          <button class="btn btn--ghost btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online" @click="openDSHWeb">
-            {{ dshOpening ? '正在启动…' : '启动并打开 DSH Web ↗' }}
-          </button>
-          <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online" @click="stopDSHWeb">
-            {{ dshStopping ? '正在停止…' : '停止 DSH Web' }}
-          </button>
-          <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">打开 DSH Web ↗</a>
-          <span v-if="dshOpenError" class="notice notice--err">{{ dshOpenError }}</span>
-        </div>
         <div v-if="detectedUnapproved.length" class="notice small">
           检测到但尚未授权：{{ detectedUnapproved.map(c => c.label).join('、') }}。在本机 agent.json 的 allowed_commands 中配置后才能从网页启动。
           仅找到 dsh 命令并不代表 TUI 插件已就绪。
@@ -540,6 +529,22 @@ function canOpen(s: SessionSummary): boolean {
         </div>
       </form>
     </div>
+
+    <!-- DSH Web is a separate browser experience, independent of TUI sessions. -->
+    <section class="card device-dsh" aria-labelledby="dsh-web-heading">
+      <div class="card__title"><h2 id="dsh-web-heading">DSH Web</h2><span class="badge" :class="updateInfo?.web_proxy_enabled ? 'badge--ok' : 'badge--idle'">{{ updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></div>
+      <p class="dim small">在目标电脑启动 DSH Web，通过 CodeGate 的独立 HTTPS 地址打开。</p>
+      <div v-if="updateInfo && !updateInfo.web_proxy_enabled" class="notice notice--info small">Server 尚未启用 DSH Web 转发。配置 CODEGATE_DSH_PROXY_DOMAIN、通配域名和 TLS 后再使用。</div>
+      <div v-else-if="updateInfo && !updateInfo.online" class="notice notice--warn small">设备离线，连接后才能启动 DSH Web。</div>
+      <div v-else-if="updateInfo && !dshCommand?.installed" class="notice notice--warn small">Agent 的运行账户未检测到 dsh。安装后重启 Agent 并刷新设备状态。</div>
+      <div v-else-if="updateInfo?.web_proxy_enabled" class="dim small">Agent 还需在 agent.json 中启用 dsh_web_enabled；未启用时启动请求会返回错误。</div>
+      <div class="row device-dsh__actions">
+        <button class="btn btn--primary btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled || !dshCommand?.installed" @click="openDSHWeb">{{ dshOpening ? '正在启动…' : '启动并打开 Web ↗' }}</button>
+        <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online || !updateInfo?.web_proxy_enabled" @click="stopDSHWeb">{{ dshStopping ? '正在停止…' : '停止' }}</button>
+      </div>
+      <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">浏览器阻止了新窗口，点此打开 DSH Web ↗</a>
+      <div v-if="dshOpenError" class="notice notice--err small">{{ dshOpenError }}</div>
+    </section>
 
     <!-- ---- 会话列表 ---- -->
     <div class="card device-sessions">
