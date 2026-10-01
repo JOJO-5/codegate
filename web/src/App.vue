@@ -11,10 +11,12 @@
 
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import { useTheme } from './lib/theme'
 import { useAuthStore } from './stores/auth'
 import { useConnStore } from './stores/conn'
 import { usePreferencesStore } from './stores/preferences'
 
+const { dark, toggleTheme } = useTheme()
 const auth = useAuthStore()
 const conn = useConnStore()
 const preferences = usePreferencesStore()
@@ -72,7 +74,10 @@ async function onLogout(): Promise<void> {
         <span>{{ conn.healthText }}</span>
       </span>
 
-      <button class="btn btn--ghost btn--sm" type="button" @click="onLogout">登出</button>
+      <div class="header-actions">
+        <button class="btn btn--ghost btn--sm theme-toggle" type="button" :aria-label="dark ? '切换浅色模式' : '切换深色模式'" :title="dark ? '切换浅色模式' : '切换深色模式'" @click="toggleTheme"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><template v-if="dark"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></template><path v-else d="M20.5 14A9 9 0 0 1 10 3.5 9 9 0 1 0 20.5 14Z" /></svg></button>
+        <button class="btn btn--ghost btn--sm" type="button" @click="onLogout">登出</button>
+      </div>
     </header>
 
     <RouterView :key="route.fullPath" />
