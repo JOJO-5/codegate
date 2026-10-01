@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jojo/codegate/internal/protocol"
@@ -22,20 +23,25 @@ func (s *Server) openWebStream(ctx context.Context, ac *AgentConn) (net.Conn, er
 	s.web.mu.Lock()
 	count := 0
 	for _, other := range s.web.streams {
-		if other.agent == ac { count++ }
+		if other.agent == ac {
+			count++
+		}
 	}
 	if count >= 32 {
 		s.web.mu.Unlock()
-		_ = client.Close(); _ = relay.Close()
+		_ = client.Close()
+		_ = relay.Close()
 		return nil, errors.New("too many DSH Web connections")
 	}
 	s.web.streams[id] = stream
 	s.web.mu.Unlock()
-	env, err := protocol.NewEnvelope(protocol.TypeWebOpen, protocol.WebStreamPayload{StreamID:id.String()})
+	env, err := protocol.NewEnvelope(protocol.TypeWebOpen, protocol.WebStreamPayload{StreamID: id.String()})
 	if err == nil {
 		var raw []byte
 		raw, err = protocol.Encode(env)
-		if err == nil { err = ac.TrySendText(raw) }
+		if err == nil {
+			err = ac.TrySendText(raw)
+		}
 	}
 	if err != nil {
 		s.closeWebStream(id, false)
@@ -48,25 +54,41 @@ func (s *Server) openWebStream(ctx context.Context, ac *AgentConn) (net.Conn, er
 			n, err := relay.Read(buf)
 			if n > 0 {
 				frame, frameErr := protocol.EncodeFrame(protocol.FrameWebToAgent, 0, id, buf[:n])
-				if frameErr != nil || ac.SendWeb(frame) != nil { return }
+				if frameErr != nil || ac.SendWeb(frame) != nil {
+					return
+				}
 			}
-			if err != nil { return }
+			if err != nil {
+				return
+			}
 		}
 	}()
 	go func() {
 		for {
 			select {
-			case <-stream.done: return
+			case <-stream.done:
+				return
 			case data := <-stream.queue:
-				if len(data) == 0 { continue }
-				if _, err := relay.Write(data); err != nil { s.closeWebStream(id, true); return }
+				if data == nil {
+					s.closeWebStream(id, false)
+					return
+				}
+				if len(data) == 0 {
+					continue
+				}
+				if _, err := relay.Write(data); err != nil {
+					s.closeWebStream(id, true)
+					return
+				}
 			}
 		}
 	}()
 	go func() {
 		select {
-		case <-ctx.Done(): s.closeWebStream(id, true)
-		case <-ac.Done(): s.closeWebStream(id, false)
+		case <-ctx.Done():
+			s.closeWebStream(id, true)
+		case <-ac.Done():
+			s.closeWebStream(id, false)
 		case <-stream.done:
 		}
 	}()
@@ -78,16 +100,21 @@ func (s *Server) closeWebStream(id uuid.UUID, notify bool) {
 	stream := s.web.streams[id]
 	delete(s.web.streams, id)
 	s.web.mu.Unlock()
-	if stream == nil { return }
+	if stream == nil {
+		return
+	}
 	stream.once.Do(func() {
 		close(stream.done)
-		_ = stream.client.Close()
+		// Closing the relay end gives the proxy EOF. Closing its client end
+		// here would instead turn a completed response into ErrClosedPipe.
 		_ = stream.pipe.Close()
 	})
 	if notify {
-		env, err := protocol.NewEnvelope(protocol.TypeWebClose, protocol.WebStreamPayload{StreamID:id.String()})
+		env, err := protocol.NewEnvelope(protocol.TypeWebClose, protocol.WebStreamPayload{StreamID: id.String()})
 		if err == nil {
-			if raw, err := protocol.Encode(env); err == nil { _ = stream.agent.TrySendText(raw) }
+			if raw, err := protocol.Encode(env); err == nil {
+				_ = stream.agent.TrySendText(raw)
+			}
 		}
 	}
 }
@@ -100,16 +127,41 @@ func (s *Server) webFrame(ac *AgentConn, data []byte) error {
 	s.web.mu.Lock()
 	stream := s.web.streams[f.StreamID]
 	s.web.mu.Unlock()
-	if stream == nil { return nil } // stream was cancelled; late frame
-	if stream.agent != ac { return errors.New("DSH Web frame belongs to another Agent") }
+	if stream == nil {
+		return nil
+	} // stream was cancelled; late frame
+	if stream.agent != ac {
+		return errors.New("DSH Web frame belongs to another Agent")
+	}
 	buf := append([]byte(nil), f.Payload...)
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
 	select {
 	case <-stream.done:
 	case stream.queue <- buf:
-	default:
+	case <-timer.C:
 		s.closeWebStream(f.StreamID, true)
 	}
 	return nil
+}
+
+// Remote EOF follows the response bytes on the Agent connection. Queue it
+// behind those bytes so closing the pipe cannot truncate an HTTP response.
+func (s *Server) finishWebStream(id uuid.UUID, ac *AgentConn) {
+	s.web.mu.Lock()
+	stream := s.web.streams[id]
+	s.web.mu.Unlock()
+	if stream == nil || stream.agent != ac {
+		return
+	}
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-stream.done:
+	case stream.queue <- nil:
+	case <-timer.C:
+		s.closeWebStream(id, true)
+	}
 }
 
 func (s *Server) closeWebAgent(ac *AgentConn) {
@@ -119,8 +171,12 @@ func (s *Server) closeWebAgent(ac *AgentConn) {
 	}
 	var ids []uuid.UUID
 	for id, stream := range s.web.streams {
-		if stream.agent == ac { ids = append(ids, id) }
+		if stream.agent == ac {
+			ids = append(ids, id)
+		}
 	}
 	s.web.mu.Unlock()
-	for _, id := range ids { s.closeWebStream(id, false) }
+	for _, id := range ids {
+		s.closeWebStream(id, false)
+	}
 }

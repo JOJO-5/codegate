@@ -235,10 +235,12 @@ func (a *Agent) onWebFrame(f protocol.Frame) {
 		return
 	}
 	data := append([]byte(nil), f.Payload...)
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
 	select {
 	case <-s.done:
 	case s.queue <- data:
-	default:
+	case <-timer.C:
 		a.removeWebStream(f.StreamID, s)
 		a.sendWebClose(f.StreamID)
 	}
