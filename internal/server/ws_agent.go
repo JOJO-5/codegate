@@ -532,7 +532,7 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 		s.srv.web.mu.Lock()
 		stream := s.srv.web.streams[id]
 		s.srv.web.mu.Unlock()
-		if stream != nil && stream.agent == s.ac { s.srv.closeWebStream(id, false) }
+		if stream != nil && stream.agent == s.ac { s.srv.finishWebStream(id, s.ac) }
 		return nil
 	case protocol.TypeAgentHeartbeat:
 		return s.handleHeartbeat(env)

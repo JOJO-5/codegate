@@ -40,6 +40,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebglAddon } from '@xterm/addon-webgl'
 
 import { useConnStore } from '../stores/conn'
 import { useSessionsStore } from '../stores/sessions'
@@ -176,7 +177,7 @@ const kind = computed(() => {
 })
 const isShell = computed(() => kind.value === 'shell')
 const windowsShell = computed(() => {
-  const platform = devices.byId(summary.value?.device_id ?? '')?.platform
+  const platform = devices.byId(summary.value?.device_id.replace(/-/g, '') ?? '')?.platform
   return isShell.value && platform !== 'linux' && platform !== 'darwin'
 })
 const isLive = computed(() => {
@@ -459,7 +460,7 @@ onMounted(async () => {
     fontFamily:
       'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
     fontSize: preferences.fontSize,
-    lineHeight: 1.15,
+    lineHeight: 1,
     cursorBlink: true,
     // 手机上软键盘需要它才能在输入时弹出
     allowTransparency: false,
@@ -487,6 +488,15 @@ onMounted(async () => {
   t.unicode.activeVersion = '11'
 
   t.open(host)
+  // Draw TUI box and block characters as continuous cell-sized glyphs.
+  // Keep the DOM renderer when WebGL is unavailable or its context is lost.
+  const webgl = new WebglAddon()
+  webgl.onContextLoss(() => webgl.dispose())
+  try {
+    t.loadAddon(webgl)
+  } catch {
+    webgl.dispose()
+  }
 
   // 先 fit 一次再 attach：这样 attach 时带上的 cols/rows 就是真实尺寸，
   // 而不是 80×24 —— 否则 TUI 会先按 80 列画一遍再被 resize 打断重画。
