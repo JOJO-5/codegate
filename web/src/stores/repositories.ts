@@ -22,9 +22,17 @@ export const useRepositoriesStore = defineStore('repositories', () => {
       const [status, first] = await Promise.all([api.getDeviceUpdateStatus(id), api.getDeviceRepositories(id, 0, refresh)])
       let result = first
       let next = first.next_offset
+      let snapshotAt = first.scanned_at
+      let restarts = 0
       while (next !== undefined) {
         const page = await api.getDeviceRepositories(id, next)
-        if (page.scanned_at !== first.scanned_at) throw new Error('仓库扫描刚刚更新，请刷新清单。')
+        if (page.scanned_at !== snapshotAt) {
+          if (++restarts > 2) throw new Error('仓库扫描正在更新，请稍后重试。')
+          result = await api.getDeviceRepositories(id)
+          snapshotAt = result.scanned_at
+          next = result.next_offset
+          continue
+        }
         result = { ...result, repositories: [...result.repositories, ...page.repositories] }
         if (page.next_offset !== undefined && page.next_offset <= next) throw new Error('仓库分页响应无效')
         next = page.next_offset
@@ -35,7 +43,7 @@ export const useRepositoriesStore = defineStore('repositories', () => {
       commands.value[id] = (status.commands ?? []).filter(command => command.installed && command.allowed)
       delete errors.value[id]
     } catch (e) {
-      if (current === generation) errors.value[id] = humanizeError(e)
+      if (current === generation) { fetchedAt.delete(id); errors.value[id] = humanizeError(e) }
     } finally { if (current === generation) loading.value[id] = false }
   }
   return { results, commands, errors, loading, load }
