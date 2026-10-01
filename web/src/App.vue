@@ -9,13 +9,18 @@
  *      （服务端对同一用户虽然允许多条，但每条都要独立 attach，纯浪费）。
  */
 
-import { computed, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useConnStore } from './stores/conn'
+import { usePreferencesStore } from './stores/preferences'
 
 const auth = useAuthStore()
 const conn = useConnStore()
+const preferences = usePreferencesStore()
+function refreshPreferences(): void { void preferences.load(true) }
+onMounted(() => window.addEventListener('focus', refreshPreferences))
+onUnmounted(() => window.removeEventListener('focus', refreshPreferences))
 const route = useRoute()
 const router = useRouter()
 
@@ -32,6 +37,7 @@ watch(
   (loggedIn) => {
     if (loggedIn) {
       conn.connect()
+      void preferences.load()
     } else {
       conn.disconnect()
     }
@@ -51,9 +57,10 @@ async function onLogout(): Promise<void> {
 <template>
   <div :class="showChrome ? 'shell' : ''">
     <header v-if="showChrome" class="topbar">
-      <RouterLink to="/devices" class="brand">CodeGate</RouterLink>
+      <RouterLink to="/projects" class="brand">CodeGate</RouterLink>
 
       <nav class="nav">
+        <RouterLink to="/projects">项目</RouterLink>
         <RouterLink to="/devices">设备</RouterLink>
         <RouterLink to="/settings">设置</RouterLink>
       </nav>

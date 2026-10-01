@@ -75,6 +75,9 @@ func (s *Server) buildRouter() http.Handler {
 	mux.Handle("POST /api/v1/auth/logout", authed(s.handleLogout))
 	mux.Handle("POST /api/v1/auth/password", authed(s.handleChangePassword))
 	mux.Handle("GET /api/v1/me", authed(s.handleMe))
+    mux.Handle("GET /api/v1/preferences", authed(s.handlePreferences))
+    mux.Handle("PUT /api/v1/preferences/{key}", authed(s.handlePreferenceSet))
+    mux.Handle("DELETE /api/v1/preferences/{key}", authed(s.handlePreferenceDelete))
 
 	// ---- 设备（§14.2）----
 	//

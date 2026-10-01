@@ -44,6 +44,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { useConnStore } from '../stores/conn'
 import { useSessionsStore } from '../stores/sessions'
 import { useDevicesStore } from '../stores/devices'
+import { usePreferencesStore } from '../stores/preferences'
 import {
   FrameFlag,
   FrameType,
@@ -62,6 +63,7 @@ const props = defineProps<{ id: string }>()
 const conn = useConnStore()
 const sessions = useSessionsStore()
 const devices = useDevicesStore()
+const preferences = usePreferencesStore()
 const router = useRouter()
 
 const hostEl = ref<HTMLDivElement | null>(null)
@@ -80,6 +82,41 @@ const mobileDraft = ref('')
 const composer = ref<HTMLTextAreaElement | null>(null)
 const showSessionPanel = ref(false)
 const showExtraKeys = ref(false)
+const pasteOpen = ref(false)
+const pasteDraft = ref('')
+const clipboardStatus = ref('')
+const copyFallback = ref('')
+async function readClipboard(): Promise<void> {
+  pasteOpen.value = true
+  pasteDraft.value = ''
+  clipboardStatus.value = ''
+  try { pasteDraft.value = await navigator.clipboard.readText() }
+  catch { clipboardStatus.value = '浏览器未允许读取剪贴板，请在下方输入框手动粘贴。' }
+}
+function pasteToTerminal(): void {
+  if (!term || role.value !== 'controller' || !isLive.value || !conn.isOpen || !pasteDraft.value) return
+  term.paste(pasteDraft.value)
+  pasteOpen.value = false
+  pasteDraft.value = ''
+  clipboardStatus.value = '已粘贴到终端。'
+}
+async function copyOutput(screen = false): Promise<void> {
+  if (!term) return
+  let text = term.getSelection()
+  if (screen) {
+    const buffer = term.buffer.active
+    text = Array.from({ length: term.rows }, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '').join('\n')
+  }
+  if (!text.trim()) { clipboardStatus.value = '请先选择输出文字，或使用“复制画面”。'; return }
+  try { await navigator.clipboard.writeText(text); clipboardStatus.value = '已复制'; copyFallback.value = '' }
+  catch { copyFallback.value = text; clipboardStatus.value = '浏览器未允许复制，请在下方选中文字手动复制。' }
+}
+watch(() => preferences.fontSize, size => {
+  if (term) { term.options.fontSize = size; scheduleFit() }
+})
+function setFontSize(event: Event): void {
+  void preferences.change('font_size', Number((event.target as HTMLSelectElement).value)).catch(() => {})
+}
 const siblingSessions = computed(() => sessions.forDevice(summary.value?.device_id.replace(/-/g, '') ?? '').filter(s => !s.archived))
 const termHeight = ref('100dvh')
 function syncViewport(): void {
@@ -405,6 +442,7 @@ onMounted(async () => {
   window.addEventListener('resize', syncViewport)
   await nextTick()
   await devices.load()
+  await preferences.load(true)
 
   const host = hostEl.value
   if (host === null) return
@@ -420,7 +458,7 @@ onMounted(async () => {
     },
     fontFamily:
       'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-    fontSize: 14,
+    fontSize: preferences.fontSize,
     lineHeight: 1.15,
     cursorBlink: true,
     // 手机上软键盘需要它才能在输入时弹出
@@ -493,17 +531,10 @@ onMounted(async () => {
     switch (ev.key.toLowerCase()) {
       case 'v':
         // 粘贴：读剪贴板后按普通输入送进去，让 PTY 看到的就是一次粘贴
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text !== '') sendText(text)
-          })
-          .catch(() => {
-            /* 无剪贴板权限，静默 —— 用户会看到什么都没发生，但这是浏览器限制 */
-          })
+        void readClipboard()
         return false
       case 'c':
-        void navigator.clipboard.writeText(t.getSelection()).catch(() => {})
+        void copyOutput()
         return false
       case 'f':
         // 搜索走 SearchAddon（规格 §5.3 指定的三个浏览器级快捷键之一）。
@@ -677,8 +708,19 @@ onUnmounted(() => {
         <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown="onComposerKeydown" />
         <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !conn.isOpen" @click="submitDraft()">发送 ↵</button>
       </div>
+      <div v-if="clipboardStatus" class="small" role="status" style="margin-bottom: 6px">{{ clipboardStatus }}</div>
+      <div v-if="preferences.error" class="notice notice--err small">偏好同步失败：{{ preferences.error }}</div>
+      <div v-if="copyFallback" class="stack clipboard-panel"><textarea :value="copyFallback" readonly rows="4" aria-label="手动复制终端输出" /><button class="btn btn--sm" type="button" @click="copyFallback = ''">关闭</button></div>
+      <div v-if="pasteOpen" class="stack clipboard-panel">
+        <label for="paste-preview">确认要粘贴的文字</label>
+        <textarea id="paste-preview" v-model="pasteDraft" rows="4" autocapitalize="none" autocorrect="off" spellcheck="false" />
+        <p class="small dim">粘贴后不会额外发送回车；文本中的换行可能让 Shell 执行多条命令。</p>
+        <div class="row"><button class="btn btn--primary btn--sm" type="button" :disabled="!pasteDraft || role !== 'controller' || !conn.isOpen || !isLive" @click="pasteToTerminal">粘贴到终端</button><button class="btn btn--sm" type="button" @click="pasteOpen = false">取消</button></div>
+      </div>
       <div class="row term__tools" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" @click="focusTerminal">⌨ 键盘</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="readClipboard">粘贴</button>
+        <button class="btn btn--sm" type="button" @click="copyOutput()">复制选中</button>
         <button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
         <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
         <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>
@@ -688,6 +730,8 @@ onUnmounted(() => {
         <button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button>
       </div>
       <div v-if="showExtraKeys" class="row term__tools term__extra-keys" aria-label="终端辅助按键" style="gap: 6px; flex-wrap: wrap">
+        <button class="btn btn--sm" type="button" @click="copyOutput(true)">复制画面</button>
+        <label class="row small">字号<select :value="preferences.fontSize" :disabled="preferences.saving" aria-label="终端字号（随账号同步）" @change="setFontSize"><option v-for="size in [10, 12, 14, 16, 18, 20, 22, 24]" :key="size" :value="size">{{ size }}</option></select></label>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="redraw">重绘</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b')">Esc</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\t')">Tab</button>

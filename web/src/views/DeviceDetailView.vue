@@ -13,6 +13,7 @@ import { useRouter } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { useSessionsStore } from '../stores/sessions'
 import { useConnStore } from '../stores/conn'
+import { usePreferencesStore } from '../stores/preferences'
 import { api, type DeviceUpdateStatus } from '../lib/api'
 import { humanizeError, platformLabel, relativeTime, statusKind, statusLabel, toMs } from '../lib/format'
 import { PRESETS, type CommandPreset } from '../lib/commands'
@@ -24,14 +25,41 @@ const props = defineProps<{ id: string }>()
 const devices = useDevicesStore()
 const sessions = useSessionsStore()
 const conn = useConnStore()
+const preferences = usePreferencesStore()
+const hasLegacyPreferences = ref(false)
+const importingPreferences = ref(false)
+const preferenceNotice = ref('')
+async function importLegacyPreferences(): Promise<void> {
+  importingPreferences.value = true
+  try {
+    const pins: unknown = JSON.parse(localStorage.getItem(`codegate.pins.${props.id}`) ?? '[]')
+    if (Array.isArray(pins)) {
+      for (const id of pins) {
+        if (typeof id === 'string' && list.value.some(s => s.session_id === id) && !preferences.isPinned(id)) await preferences.change(`pin.${id}`, true)
+      }
+    }
+    const saved: unknown = JSON.parse(localStorage.getItem(`codegate.shortcuts.${props.id}`) ?? '[]')
+    if (Array.isArray(saved)) {
+      for (const p of saved) {
+        if (typeof p?.label !== 'string' || typeof p?.commandId !== 'string' || typeof p?.cwd !== 'string') continue
+        if (preferences.projects.some(project => project.device_id === props.id && project.command_id === p.commandId && project.cwd === p.cwd)) continue
+        await preferences.saveProject({ label: p.label, device_id: props.id, command_id: p.commandId, cwd: p.cwd, name: typeof p.name === 'string' ? p.name : '' })
+      }
+    }
+    localStorage.removeItem(`codegate.pins.${props.id}`)
+    localStorage.removeItem(`codegate.shortcuts.${props.id}`)
+    hasLegacyPreferences.value = false
+    preferenceNotice.value = '旧版组合与置顶已导入当前账号。'
+  } catch (e) { sessionActionError.value = humanizeError(e) }
+  finally { importingPreferences.value = false }
+}
 const router = useRouter()
 
 const device = computed(() => devices.byId(props.id))
 const list = computed(() => sessions.forDevice(props.id))
 const showArchived = ref(false)
 const sessionQuery = ref('')
-const pinnedIds = ref<string[]>([])
-const pinKey = computed(() => `codegate.pins.${props.id}`)
+const pinnedIds = computed(() => list.value.filter(s => preferences.isPinned(s.session_id)).map(s => s.session_id))
 const visibleSessions = computed(() => {
   const query = sessionQuery.value.trim().toLocaleLowerCase()
   return list.value.filter(s => Boolean(s.archived) === showArchived.value &&
@@ -40,8 +68,7 @@ const visibleSessions = computed(() => {
       (toMs(b.created_at) ?? 0) - (toMs(a.created_at) ?? 0))
 })
 function togglePin(id: string): void {
-  pinnedIds.value = pinnedIds.value.includes(id) ? pinnedIds.value.filter(x => x !== id) : [...pinnedIds.value, id]
-  localStorage.setItem(pinKey.value, JSON.stringify(pinnedIds.value))
+  void preferences.togglePin(id).catch(() => {})
 }
 const archivedCount = computed(() => list.value.filter(s => s.archived).length)
 const sessionActionError = ref<string | null>(null)
@@ -98,17 +125,16 @@ const updateLabel = computed(() => {
 const presetId = ref('claude')
 const cwd = ref('')
 const sessionName = ref('')
-interface LaunchShortcut { label: string; commandId: string; cwd: string; name: string }
-const shortcuts = ref<LaunchShortcut[]>([])
-const shortcutKey = computed(() => `codegate.shortcuts.${props.id}`)
+const shortcuts = computed(() => preferences.projects.filter(p => p.device_id === props.id).map(p => ({ ...p, commandId: p.command_id })))
 function saveShortcut(): void {
   const command = selectedPreset.value
   const path = cwd.value.trim()
   if (!command || !path) return
   const label = `${command.label} · ${path.split(/[\\/]/).filter(Boolean).pop() || path}`
-  const next = { label, commandId: command.id, cwd: path, name: sessionName.value.trim() }
-  shortcuts.value = [...shortcuts.value.filter(s => s.commandId !== next.commandId || s.cwd !== next.cwd), next].slice(-12)
-  localStorage.setItem(shortcutKey.value, JSON.stringify(shortcuts.value))
+  preferenceNotice.value = ''
+  void preferences.saveProject({ label, device_id: props.id, command_id: command.id, cwd: path, name: sessionName.value.trim() }).then(() => {
+    preferenceNotice.value = '已保存为项目，可从“项目”页打开，并在其他设备登录后使用。'
+  }).catch(() => {})
 }
 function selectShortcut(index: number): void {
   const shortcut = shortcuts.value[index]
@@ -118,8 +144,8 @@ function selectShortcut(index: number): void {
   sessionName.value = shortcut.name
 }
 function removeShortcut(index: number): void {
-  shortcuts.value = shortcuts.value.filter((_, i) => i !== index)
-  localStorage.setItem(shortcutKey.value, JSON.stringify(shortcuts.value))
+  const shortcut = shortcuts.value[index]
+  if (shortcut) void preferences.change(shortcut.key).catch(() => {})
 }
 const creating = ref(false)
 const createError = ref<string | null>(null)
@@ -234,13 +260,7 @@ const confirmDelete = ref(false)
 let unsubscribeControl: (() => void) | null = null
 
 onMounted(async () => {
-  try {
-    const savedPins = JSON.parse(localStorage.getItem(pinKey.value) ?? '[]')
-    if (Array.isArray(savedPins)) pinnedIds.value = savedPins.filter((id): id is string => typeof id === 'string')
-    const savedShortcuts = JSON.parse(localStorage.getItem(shortcutKey.value) ?? '[]')
-    if (Array.isArray(savedShortcuts)) shortcuts.value = savedShortcuts.filter((s): s is LaunchShortcut =>
-      typeof s?.label === 'string' && typeof s?.commandId === 'string' && typeof s?.cwd === 'string' && typeof s?.name === 'string').slice(-12)
-  } catch { pinnedIds.value = []; shortcuts.value = [] }
+  await preferences.load(true)
   await devices.load()
   if (device.value !== undefined) {
     nameDraft.value = device.value.name
@@ -249,6 +269,7 @@ onMounted(async () => {
   if (saved !== null && saved !== '') cwd.value = saved
 
   await sessions.load(props.id)
+  hasLegacyPreferences.value = !!(localStorage.getItem(`codegate.pins.${props.id}`) || localStorage.getItem(`codegate.shortcuts.${props.id}`))
   await loadUpdateStatus()
 
   // 本地没有记住的值时，用 Agent 配置里的第一个 allowed_root 兜底 ——
@@ -397,6 +418,9 @@ function canOpen(s: SessionSummary): boolean {
       <p class="device-heading__summary"><span class="health__dot" :style="{ background: device?.online ? 'var(--ok)' : 'var(--fg-faint)' }" />{{ device?.online ? '设备在线' : '设备离线' }}<span v-if="device">· {{ platformLabel(device.platform) }} · Agent {{ device.agent_version || '—' }}</span></p>
     </div>
 
+    <div v-if="preferences.error" class="notice notice--err">偏好同步失败：{{ preferences.error }} <button class="btn btn--sm" type="button" @click="preferences.load(true)">重试</button></div>
+    <div v-if="hasLegacyPreferences" class="notice notice--info">此浏览器有旧版置顶或启动组合。<button class="btn btn--sm" type="button" :disabled="importingPreferences || preferences.saving" @click="importLegacyPreferences">{{ importingPreferences ? '正在导入…' : '导入到当前账号' }}</button></div>
+    <div v-if="preferenceNotice" class="notice notice--info" role="status">{{ preferenceNotice }}</div>
     <div class="device-workspace">
     <!-- ---- 新建会话 ---- -->
     <div class="card device-create">
@@ -415,7 +439,7 @@ function canOpen(s: SessionSummary): boolean {
             </select>
             <button v-if="shortcuts.some(s => s.commandId === presetId && s.cwd === cwd.trim())" class="btn btn--sm" type="button" @click="removeShortcut(shortcuts.findIndex(s => s.commandId === presetId && s.cwd === cwd.trim()))">移除</button>
           </div>
-          <span class="field__hint">选择后仍需点击“新建独立会话”；不会接续旧对话。</span>
+          <span class="field__hint">组合随账号同步，并显示在“项目”页。选择后点击“新建独立会话”。</span>
         </div>
         <div class="field">
           <label for="preset">命令</label>
@@ -500,7 +524,7 @@ function canOpen(s: SessionSummary): boolean {
             <span v-if="creating" class="spinner" />
             新建独立会话 →
           </button>
-          <button class="btn btn--sm" type="button" :disabled="!selectedPreset || !cwd.trim()" @click="saveShortcut">保存组合</button>
+          <button class="btn btn--sm" type="button" :disabled="!selectedPreset || !cwd.trim() || preferences.saving" @click="saveShortcut">{{ preferences.saving ? '保存中…' : '保存为项目' }}</button>
         </div>
       </form>
     </div>

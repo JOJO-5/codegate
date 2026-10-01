@@ -168,6 +168,9 @@ type AuditLog struct {
 //
 // 方法按域分组，顺序与 migrations/0001_init.sql 一致，便于对照。
 type Store interface {
+    Preferences(ctx context.Context, userID string) (map[string]string, error)
+    SetPreference(ctx context.Context, userID, key, value string) error
+    DeletePreference(ctx context.Context, userID, key string) error
 	// 生命周期
 	Close() error
 	Ping(ctx context.Context) error
