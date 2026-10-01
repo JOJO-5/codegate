@@ -14,11 +14,14 @@
  */
 
 import { computed, onMounted, ref } from 'vue'
+import { useTheme, type ThemePreference } from '../lib/theme'
 import { useAuthStore } from '../stores/auth'
 import { useConnStore } from '../stores/conn'
 import { ApiError, api, type AuditItem } from '../lib/api'
 import { absoluteTime, humanizeError } from '../lib/format'
 
+const { preference, setTheme } = useTheme()
+const themeOptions: { value: ThemePreference; label: string }[] = [{ value: 'system', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]
 const auth = useAuthStore()
 const conn = useConnStore()
 
@@ -127,6 +130,14 @@ function actionLabel(action: string): string {
 <template>
   <main class="page">
     <h1>设置</h1>
+
+    <section class="card" aria-labelledby="appearance-heading">
+      <div class="card__title"><h2 id="appearance-heading">外观</h2></div>
+      <p class="dim small">选择适合你的配色，此浏览器会记住设置。</p>
+      <div class="theme-options" role="group" aria-label="界面配色">
+        <button v-for="option in themeOptions" :key="option.value" class="btn" :class="preference === option.value ? 'btn--primary' : ''" type="button" :aria-pressed="preference === option.value" @click="setTheme(option.value)">{{ option.label }}</button>
+      </div>
+    </section>
 
     <!-- ---- 账号 ---- -->
     <div class="card">
