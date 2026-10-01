@@ -61,19 +61,21 @@ async function remove(key: string): Promise<void> {
 </script>
 
 <template>
-  <main class="page">
-    <div class="row row--between"><h1>项目</h1><div class="row"><RouterLink class="btn btn--primary btn--sm" to="/devices">从设备添加项目</RouterLink><button class="btn btn--sm" type="button" :disabled="preferences.loading" @click="refresh">刷新</button></div></div>
-    <p class="dim">选择设备、工具和工作目录，保存后可在手机与电脑上使用。</p>
+  <main class="page page--wide projects-page">
+    <div class="projects-heading">
+      <div><p class="projects-eyebrow">你的工作区</p><h1>项目 <span class="projects-count">{{ preferences.projects.length }}</span></h1><p class="dim">从熟悉的目录开始，随时开启或接回对话。</p></div>
+      <div class="projects-heading__actions"><button class="btn btn--ghost btn--sm" type="button" :disabled="preferences.loading" @click="refresh">刷新</button><RouterLink class="btn btn--primary" to="/devices">＋ 添加项目</RouterLink></div>
+    </div>
     <div v-if="error || preferences.error" class="notice notice--err" role="alert">{{ error || preferences.error }}</div>
-    <div class="field"><label for="project-query">查找项目</label><input id="project-query" v-model="query" type="search" placeholder="项目名、目录或设备名" /></div>
+    <div class="field projects-search"><label for="project-query">查找项目</label><input id="project-query" v-model="query" type="search" placeholder="搜索项目、目录或设备…" /></div>
     <div v-if="preferences.loading" class="empty"><span class="spinner" />正在加载项目…</div>
     <div v-else-if="visible.length === 0" class="empty">{{ query.trim() ? '没有匹配的项目。' : '还没有项目。在设备页填写工具和工作目录，点击“保存为项目”。' }}</div>
     <div class="project-grid">
       <section v-for="project in visible" :key="project.key" class="card project-card">
-        <div class="card__title"><h2>{{ project.label }}</h2><span class="badge" :class="devices.byId(project.device_id)?.online ? 'badge--ok' : 'badge--idle'">{{ devices.byId(project.device_id)?.online ? '在线' : devices.byId(project.device_id) ? '离线' : '设备已解绑' }}</span></div>
+        <div class="card__title"><div class="project-identity"><span class="project-avatar" aria-hidden="true">{{ project.label.slice(0, 1).toLocaleUpperCase() }}</span><h2>{{ project.label }}</h2></div><span class="badge" :class="devices.byId(project.device_id)?.online ? 'badge--ok' : 'badge--idle'">{{ devices.byId(project.device_id)?.online ? '在线' : devices.byId(project.device_id) ? '离线' : '设备已解绑' }}</span></div>
         <p class="dim small">{{ devices.byId(project.device_id)?.name || '原设备不可用' }} · {{ project.command_id }}</p>
         <p class="mono project-path">{{ project.cwd }}</p>
-        <div class="row">
+        <div class="row project-launch">
           <button class="btn btn--primary" type="button" :disabled="!!opening || !conn.isOpen || !devices.byId(project.device_id)?.online" @click="create(project)">{{ opening === project.key ? '正在新建…' : '新建独立会话' }}</button>
           <button class="btn" type="button" :aria-expanded="expanded === project.key" @click="showSessions(project)">接回已有会话</button>
         </div>
