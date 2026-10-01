@@ -461,6 +461,7 @@ a.item:hover {
   white-space: nowrap;
 }
 .item__meta {
+  display: block;
   margin-top: 2px;
   font-size: 12px;
   color: var(--fg-faint);
@@ -641,7 +642,8 @@ a.item:hover {
 .device-page .card__title h2 { font-size: 18px; letter-spacing: -.02em; }
 .session-filters { margin: 12px 0; }
 .device-sessions .item { flex-wrap: wrap; }
-.device-sessions .item__title { white-space: normal; }
+.device-sessions .item__title { white-space: normal; overflow-wrap: anywhere; }
+.device-sessions .item__title .badge { flex-shrink: 0; }
 .device-sessions .item__actions { flex-wrap: wrap; }
 .device-heading { padding: 10px 2px 4px; }
 .device-heading__summary { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--fg-dim); font-size: 13px; }
