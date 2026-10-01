@@ -8,7 +8,7 @@ import (
 )
 
 func TestScanRepositoriesNestedWorktreesAndOverlappingRoots(t *testing.T) {
-	root := t.TempDir()
+	_, root := newTestWorkspace(t)
 	paths := []string{root, filepath.Join(root, "team", "service"), filepath.Join(root, "team", "service", "submodule"), filepath.Join(root, ".hidden", "repo"), filepath.Join(root, "node_modules", "nested-repo")}
 	for _, path := range paths {
 		if err := os.MkdirAll(filepath.Join(path, ".git"), 0700); err != nil {
@@ -43,7 +43,8 @@ func TestScanRepositoriesNestedWorktreesAndOverlappingRoots(t *testing.T) {
 }
 
 func TestScanRepositoriesDoesNotEscapeWorkspace(t *testing.T) {
-	root, outside := t.TempDir(), t.TempDir()
+	_, root := newTestWorkspace(t)
+	outside := t.TempDir()
 	if err := os.Mkdir(filepath.Join(outside, ".git"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestScanRepositoriesDoesNotEscapeWorkspace(t *testing.T) {
 }
 
 func TestScanRepositoriesReportsMissingRootsAndCancellation(t *testing.T) {
-	root := t.TempDir()
+	_, root := newTestWorkspace(t)
 	result := scanRepositories(context.Background(), NewWorkspace([]string{filepath.Join(root, "missing")}))
 	if !result.Partial || result.ErrorCount != 1 || len(result.Warnings) != 1 {
 		t.Fatalf("missing root silently ignored: %+v", result)
