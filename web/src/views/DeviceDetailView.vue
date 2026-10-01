@@ -467,6 +467,9 @@ function canOpen(s: SessionSummary): boolean {
           <datalist id="cwd-roots">
             <option v-for="root in allowedRoots" :key="root" :value="root" />
           </datalist>
+          <div v-if="allowedRoots.length" class="directory-choices" aria-label="允许的工作目录">
+            <button v-for="root in allowedRoots" :key="root" class="directory-choice" type="button" :disabled="creating" :aria-pressed="cwd === root" @click="cwd = root"><span aria-hidden="true">▱</span> {{ root }}</button>
+          </div>
           <span class="field__hint">
             <template v-if="allowedRoots.length > 0">
               可在 Agent 允许的目录内选择：{{ allowedRoots.join('、') }}
