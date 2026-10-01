@@ -66,6 +66,8 @@ const (
 	TypeWebStopped Type = "web.stopped"
 	TypeToolSet Type = "tool.set"
 	TypeToolUpdated Type = "tool.updated"
+ TypeRepositoryList Type = "repository.list"
+ TypeRepositoryListed Type = "repository.list.result"
 
 	// ---- 通用 ----
 	TypeError Type = "error"
@@ -145,6 +147,7 @@ var allowedSenders = map[Type]Sender{
 	TypeSessionRoleChanged: SentByAgent,
 	TypeWebStarted: SentByAgent,
 	TypeToolUpdated: SentByAgent,
+ TypeRepositoryListed: SentByAgent,
 	TypeWebStopped: SentByAgent,
 
 	// ---- 只有 Server 能发（对 Agent 的应答 / 对客户端的通知）----
@@ -154,6 +157,7 @@ var allowedSenders = map[Type]Sender{
 	TypeAgentPairCompleted: SentByServer,
 	TypeWebStart: SentByServer,
 	TypeToolSet: SentByServer,
+ TypeRepositoryList: SentByServer,
 	TypeWebStop: SentByServer,
 	TypeWebOpen: SentByServer,
 	TypeWebClose: SentByServer | SentByAgent,

@@ -140,6 +140,7 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
+ RepositoryScan bool `json:"repository_scan,omitempty"`
 	MaxSessions int  `json:"max_sessions"`
 	ConPTY      bool `json:"conpty,omitempty"`
 	UnixPTY     bool `json:"unix_pty,omitempty"`
@@ -526,4 +527,26 @@ type FileCancelPayload struct {
 	SessionID string `json:"session_id"`
 	TransferID string `json:"transfer_id"`
 	Reason     string `json:"reason,omitempty"`
+}
+
+// Repository describes a discovered working tree, not an authorization grant.
+type Repository struct {
+ Name string `json:"name"`
+ Path string `json:"path"`
+ Root string `json:"root"`
+}
+type RepositoryListPayload struct {
+ Offset int `json:"offset"`
+ Limit int `json:"limit"`
+ Refresh bool `json:"refresh,omitempty"`
+}
+type RepositoryListResult struct {
+ State string `json:"state"`
+ Repositories []Repository `json:"repositories"`
+ Total int `json:"total"`
+ NextOffset *int `json:"next_offset,omitempty"`
+ ScannedAt int64 `json:"scanned_at"`
+ Partial bool `json:"partial"`
+ ErrorCount int `json:"error_count"`
+ Warnings []string `json:"warnings,omitempty"`
 }

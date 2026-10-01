@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import { useRepositoriesStore } from '../stores/repositories'
 import { usePreferencesStore } from '../stores/preferences'
 import { useDevicesStore } from '../stores/devices'
 import { useSessionsStore } from '../stores/sessions'
@@ -10,6 +11,9 @@ import { humanizeError, statusLabel } from '../lib/format'
 import { isLiveStatus } from '../lib/protocol'
 import type { ProjectPreference } from '../lib/api'
 
+const repositories = useRepositoriesStore()
+const repoCommands = ref<Record<string, string>>({})
+let repositoryTimer: ReturnType<typeof setInterval> | undefined
 const preferences = usePreferencesStore()
 const devices = useDevicesStore()
 const sessions = useSessionsStore()
@@ -24,10 +28,17 @@ const label = ref('')
 const confirmRemove = ref('')
 const visible = computed(() => preferences.projects.filter(p =>
   [p.label, p.cwd, devices.byId(p.device_id)?.name].some(v => v?.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase()))))
+const discovered = computed(() => devices.items.flatMap(device => (repositories.results[device.id]?.repositories ?? []).map(repo => ({ ...repo, device_id: device.id, device_name: device.name }))).filter(repo => [repo.name, repo.path, repo.device_name].some(value => value.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase()))))
+function commandFor(id: string): string { return (repositories.commands[id] ?? []).some(c => c.id === repoCommands.value[id]) ? repoCommands.value[id]! : repositories.commands[id]?.[0]?.id ?? '' }
+async function loadRepositories(rescan = false): Promise<void> {
+  await Promise.all(devices.items.filter(device => device.online).map(device => repositories.load(device.id, rescan)))
+}
 async function refresh(): Promise<void> {
   await Promise.all([preferences.load(true), devices.load(true)])
+  await loadRepositories()
 }
-onMounted(refresh)
+onMounted(() => { void refresh(); repositoryTimer = setInterval(() => { void loadRepositories() }, 5000) })
+onUnmounted(() => { if (repositoryTimer) clearInterval(repositoryTimer) })
 async function showSessions(project: ProjectPreference & { key: string }): Promise<void> {
   expanded.value = expanded.value === project.key ? '' : project.key
   if (expanded.value) await sessions.load(project.device_id, true)
@@ -68,8 +79,9 @@ async function remove(key: string): Promise<void> {
     </div>
     <div v-if="error || preferences.error" class="notice notice--err" role="alert">{{ error || preferences.error }}</div>
     <div class="field projects-search"><label for="project-query">查找项目</label><input id="project-query" v-model="query" type="search" placeholder="搜索项目、目录或设备…" /></div>
+    <h2 class="projects-section-heading">保存的项目</h2>
     <div v-if="preferences.loading" class="empty"><span class="spinner" />正在加载项目…</div>
-    <div v-else-if="visible.length === 0" class="empty">{{ query.trim() ? '没有匹配的项目。' : '还没有项目。在设备页填写工具和工作目录，点击“保存为项目”。' }}</div>
+    <div v-else-if="visible.length === 0" class="empty">{{ query.trim() ? '没有匹配的项目。' : '还没有保存的项目。可以从下方发现的仓库开始，或在设备页保存常用入口。' }}</div>
     <div class="project-grid">
       <section v-for="project in visible" :key="project.key" class="card project-card">
         <div class="card__title"><div class="project-identity"><span class="project-avatar" aria-hidden="true">{{ project.label.slice(0, 1).toLocaleUpperCase() }}</span><h2>{{ project.label }}</h2></div><span class="badge" :class="devices.byId(project.device_id)?.online ? 'badge--ok' : 'badge--idle'">{{ devices.byId(project.device_id)?.online ? '在线' : devices.byId(project.device_id) ? '离线' : '设备已解绑' }}</span></div>
@@ -99,5 +111,24 @@ async function remove(key: string): Promise<void> {
         <p v-if="confirmRemove === project.key" class="small dim">只移除项目入口，文件和正在运行的会话会保留。</p>
       </section>
     </div>
+    <section class="repository-discovery" aria-labelledby="repositories-heading">
+      <div class="row row--between"><h2 id="repositories-heading">发现的 Git 仓库 <span class="projects-count">{{ discovered.length }}</span></h2><button class="btn btn--sm" type="button" :disabled="Object.values(repositories.loading).some(Boolean) || devices.items.some(d => d.online && repositories.results[d.id]?.state === 'scanning') || !devices.onlineCount" @click="loadRepositories(true)">重新扫描</button></div>
+      <p class="dim small">自动发现在线设备允许目录内的仓库。选择工具，在仓库目录中开启新对话。</p>
+      <div v-for="device in devices.items.filter(d => d.online)" :key="device.id" class="repository-status">
+        <p v-if="repositories.errors[device.id]" class="notice notice--warn" role="status">{{ device.name }}：{{ repositories.errors[device.id] }}</p>
+        <p v-else-if="repositories.results[device.id]?.state === 'scanning' || !repositories.results[device.id]" class="dim small" role="status">{{ device.name }}：正在扫描允许的工作目录…</p>
+        <details v-if="repositories.results[device.id]?.partial" class="notice notice--warn"><summary>{{ device.name }}：扫描未完成，共 {{ repositories.results[device.id]?.error_count }} 处问题</summary><p v-for="warning in repositories.results[device.id]?.warnings" :key="warning" class="small repository-warning">{{ warning }}</p></details>
+      </div>
+      <div v-if="!discovered.length && !Object.values(repositories.loading).some(Boolean)" class="empty">{{ query.trim() ? '没有匹配的仓库。' : devices.onlineCount ? '尚未发现 Git 仓库。请确认仓库位于目标设备允许的目录内，并查看上方扫描状态。' : '连接设备后自动发现其允许目录下的 Git 仓库。' }}</div>
+      <div class="project-grid">
+        <section v-for="repo in discovered" :key="`${repo.device_id}:${repo.path}`" class="card project-card repository-card">
+          <div class="card__title"><div class="project-identity"><span class="project-avatar" aria-hidden="true">{{ repo.name.slice(0, 1).toLocaleUpperCase() }}</span><h3>{{ repo.name }}</h3></div><span class="badge">Git</span></div>
+          <p class="dim small">{{ repo.device_name }}{{ devices.byId(repo.device_id)?.online ? '' : ' · 离线' }}</p>
+          <p class="mono project-path">{{ repo.path }}</p>
+          <div class="field"><label :for="`repo-cli-${repo.device_id}-${repo.path}`">编程 CLI</label><select :id="`repo-cli-${repo.device_id}-${repo.path}`" :value="commandFor(repo.device_id)" :disabled="!devices.byId(repo.device_id)?.online" @change="repoCommands[repo.device_id] = ($event.target as HTMLSelectElement).value"><option v-if="!repositories.commands[repo.device_id]?.length" value="">请先在设备页授权已安装的工具</option><option v-for="tool in repositories.commands[repo.device_id]" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>
+          <div class="row project-launch"><button class="btn btn--primary" type="button" :disabled="!!opening || !conn.isOpen || !devices.byId(repo.device_id)?.online || !commandFor(repo.device_id)" @click="create({ key: `${repo.device_id}:${repo.path}`, label: repo.name, name: repo.name, device_id: repo.device_id, command_id: commandFor(repo.device_id), cwd: repo.path })">{{ opening === `${repo.device_id}:${repo.path}` ? '正在新建…' : '新建对话' }}</button><RouterLink class="btn btn--ghost" :to="{ name: 'device', params: { id: repo.device_id } }">设备与工具</RouterLink></div>
+        </section>
+      </div>
+    </section>
   </main>
 </template>

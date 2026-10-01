@@ -36,7 +36,10 @@ type Agent struct {
 	toolMu sync.RWMutex
 	approvedTools map[string]bool
 
-	startedAt time.Time
+	repositoryMu sync.Mutex
+ repositories protocol.RepositoryListResult
+ repositoryRefresh chan struct{}
+ startedAt time.Time
 
 	// OnVerifiedUpdate is set by the supervised CLI before Run starts.
 	OnVerifiedUpdate func(path, version string) error
@@ -114,6 +117,8 @@ func NewWithIdentity(cfg Config, id *Identity, log *slog.Logger) (*Agent, error)
 		mgr:       session.NewManager(factory, session.Config{BufferSize: cfg.BufferSize, MaxSessions: cfg.MaxSessions}),
 		log:       log,
 		startedAt: time.Now(),
+ repositories: protocol.RepositoryListResult{State: "scanning", Repositories: []protocol.Repository{}},
+ repositoryRefresh: make(chan struct{}, 1),
 		updateStatus: protocol.AgentUpdateStatus{Enabled: cfg.UpdateEnabled && Version != "dev", State: "disabled"},
 		views:     make(map[uuid.UUID]map[string]struct{}),
 		uploads:   make(map[string]*fileUpload),
@@ -162,6 +167,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// 会话回收定时器：已退出的会话保留一段时间（让用户能回看最后的输出），
 	// 超期后回收（§7.5）。
 	go a.reapLoop(ctx)
+ go a.repositoryLoop(ctx)
 	if a.cfg.UpdateEnabled && Version != "dev" {
 		go a.updateLoop(ctx)
 	}
@@ -310,6 +316,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 		AgentVersion: Version,
 		Caps: protocol.AgentCaps{
 			MaxSessions: a.cfg.MaxSessions,
+ RepositoryScan: true,
 			ConPTY:      platform == "windows" && terminal.Available() == nil,
 			UnixPTY:     platform != "windows" && terminal.Available() == nil,
 		},

@@ -8,6 +8,7 @@ CodeGate 让你从手机或电脑浏览器访问另一台机器上的原生命�
 
 - 浏览器里创建、查看和关闭独立的终端会话；返回设备列表、打开文件页或短暂断网时，Agent 上的会话继续运行，再进入原会话会重放仍在环形缓冲区中的输出。Agent 重启会终止其持有的 PTY，无法恢复已终止的进程。
 - 同一账号可在多个客户端查看会话，只有主控客户端能输入和调整尺寸。
+- 项目页自动发现在线 Agent 的 `allowed_roots` 下的 Git 工作树，可选择已安装且授权的 CLI 新建对话；设备页也可选择仓库填入工作目录。Agent 启动后扫描，每分钟更新，也支持手动重新扫描。支持多层目录、worktree 和子模块，不遍历 `.git` 元数据或符号链接目录；扫描权限错误或超时会显示未完成状态。此功能需要同时更新 Server 和目标电脑上的 Agent，Docker Server 不会扫描宿主机或其他设备的目录。
 - Agent 通过工作目录白名单和命令白名单限制远程启动；默认不允许自定义命令。
 - Server 使用 SQLite；终端输出缓存在 Agent 的环形缓冲区，Server 不保存终端内容。
 - Agent 在 Windows 使用 ConPTY，在 Linux/macOS 使用 Unix PTY；均可运行终端 CLI。Linux/macOS 的安装和配对见 [Unix Agent 指南](docs/DEPLOY-AGENT-UNIX.md)。

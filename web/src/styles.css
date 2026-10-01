@@ -817,3 +817,11 @@ a.item:hover {
 .login__brand .brand {
   font-size: 22px;
 }
+
+.projects-section-heading { margin-top: 24px; color: var(--fg-dim); font-size: 14px; }
+.repository-discovery { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--border); }
+.repository-discovery h2 { margin-bottom: 0; }
+.repository-card h3 { margin: 0; color: var(--fg); font-size: 18px; overflow-wrap: anywhere; }
+.repository-card .project-launch { margin-top: 16px; }
+.repository-status { margin-bottom: 10px; }
+.repository-warning { overflow-wrap: anywhere; }
