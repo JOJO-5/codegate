@@ -106,6 +106,7 @@ func TestDeviceIDOR(t *testing.T) {
 		{"删除", http.MethodDelete, "/api/v1/devices/" + victim, nil},
 		{"读会话", http.MethodGet, "/api/v1/devices/" + victim + "/sessions", nil},
 		{"读更新状态", http.MethodGet, "/api/v1/devices/" + victim + "/update-status", nil},
+ {"读仓库", http.MethodGet, "/api/v1/devices/" + victim + "/repositories?refresh=true", nil},
 	}
 
 	for _, tc := range cases {

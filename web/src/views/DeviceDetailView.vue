@@ -13,6 +13,7 @@ import { useRouter } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { useSessionsStore } from '../stores/sessions'
 import { useConnStore } from '../stores/conn'
+import { useRepositoriesStore } from '../stores/repositories'
 import { usePreferencesStore } from '../stores/preferences'
 import { api, type DeviceUpdateStatus } from '../lib/api'
 import { humanizeError, platformLabel, relativeTime, statusKind, statusLabel, toMs } from '../lib/format'
@@ -25,6 +26,7 @@ const props = defineProps<{ id: string }>()
 const devices = useDevicesStore()
 const sessions = useSessionsStore()
 const conn = useConnStore()
+const repositories = useRepositoriesStore()
 const preferences = usePreferencesStore()
 const hasLegacyPreferences = ref(false)
 const importingPreferences = ref(false)
@@ -184,6 +186,7 @@ async function setTool(id: string, enabled: boolean): Promise<void> {
   try {
     await api.setDeviceTool(props.id, id, enabled)
     await loadUpdateStatus()
+  void repositories.load(props.id)
   } catch (e) { toolError.value = humanizeError(e) }
   finally { toolBusy.value = '' }
 }
@@ -275,7 +278,7 @@ onMounted(async () => {
   // 本地没有记住的值时，用 Agent 配置里的第一个 allowed_root 兜底 ——
   // 否则每次新建会话都要手打一个 Windows 长路径。
   if (cwd.value.trim() === '') cwd.value = allowedRoots.value[0] ?? ''
-  updateTimer = setInterval(() => { void loadUpdateStatus() }, 15_000)
+  updateTimer = setInterval(() => { void loadUpdateStatus(); if (device.value?.online) void repositories.load(props.id) }, 5000)
 
   // 订阅会话生命周期事件，让列表保持最新。
   // ★ 必须在 onUnmounted 里取消订阅 —— 否则来回切换页面会累积监听器。
@@ -450,6 +453,16 @@ function canOpen(s: SessionSummary): boolean {
           </select>
         </div>
 
+        <div class="field">
+          <div class="row row--between"><label for="repository-cwd">Git 仓库</label><button class="btn btn--ghost btn--sm" type="button" :disabled="repositories.loading[id] || repositories.results[id]?.state === 'scanning' || !device?.online" @click="repositories.load(id, true)">重新扫描</button></div>
+          <select id="repository-cwd" :value="repositories.results[id]?.repositories.some(repo => repo.path === cwd) ? cwd : ''" :disabled="creating || !repositories.results[id]?.repositories.length" @change="cwd = ($event.target as HTMLSelectElement).value || cwd">
+            <option value="">选择仓库以填入工作目录</option><option v-for="repo in repositories.results[id]?.repositories" :key="repo.path" :value="repo.path">{{ repo.name }} — {{ repo.path }}</option>
+          </select>
+          <span v-if="repositories.errors[id]" class="field__hint">{{ repositories.errors[id] }}</span>
+          <span v-else-if="repositories.results[id]?.state === 'scanning'" class="field__hint">正在扫描允许的工作目录…</span>
+          <span v-else class="field__hint">发现 {{ repositories.results[id]?.total ?? 0 }} 个仓库；也可在下方手动填写目录。</span>
+          <span v-if="repositories.results[id]?.partial" class="field__hint">部分目录未能扫描，请在项目页查看详细原因。</span>
+        </div>
         <div class="field">
           <label for="cwd">工作目录</label>
           <input

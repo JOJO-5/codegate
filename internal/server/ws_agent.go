@@ -517,12 +517,15 @@ func (s *agentSession) handlePairBegin(env *protocol.Envelope) error {
 // ---------------------------------------------------------------------------
 
 func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
+ if (env.Type == protocol.TypeRepositoryListed || env.Type == protocol.TypeError) && s.srv.acceptRepositoryReply(s.ac, env) { return nil }
 	if (env.Type == protocol.TypeToolUpdated || env.Type == protocol.TypeError) && s.srv.acceptToolReply(s.ac, env) { return nil }
 	switch env.Type {
 	case protocol.TypeWebStarted, protocol.TypeWebStopped:
 		s.srv.acceptWebReply(s.ac, env)
 		return nil
-	case protocol.TypeToolUpdated:
+	case protocol.TypeRepositoryListed:
+ return nil
+ case protocol.TypeToolUpdated:
 		return nil
 	case protocol.TypeWebClose:
 		p, err := protocol.DecodePayload[protocol.WebStreamPayload](env)

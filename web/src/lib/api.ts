@@ -277,6 +277,17 @@ export interface CommandAvailability {
   web_url?: string
 }
 
+export interface RepositoryInfo { name: string; path: string; root: string }
+export interface RepositoryListResult {
+ state: 'scanning' | 'ready'
+ repositories: RepositoryInfo[]
+ total: number
+ next_offset?: number
+ scanned_at: number
+ partial: boolean
+ error_count: number
+ warnings?: string[]
+}
 export interface DeviceUpdateStatus {
   online: boolean
   web_proxy_enabled?: boolean
@@ -397,6 +408,10 @@ export const api = {
 
   getDevice(id: string): Promise<DeviceDTO> {
     return request<DeviceDTO>('GET', `/devices/${encodeURIComponent(id)}`)
+  },
+
+  getDeviceRepositories(id: string, offset = 0, refresh = false): Promise<RepositoryListResult> {
+    return request<RepositoryListResult>('GET', `/devices/${encodeURIComponent(id)}/repositories?offset=${offset}&refresh=${refresh}`)
   },
 
   getDeviceUpdateStatus(id: string): Promise<DeviceUpdateStatus> {
