@@ -139,6 +139,9 @@ func gitReview(ctx context.Context, ws *Workspace, req protocol.GitPayload) (pro
 	}
 	out.Branch = strings.TrimSpace(branch)
 	out.Files, out.Truncated, err = gitFiles(ctx, root)
+	if err == nil && req.Action == "status" {
+		gitDelivery(ctx, root, &out)
+	}
 	if err != nil || req.Action == "status" {
 		return out, err
 	}
@@ -256,6 +259,8 @@ func (a *Agent) onGitRequest(env *protocol.Envelope) {
 			out.Files = out.Files[:len(out.Files)-1]
 		} else if len(out.Worktrees) > 0 {
 			out.Worktrees = out.Worktrees[:len(out.Worktrees)-1]
+		} else if len(out.Commits) > 0 {
+			out.Commits = out.Commits[:len(out.Commits)-1]
 		} else {
 			break
 		}

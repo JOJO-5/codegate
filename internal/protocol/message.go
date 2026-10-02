@@ -575,14 +575,26 @@ type GitFile struct {
 	Original string `json:"original,omitempty"`
 }
 type GitResult struct {
-	Worktrees []WorktreeInfo `json:"worktrees,omitempty"`
-	Head      string         `json:"head"`
-	Message   string         `json:"message,omitempty"`
-	Root      string         `json:"root"`
-	Branch    string         `json:"branch"`
-	Files     []GitFile      `json:"files"`
-	Diff      string         `json:"diff,omitempty"`
-	Truncated bool           `json:"truncated"`
+	Upstream      string         `json:"upstream,omitempty"`
+	Ahead         int            `json:"ahead"`
+	Behind        int            `json:"behind"`
+	SyncKnown     bool           `json:"sync_known"`
+	RepositoryURL string         `json:"repository_url,omitempty"`
+	Commits       []GitCommit    `json:"commits,omitempty"`
+	Worktrees     []WorktreeInfo `json:"worktrees,omitempty"`
+	Head          string         `json:"head"`
+	Message       string         `json:"message,omitempty"`
+	Root          string         `json:"root"`
+	Branch        string         `json:"branch"`
+	Files         []GitFile      `json:"files"`
+	Diff          string         `json:"diff,omitempty"`
+	Truncated     bool           `json:"truncated"`
+}
+
+type GitCommit struct {
+	Hash        string `json:"hash"`
+	Subject     string `json:"subject"`
+	CommittedAt int64  `json:"committed_at"`
 }
 
 type WorktreeInfo struct {

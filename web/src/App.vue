@@ -11,6 +11,7 @@
 
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import { useNotificationsStore } from './stores/notifications'
 import { useTheme } from './lib/theme'
 import { useAuthStore } from './stores/auth'
 import { useConnStore } from './stores/conn'
@@ -20,6 +21,9 @@ const { dark, toggleTheme } = useTheme()
 const auth = useAuthStore()
 const conn = useConnStore()
 const preferences = usePreferencesStore()
+const notifications = useNotificationsStore()
+const stopNotifications = conn.onControl(notifications.receive)
+onUnmounted(stopNotifications)
 function refreshPreferences(): void { void preferences.load(true) }
 onMounted(() => window.addEventListener('focus', refreshPreferences))
 onUnmounted(() => window.removeEventListener('focus', refreshPreferences))
@@ -80,6 +84,7 @@ async function onLogout(): Promise<void> {
       </div>
     </header>
 
+    <div v-if="showChrome && auth.isLoggedIn && notifications.events.length" class="process-notice row" role="status"><span>{{ notifications.events[0]?.label }}：{{ notifications.events[0]?.detail }}</span><button class="btn btn--ghost btn--sm" @click="notifications.clear">清除退出提醒</button></div>
     <RouterView :key="route.fullPath" />
   </div>
 </template>

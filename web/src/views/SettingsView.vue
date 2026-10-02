@@ -14,6 +14,7 @@
  */
 
 import { computed, onMounted, ref } from 'vue'
+import { useNotificationsStore } from '../stores/notifications'
 import { useTheme, type ThemePreference } from '../lib/theme'
 import { useAuthStore } from '../stores/auth'
 import { useConnStore } from '../stores/conn'
@@ -24,6 +25,7 @@ const { preference, setTheme } = useTheme()
 const themeOptions: { value: ThemePreference; label: string }[] = [{ value: 'system', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]
 const auth = useAuthStore()
 const conn = useConnStore()
+const notifications = useNotificationsStore()
 
 // ---- 改密码 ----
 const currentPassword = ref('')
@@ -131,6 +133,15 @@ function actionLabel(action: string): string {
   <main class="page">
     <h1>设置</h1>
 
+    <section class="card stack process-notifications">
+      <h2>进程退出通知</h2><p class="small dim">只报告实际进程退出和退出码，不判断编程任务是否完成。保持网页连接时可收到；关闭网页后的推送暂不支持。</p>
+      <p>系统通知：{{ notifications.enabled ? '已启用' : '未启用' }}</p>
+      <div class="row"><button v-if="!notifications.enabled" class="btn" @click="notifications.enable">启用进程退出通知</button><button v-else class="btn" @click="notifications.disable">关闭系统通知</button></div>
+      <p v-if="notifications.error" class="notice notice--warn" role="status">{{ notifications.error }}</p>
+      <p class="small dim">授权后只在页面处于后台时弹出系统通知。通知不包含目录、终端内容或任务名称；此设置仅对当前浏览器和账号生效。</p>
+      <h3>本次连接收到的退出事件</h3><p v-if="!notifications.events.length" class="small dim">还没有收到退出事件。</p>
+      <div v-for="event in notifications.events" :key="event.sessionId" class="stack"><strong>{{ event.label }}</strong><p class="small">{{ event.detail }}</p><time class="small dim">{{ absoluteTime(event.at) }}</time></div>
+    </section>
     <section class="card" aria-labelledby="appearance-heading">
       <div class="card__title"><h2 id="appearance-heading">外观</h2></div>
       <p class="dim small">选择适合你的配色，此浏览器会记住设置。</p>
@@ -237,7 +248,7 @@ function actionLabel(action: string): string {
 
       <div v-if="auditItems.length === 0 && !auditLoading" class="empty">还没有记录。</div>
 
-      <table v-else class="table">
+      <div v-else class="table-scroll" role="region" aria-label="审计日志，可横向滚动" tabindex="0"><table class="table">
         <thead>
           <tr>
             <th>时间</th>
@@ -263,7 +274,7 @@ function actionLabel(action: string): string {
             <td class="mono small">{{ a.ip || '—' }}</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
 
       <div v-if="!auditDone && auditItems.length > 0" class="row" style="margin-top: 12px">
         <button class="btn btn--sm" type="button" :disabled="auditLoading" @click="loadAudit(true)">

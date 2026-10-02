@@ -850,3 +850,13 @@ a.item:hover {
 .term__identity summary { cursor: pointer; }
 .term__identity .row { padding-top: 8px; }
 .term__identity .mono { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+
+.process-notice { margin: 12px 16px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); font-size: 13px; }
+.process-notice > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.git-commit { padding: 8px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.git-view { width: 100%; padding: 20px 16px 48px; }
+.git-view .row { flex-wrap: wrap; }
+.git-delivery > p { overflow-wrap: anywhere; }
+.git-delivery .btn { white-space: normal; }
+
+.table-scroll { max-width: 100%; overflow-x: auto; }

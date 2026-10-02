@@ -32,7 +32,8 @@ import type { SessionSummary } from './protocol'
 
 export interface GitFile { path: string; status: string; original?: string }
 export interface WorktreeInfo { path: string; branch: string; head: string; changed: boolean; unique_commits: number; occupied: boolean; blocked_reason?: string }
-export interface GitResult { worktrees?: WorktreeInfo[]; head: string; message?: string; root: string; branch: string; files: GitFile[]; diff?: string; truncated: boolean }
+export interface GitCommit { hash: string; subject: string; committed_at: number }
+export interface GitResult { upstream?: string; ahead?: number; behind?: number; sync_known?: boolean; repository_url?: string; commits?: GitCommit[]; worktrees?: WorktreeInfo[]; head: string; message?: string; root: string; branch: string; files: GitFile[]; diff?: string; truncated: boolean }
 
 const BASE = '/api/v1'
 

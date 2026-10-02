@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, type GitResult } from '../lib/api'
 import { MessageType, type SessionCreatedPayload } from '../lib/protocol'
 import { useConnStore } from '../stores/conn'
-import { humanizeError } from '../lib/format'
+import { absoluteTime, humanizeError } from '../lib/format'
 const props = defineProps<{ id: string }>()
 const router = useRouter()
 const conn = useConnStore()
@@ -16,6 +16,15 @@ const staged = ref(false)
 const commitMessage = ref('')
 const confirmAction = ref<'commit' | 'push' | null>(null)
 const notice = ref('')
+const delivery = ref<GitResult | null>(null)
+// Independently restrict external links even if a remote Agent returns bad data.
+const repositoryURL = computed(() => {
+  const raw = delivery.value?.repository_url ?? ''
+  return /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw) ? raw : ''
+})
+const comparisonURL = computed(() => repositoryURL.value && delivery.value?.branch && delivery.value.branch !== '分离 HEAD' ? `${repositoryURL.value}/compare/${encodeURIComponent(delivery.value.branch)}?expand=1` : '')
+const pullRequestsURL = computed(() => repositoryURL.value ? `${repositoryURL.value}/pulls?q=${encodeURIComponent(`is:pr is:open head:${delivery.value?.branch ?? ''}`)}` : '')
+
 let deviceId = ''
 let cwd = ''
 let alive = true
@@ -27,7 +36,7 @@ async function mutate(): Promise<void> {
     const data = await api.deviceGit(deviceId, cwd, action, '', false, {
       message: commitMessage.value, expected_head: result.value.head, confirm: true,
     })
-    if (alive) { result.value = data; notice.value = data.message ?? '操作完成'; file.value = ''; confirmAction.value = null; if (action === 'commit') commitMessage.value = '' }
+    if (alive) { result.value = data; delivery.value = data; notice.value = data.message ?? '操作完成'; file.value = ''; confirmAction.value = null; if (action === 'commit') commitMessage.value = '' }
   } catch (e) { if (alive) error.value = humanizeError(e) }
   finally { if (alive) busy.value = false }
 }
@@ -36,7 +45,7 @@ async function load(action: 'status' | 'diff' = 'status'): Promise<void> {
   busy.value = true; error.value = ''; confirmAction.value = null
   try {
     const data = await api.deviceGit(deviceId, cwd, action, file.value, staged.value)
-    if (alive) { result.value = data; if (action === 'status') file.value = '' }
+    if (alive) { result.value = data; if (action === 'status') { file.value = ''; delivery.value = data } }
   } catch (e) { if (alive) error.value = humanizeError(e) }
   finally { if (alive) busy.value = false }
 }
@@ -69,6 +78,17 @@ onUnmounted(() => { alive = false })
       <div class="git-files">
         <button v-for="item in result?.files" :key="item.path" class="git-file" :class="{ 'git-file--active': file === item.path }" :disabled="busy" @click="select(item.path)"><code>{{ item.status }}</code><span>{{ item.path }}</span></button>
       </div>
+    </section>
+    <section v-if="delivery" class="card stack git-delivery">
+      <h2>提交与交付状态</h2>
+      <p v-if="typeof delivery.sync_known !== 'boolean'" class="dim">此 Agent 未上报交付信息，请升级到 v0.1.13。</p>
+      <p v-else-if="delivery.sync_known">上游 {{ delivery.upstream }}：{{ delivery.ahead }} 个提交待推送，{{ delivery.behind }} 个上游提交尚未纳入。</p>
+      <p v-else class="dim">{{ delivery.upstream ? '上游引用暂不可比较，请在终端检查或 fetch。' : '当前分支未建立可比较的上游，请在终端配置后刷新。' }}</p>
+      <p class="small dim">以上基于本机已有的远端引用，未联网刷新；工作区干净只说明没有文件改动，任务是否完成还需检查输出和测试结果。</p>
+      <div v-if="repositoryURL" class="row"><a v-if="comparisonURL" class="btn" :href="comparisonURL" target="_blank" rel="noopener noreferrer">在 GitHub 比较 / 新建 PR</a><a class="btn btn--ghost" :href="pullRequestsURL" target="_blank" rel="noopener noreferrer">查找此分支 PR</a></div>
+      <p v-if="repositoryURL" class="small dim">先推送当前分支，再打开 GitHub 页面登录、选择基础分支并提交。此入口不会自动发布 PR。</p>
+      <h3>最近提交</h3><p v-if="!delivery.commits?.length" class="small dim">暂无可显示的提交记录。</p>
+      <div v-for="commit in delivery.commits" :key="commit.hash" class="git-commit"><div><a v-if="repositoryURL" :href="`${repositoryURL}/commit/${encodeURIComponent(commit.hash)}`" target="_blank" rel="noopener noreferrer" class="mono">{{ commit.hash.slice(0, 8) }}</a><code v-else>{{ commit.hash.slice(0, 8) }}</code> {{ commit.subject }}</div><time class="small dim">{{ absoluteTime(commit.committed_at) }}</time></div>
     </section>
     <section v-if="result" class="card stack">
       <h2>提交与推送</h2>
