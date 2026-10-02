@@ -23,12 +23,12 @@ func TestWorktreeIsolationAndRollback(t *testing.T) {
 		t.Fatalf("not isolated: %s %s", first, second)
 	}
 	data, err := os.ReadFile(filepath.Join(first, "tracked.txt"))
-	if err != nil || string(data) != "before\n" {
+	if err != nil || strings.ReplaceAll(string(data), "\r\n", "\n") != "before\n" {
 		t.Fatalf("copied dirty source: %q %v", data, err)
 	}
 	os.WriteFile(filepath.Join(first, "tracked.txt"), []byte("task one\n"), 0600)
 	data, _ = os.ReadFile(filepath.Join(second, "tracked.txt"))
-	if string(data) != "before\n" {
+	if strings.ReplaceAll(string(data), "\r\n", "\n") != "before\n" {
 		t.Fatal("tasks share files")
 	}
 	data, _ = os.ReadFile(filepath.Join(root, "tracked.txt"))
