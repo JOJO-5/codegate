@@ -156,8 +156,12 @@ func managedWorktrees(ctx context.Context, ws *Workspace, req protocol.GitPayloa
 		return invalid("请刷新工作区状态并明确确认清理")
 	}
 	var target *protocol.WorktreeInfo
+	requestedPath, err := ws.Resolve(req.Target)
+	if err != nil {
+		return out, err
+	}
 	for i := range out.Worktrees {
-		if out.Worktrees[i].Path == req.Target {
+		if filepath.Clean(out.Worktrees[i].Path) == requestedPath {
 			target = &out.Worktrees[i]
 			break
 		}
