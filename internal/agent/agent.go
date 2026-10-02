@@ -40,6 +40,7 @@ type Agent struct {
 	activityGeneration uint64
 	updateFrozen       bool
 	gitMu              sync.Mutex
+	workspaceMu        sync.Mutex
 	repositoryMu       sync.Mutex
 	repositories       protocol.RepositoryListResult
 	repositoryRefresh  chan struct{}
@@ -326,13 +327,14 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 		Arch:         arch,
 		AgentVersion: Version,
 		Caps: protocol.AgentCaps{
-			MaxSessions:    a.cfg.MaxSessions,
-			RepositoryScan: true,
-			GitReview:      true,
-			GitActions:     true,
-			Worktrees:      true,
-			ConPTY:         platform == "windows" && terminal.Available() == nil,
-			UnixPTY:        platform != "windows" && terminal.Available() == nil,
+			MaxSessions:        a.cfg.MaxSessions,
+			RepositoryScan:     true,
+			GitReview:          true,
+			GitActions:         true,
+			Worktrees:          true,
+			WorktreeManagement: true,
+			ConPTY:             platform == "windows" && terminal.Available() == nil,
+			UnixPTY:            platform != "windows" && terminal.Available() == nil,
 		},
 	})
 	if err != nil {

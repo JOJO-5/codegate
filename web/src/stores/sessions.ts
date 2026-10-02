@@ -163,6 +163,7 @@ export const useSessionsStore = defineStore('sessions', () => {
   async function close(sessionId: string, force = false): Promise<void> {
     const conn = useConnStore()
     await conn.request(MessageType.SessionClose, { session_id: sessionId, force }, sessionId)
+	patch(sessionId, { status: 'terminated' })
   }
 
   async function archive(deviceId: string, sessionId: string, archived: boolean): Promise<void> {
