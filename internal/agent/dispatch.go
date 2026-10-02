@@ -57,7 +57,9 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 		a.reply(env, protocol.TypePong, nil)
 	case protocol.TypeWebStart:
 		a.onWebStart(env)
-	case protocol.TypeRepositoryList:
+	case protocol.TypeGitRequest:
+ go a.onGitRequest(env)
+ case protocol.TypeRepositoryList:
  a.onRepositoryList(env)
  case protocol.TypeToolSet:
 		a.onToolSet(env)

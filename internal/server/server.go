@@ -44,6 +44,7 @@ type Server struct {
 	web *webGateway
  repositoryMu sync.Mutex
  repositoryPending map[string]repositoryWait
+ gitPending map[string]repositoryWait
 
 	// pairs 保存「已发配对码、等浏览器确认」的 Agent 连接。
 	//

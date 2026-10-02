@@ -140,6 +140,7 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
+ GitReview bool `json:"git_review,omitempty"`
  RepositoryScan bool `json:"repository_scan,omitempty"`
 	MaxSessions int  `json:"max_sessions"`
 	ConPTY      bool `json:"conpty,omitempty"`
@@ -549,4 +550,24 @@ type RepositoryListResult struct {
  Partial bool `json:"partial"`
  ErrorCount int `json:"error_count"`
  Warnings []string `json:"warnings,omitempty"`
+}
+
+// Git requests originate only from the authenticated Server HTTP endpoint.
+type GitPayload struct {
+ Path string `json:"path"`
+ Action string `json:"action"`
+ File string `json:"file,omitempty"`
+ Staged bool `json:"staged,omitempty"`
+}
+type GitFile struct {
+ Path string `json:"path"`
+ Status string `json:"status"`
+ Original string `json:"original,omitempty"`
+}
+type GitResult struct {
+ Root string `json:"root"`
+ Branch string `json:"branch"`
+ Files []GitFile `json:"files"`
+ Diff string `json:"diff,omitempty"`
+ Truncated bool `json:"truncated"`
 }

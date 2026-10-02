@@ -66,6 +66,8 @@ const (
 	TypeWebStopped Type = "web.stopped"
 	TypeToolSet Type = "tool.set"
 	TypeToolUpdated Type = "tool.updated"
+ TypeGitRequest Type = "git.request"
+ TypeGitResult Type = "git.result"
  TypeRepositoryList Type = "repository.list"
  TypeRepositoryListed Type = "repository.list.result"
 
@@ -148,6 +150,7 @@ var allowedSenders = map[Type]Sender{
 	TypeWebStarted: SentByAgent,
 	TypeToolUpdated: SentByAgent,
  TypeRepositoryListed: SentByAgent,
+ TypeGitResult: SentByAgent,
 	TypeWebStopped: SentByAgent,
 
 	// ---- 只有 Server 能发（对 Agent 的应答 / 对客户端的通知）----
@@ -158,6 +161,7 @@ var allowedSenders = map[Type]Sender{
 	TypeWebStart: SentByServer,
 	TypeToolSet: SentByServer,
  TypeRepositoryList: SentByServer,
+ TypeGitRequest: SentByServer,
 	TypeWebStop: SentByServer,
 	TypeWebOpen: SentByServer,
 	TypeWebClose: SentByServer | SentByAgent,

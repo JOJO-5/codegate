@@ -825,3 +825,13 @@ a.item:hover {
 .repository-card .project-launch { margin-top: 16px; }
 .repository-status { margin-bottom: 10px; }
 .repository-warning { overflow-wrap: anywhere; }
+
+/* Git review: long paths wrap; diff scrolls within the card on phones. */
+.git-view { max-width: 1100px; margin: 0 auto; min-width: 0; }
+.git-path { overflow-wrap: anywhere; }
+.git-files { display: grid; gap: 6px; }
+.git-file { display: flex; gap: 12px; padding: 10px; text-align: left; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); min-width: 0; }
+.git-file code { white-space: pre; flex-shrink: 0; }
+.git-file span { overflow-wrap: anywhere; min-width: 0; }
+.git-file--active { border-color: var(--accent); }
+.git-diff { max-width: 100%; overflow: auto; background: var(--bg); padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.6; max-height: 65vh; }
