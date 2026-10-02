@@ -119,3 +119,9 @@ npm run build
 Windows 上的 ConPTY 集成测试位于 `internal/terminal`。完整端到端终端链路可以在配置好 GNU Make 与 Bash 的开发环境运行 `make e2e`；它使用临时 Server 和数据库，不触碰已有数据。
 
 详细设计与实现记录见 [架构文档](docs/PHASE0-ARCHITECTURE.md)、[ConPTY 验证](docs/PHASE2-CONPTY-VERIFICATION.md)、[Server](docs/PHASE4-SERVER.md) 和 [Web](docs/PHASE5-WEB.md)。
+
+## 远程编程 Git 面板
+
+在会话终端点击 **Git**，可查看当前工作目录所属仓库的分支、改动文件，以及已暂存/未暂存差异。新文件提供有限长度文本预览，二进制文件不展示内容。大清单/差异会标记截断，完整内容可在终端查看。目标 Agent 和 Server 均需升级至 v0.1.7。仓库工作目录与共享 Git 元数据必须位于该 Agent 授权的工作目录内。
+
+分期范围与验收见 [远程编程计划](docs/REMOTE-CODING-ROADMAP.md)。

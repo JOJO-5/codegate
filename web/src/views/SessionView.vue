@@ -615,6 +615,7 @@ onUnmounted(() => {
       <button class="btn btn--ghost btn--sm term__panel-button" type="button" @click="showSessionPanel = !showSessionPanel">☰ 切换</button>
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">文件</button>
 
+      <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-git', params: { id: sessionId } })">Git</button>
       <span class="term__title" :title="summary?.name ?? sessionId">
         {{ summary?.name || summary?.command || sessionId }}
       </span>

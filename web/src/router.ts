@@ -59,6 +59,13 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '工作区文件' },
   },
   {
+    path: '/sessions/:id/git',
+    name: 'session-git',
+    component: () => import('./views/GitView.vue'),
+    props: true,
+    meta: { title: 'Git 改动' },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('./views/SettingsView.vue'),

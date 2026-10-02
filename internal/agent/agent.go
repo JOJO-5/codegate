@@ -36,7 +36,8 @@ type Agent struct {
 	toolMu sync.RWMutex
 	approvedTools map[string]bool
 
-	repositoryMu sync.Mutex
+	gitMu sync.Mutex
+ repositoryMu sync.Mutex
  repositories protocol.RepositoryListResult
  repositoryRefresh chan struct{}
  startedAt time.Time
@@ -317,6 +318,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 		Caps: protocol.AgentCaps{
 			MaxSessions: a.cfg.MaxSessions,
  RepositoryScan: true,
+ GitReview: true,
 			ConPTY:      platform == "windows" && terminal.Available() == nil,
 			UnixPTY:     platform != "windows" && terminal.Available() == nil,
 		},

@@ -30,6 +30,9 @@
 
 import type { SessionSummary } from './protocol'
 
+export interface GitFile { path: string; status: string; original?: string }
+export interface GitResult { root: string; branch: string; files: GitFile[]; diff?: string; truncated: boolean }
+
 const BASE = '/api/v1'
 
 /**
@@ -408,6 +411,10 @@ export const api = {
 
   getDevice(id: string): Promise<DeviceDTO> {
     return request<DeviceDTO>('GET', `/devices/${encodeURIComponent(id)}`)
+  },
+
+  deviceGit(id: string, path: string, action: 'status' | 'diff', file = '', staged = false): Promise<GitResult> {
+    return request<GitResult>('POST', `/devices/${encodeURIComponent(id)}/git`, { path, action, file, staged })
   },
 
   getDeviceRepositories(id: string, offset = 0, refresh = false): Promise<RepositoryListResult> {
