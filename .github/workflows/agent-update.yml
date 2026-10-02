@@ -1,0 +1,32 @@
+name: Agent update recovery
+on:
+  pull_request:
+    paths:
+      - 'cmd/codegate-agent/**'
+      - 'cmd/codegate-update-sign/**'
+      - 'internal/agent/**'
+      - 'internal/protocol/**'
+      - 'internal/updatefile/**'
+      - 'internal/server/agent_updates*'
+      - '.github/workflows/agent-update.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recovery:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test real supervisor processes and update boundaries
+        run: go test -race ./cmd/codegate-agent ./internal/agent ./internal/updatefile -run 'TestSupervisor|TestUpdateBarrier|TestPrivateAgent|TestGitCommitOperation|TestPinnedRelease|TestManagedProgress|TestStageUpdate|TestUpdateState|TestValidUpdate|TestConsume' -count=1 -timeout 5m -v
+      - name: Build signing tool
+        run: go build ./cmd/codegate-update-sign

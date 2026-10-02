@@ -2,12 +2,15 @@ package agent
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jojo/codegate/internal/protocol"
+	"github.com/jojo/codegate/internal/updatefile"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,7 +18,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"github.com/jojo/codegate/internal/protocol"
 	"strings"
 	"time"
 )
@@ -23,12 +25,13 @@ import (
 // updateManifest describes one platform artifact. The manifest and artifact
 // must be served from the same trusted HTTPS origin.
 type updateManifest struct {
-	Version string `json:"version"`
-	OS      string `json:"os"`
-	Arch    string `json:"arch"`
-	URL     string `json:"url"`
-	SHA256  string `json:"sha256"`
-	Size    int64  `json:"size"`
+	Signature string `json:"signature,omitempty"`
+	Version   string `json:"version"`
+	OS        string `json:"os"`
+	Arch      string `json:"arch"`
+	URL       string `json:"url"`
+	SHA256    string `json:"sha256"`
+	Size      int64  `json:"size"`
 }
 
 const maxUpdateSize int64 = 100 << 20
@@ -45,11 +48,11 @@ func (a *Agent) currentUpdateStatus() protocol.AgentUpdateStatus {
 	a.updateMu.RLock()
 	status := a.updateStatus
 	a.updateMu.RUnlock()
-	data, err := os.ReadFile(filepath.Join(a.cfg.StateDir, "updates", "last-failure.json"))
-	if err == nil && len(data) <= 4096 {
-		var failure protocol.AgentUpdateFailure
-		if json.Unmarshal(data, &failure) == nil && failure.OccurredAt > 0 { status.LastFailure = &failure }
+	var failure protocol.AgentUpdateFailure
+	if updatefile.ReadJSON(filepath.Join(a.cfg.StateDir, "updates", "last-failure.json"), &failure) == nil && failure.OccurredAt > 0 {
+		status.LastFailure = &failure
 	}
+
 	return status
 }
 
@@ -80,19 +83,27 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 	// Count includes retained exited sessions: their scrollback must remain
 	// available until the user closes them or retention reaps them.
 	count, generation := a.mgr.UpdateState()
-	if count != 0 || a.webActive() {
+	active, activityGeneration := a.activityState()
+	if count != 0 || active != 0 || a.webActive() {
 		a.setUpdateStatus("waiting", "", "有会话正在运行或等待回看")
 		return
 	}
 	idle := func() int {
 		count, current := a.mgr.UpdateState()
-		if current != generation || a.webActive() { return 1 }
+		active, activityCurrent := a.activityState()
+		if active != 0 || activityCurrent != activityGeneration || current != generation || a.webActive() {
+			return 1
+		}
 		return count
 	}
 	a.setUpdateStatus("checking", "", "")
 	manifestURL, err := a.updateManifestURL()
-	if err != nil { a.setUpdateStatus("error", "", "更新地址无效"); a.log.Warn("Agent 更新地址无效", "err", err); return }
-	path, version, err := stageUpdate(ctx, manifestURL, a.cfg.StateDir, Version, idle, a.id)
+	if err != nil {
+		a.setUpdateStatus("error", "", "更新地址无效")
+		a.log.Warn("Agent 更新地址无效", "err", err)
+		return
+	}
+	path, version, err := stageUpdate(ctx, manifestURL, a.cfg.StateDir, Version, idle, a.id, a.cfg.UpdatePublicKey)
 	if err != nil {
 		if ctx.Err() == nil {
 			a.setUpdateStatus("error", "", err.Error())
@@ -101,8 +112,11 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 		return
 	}
 	if path == "" {
-		if idle() != 0 { a.setUpdateStatus("waiting", "", "检查期间会话状态发生变化")
-		} else { a.setUpdateStatus("current", "", "当前未发现新版本") }
+		if idle() != 0 {
+			a.setUpdateStatus("waiting", "", "检查期间会话状态发生变化")
+		} else {
+			a.setUpdateStatus("current", "", "当前未发现新版本")
+		}
 		return
 	}
 	if path != "" {
@@ -110,7 +124,11 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 		a.log.Info("已下载并校验 Agent 更新包", "version", version, "path", path)
 		if a.OnVerifiedUpdate != nil {
 			if err := a.OnVerifiedUpdate(path, version); err != nil {
-				a.setUpdateStatus("error", version, err.Error())
+				if errors.Is(err, ErrUpdateBusy) {
+					a.setUpdateStatus("waiting", version, err.Error())
+				} else {
+					a.setUpdateStatus("error", version, err.Error())
+				}
 				a.log.Warn("更新切换准备失败", "err", err)
 			} else {
 				a.setUpdateStatus("switching", version, "等待守护进程确认新版本")
@@ -121,9 +139,15 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 
 func (a *Agent) updateManifestURL() (string, error) {
 	u, err := url.Parse(a.cfg.ServerURL)
-	if err != nil { return "", err }
-	if u.Scheme == "wss" { u.Scheme = "https" }
-	if u.Scheme != "https" { return "", errors.New("更新仅支持 HTTPS") }
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme == "wss" {
+		u.Scheme = "https"
+	}
+	if u.Scheme != "https" {
+		return "", errors.New("更新仅支持 HTTPS")
+	}
 	u.Path = "/api/v1/agent-updates/" + runtime.GOOS + "/" + runtime.GOARCH + "/manifest"
 	u.RawQuery, u.Fragment = "", ""
 	return u.String(), nil
@@ -131,7 +155,7 @@ func (a *Agent) updateManifestURL() (string, error) {
 
 // stageUpdate never installs or executes downloaded bytes. The caller provides
 // a live session count so a session created during download cancels staging.
-func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion string, sessions func() int, identity *Identity) (string, string, error) {
+func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion string, sessions func() int, identity *Identity, pinnedKeys ...string) (string, string, error) {
 	if sessions() != 0 {
 		return "", "", nil
 	}
@@ -150,6 +174,10 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	if m.OS != runtime.GOOS || m.Arch != runtime.GOARCH || !newerVersion(m.Version, currentVersion) {
 		return "", "", nil
 	}
+	var failure protocol.AgentUpdateFailure
+	if updatefile.ReadJSON(filepath.Join(stateDir, "updates", "last-failure.json"), &failure) == nil && failure.Version == m.Version && failure.RetryAfter > time.Now().UnixMilli() {
+		return "", "", fmt.Errorf("版本 %s 曾升级失败，退避至 %s", m.Version, time.UnixMilli(failure.RetryAfter).Format(time.RFC3339))
+	}
 	if m.Size <= 0 || m.Size > maxUpdateSize {
 		return "", "", errors.New("更新包大小无效")
 	}
@@ -157,13 +185,20 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	if err != nil || len(hash) != sha256.Size {
 		return "", "", errors.New("更新包 SHA-256 无效")
 	}
+	if len(pinnedKeys) > 0 && pinnedKeys[0] != "" {
+		key, keyErr := base64.StdEncoding.DecodeString(pinnedKeys[0])
+		sig, sigErr := base64.StdEncoding.DecodeString(m.Signature)
+		if keyErr != nil || len(key) != ed25519.PublicKeySize || sigErr != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(key, protocol.ReleaseSigningPayload(m.Version, m.OS, m.Arch, m.SHA256, m.Size), sig) {
+			return "", "", errors.New("发布签名无效或缺失，更新已拒绝")
+		}
+	}
 	artifactURL, err := url.Parse(m.URL)
 	if err != nil || artifactURL.Scheme != "https" || artifactURL.Host != origin.Host ||
 		artifactURL.User != nil || artifactURL.Fragment != "" {
 		return "", "", errors.New("更新包必须与清单位于同一个 HTTPS 主机")
 	}
 	dir := filepath.Join(stateDir, "updates")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := updatefile.EnsureDir(dir); err != nil {
 		return "", "", err
 	}
 	name := "codegate-agent-" + m.Version + "-" + m.OS + "-" + m.Arch
@@ -172,10 +207,16 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	}
 	target := filepath.Join(dir, name)
 	// Recheck an existing artifact rather than trusting its filename.
-	if stat, err := os.Stat(target); err == nil && stat.Size() == m.Size {
+	if stat, err := os.Lstat(target); err == nil && stat.Mode().IsRegular() && stat.Size() == m.Size {
 		if existing, err := os.ReadFile(target); err == nil {
 			sum := sha256.Sum256(existing)
 			if strings.EqualFold(hex.EncodeToString(sum[:]), m.SHA256) {
+				if sessions() != 0 {
+					return "", "", ErrUpdateBusy
+				}
+				if err := os.Chmod(target, 0700); err != nil {
+					return "", "", err
+				}
 				return target, m.Version, nil
 			}
 		}
@@ -196,7 +237,9 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	if err != nil {
 		return "", "", err
 	}
-	if identity != nil { signUpdateRequest(req, identity) }
+	if identity != nil {
+		signUpdateRequest(req, identity)
+	}
 	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return "", "", err
@@ -244,13 +287,10 @@ func stageUpdate(ctx context.Context, manifestURL, stateDir, currentVersion stri
 	if err := tmp.Close(); err != nil {
 		return "", "", err
 	}
-	// Windows cannot rename over an existing destination.
-	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := updatefile.Replace(tmp.Name(), target); err != nil {
 		return "", "", err
 	}
-	if err := os.Rename(tmp.Name(), target); err != nil {
-		return "", "", err
-	}
+
 	return target, m.Version, nil
 }
 
@@ -259,7 +299,9 @@ func fetchLimited(ctx context.Context, address string, limit int64, sessions fun
 	if err != nil {
 		return nil, err
 	}
-	if identity != nil { signUpdateRequest(req, identity) }
+	if identity != nil {
+		signUpdateRequest(req, identity)
+	}
 	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -297,6 +339,14 @@ func newerVersion(candidate, current string) bool {
 			return parts, false
 		}
 		for i, item := range items {
+			if item == "" {
+				return parts, false
+			}
+			for _, c := range item {
+				if c < '0' || c > '9' {
+					return parts, false
+				}
+			}
 			n, err := strconv.Atoi(item)
 			if err != nil || n < 0 {
 				return parts, false

@@ -53,8 +53,8 @@ type WebStreamPayload struct {
 }
 
 type ToolSetPayload struct {
-	ID string `json:"id"`
-	Enabled bool `json:"enabled"`
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
 }
 
 // NewEnvelope 构造一个信封并把 payload 序列化进去。
@@ -140,13 +140,13 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
- GitActions bool `json:"git_actions,omitempty"`
- Worktrees bool `json:"worktrees,omitempty"`
- GitReview bool `json:"git_review,omitempty"`
- RepositoryScan bool `json:"repository_scan,omitempty"`
-	MaxSessions int  `json:"max_sessions"`
-	ConPTY      bool `json:"conpty,omitempty"`
-	UnixPTY     bool `json:"unix_pty,omitempty"`
+	GitActions     bool `json:"git_actions,omitempty"`
+	Worktrees      bool `json:"worktrees,omitempty"`
+	GitReview      bool `json:"git_review,omitempty"`
+	RepositoryScan bool `json:"repository_scan,omitempty"`
+	MaxSessions    int  `json:"max_sessions"`
+	ConPTY         bool `json:"conpty,omitempty"`
+	UnixPTY        bool `json:"unix_pty,omitempty"`
 }
 
 // AgentChallengePayload 是 Server 发来的随机数，用于防重放。
@@ -230,10 +230,10 @@ type SessionSummary struct {
 
 // HeartbeatPayload 是 Agent 的周期上报，同时充当 session 对账数据源。
 type HeartbeatPayload struct {
-	Sessions []HeartbeatSession `json:"sessions"`
-	Update AgentUpdateStatus `json:"update"`
-	Commands []CommandAvailability `json:"commands,omitempty"`
-	DSHWebEnabled *bool `json:"dsh_web_enabled,omitempty"`
+	Sessions      []HeartbeatSession    `json:"sessions"`
+	Update        AgentUpdateStatus     `json:"update"`
+	Commands      []CommandAvailability `json:"commands,omitempty"`
+	DSHWebEnabled *bool                 `json:"dsh_web_enabled,omitempty"`
 	// Roots 是该 Agent 允许作为工作目录的根路径白名单（对应 agent.json
 	// 的 allowed_roots）。仅用于让界面自动带出与提供候选，**不是**授权
 	// 依据 —— 真正的校验始终在 Agent 侧的 Workspace.Resolve。
@@ -243,32 +243,34 @@ type HeartbeatPayload struct {
 // AgentUpdateStatus reports only observable Agent state, never a guessed
 // install outcome from the published Server version.
 type AgentUpdateStatus struct {
-	Enabled bool `json:"enabled"`
-	State string `json:"state"`
-	Version string `json:"version,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	CheckedAt int64 `json:"checked_at,omitempty"`
+	Enabled     bool                `json:"enabled"`
+	State       string              `json:"state"`
+	Version     string              `json:"version,omitempty"`
+	Detail      string              `json:"detail,omitempty"`
+	CheckedAt   int64               `json:"checked_at,omitempty"`
 	LastFailure *AgentUpdateFailure `json:"last_failure,omitempty"`
 }
 
 type AgentUpdateFailure struct {
-	Version string `json:"version"`
-	Reason string `json:"reason"`
-	OccurredAt int64 `json:"occurred_at"`
+	Attempts   int    `json:"attempts,omitempty"`
+	RetryAfter int64  `json:"retry_after,omitempty"`
+	Version    string `json:"version"`
+	Reason     string `json:"reason"`
+	OccurredAt int64  `json:"occurred_at"`
 }
 
 // CommandAvailability is a fixed, display-only inventory. The Agent still
 // checks allowed_commands when creating a session; a detected binary does not
 // grant execution rights.
 type CommandAvailability struct {
-	ID string `json:"id"`
-	Label string `json:"label"`
-	Kind string `json:"kind"`
-	Installed bool `json:"installed"`
-	Allowed bool `json:"allowed"`
-	Managed bool `json:"managed,omitempty"`
-	Resume bool `json:"resume,omitempty"`
-	WebURL string `json:"web_url,omitempty"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Kind      string `json:"kind"`
+	Installed bool   `json:"installed"`
+	Allowed   bool   `json:"allowed"`
+	Managed   bool   `json:"managed,omitempty"`
+	Resume    bool   `json:"resume,omitempty"`
+	WebURL    string `json:"web_url,omitempty"`
 }
 
 // HeartbeatSession 是心跳里的会话摘要（只放对账必需的字段，尽量小）。
@@ -292,7 +294,7 @@ type SessionSyncPayload struct {
 //   - 走白名单时只传 CommandID
 //   - 允许自定义命令时传 Command/Args（需 Agent 侧显式开启，§21.1）
 type SessionCreatePayload struct {
- Worktree bool `json:"worktree,omitempty"`
+	Worktree  bool     `json:"worktree,omitempty"`
 	DeviceID  string   `json:"device_id"`
 	Name      string   `json:"name,omitempty"`
 	CommandID string   `json:"command_id,omitempty"`
@@ -350,7 +352,7 @@ type SessionAttachedPayload struct {
 // SessionDetachPayload 是请求断开接管。
 type SessionDetachPayload struct {
 	SessionID string `json:"session_id"`
-	AttachID string `json:"attach_id,omitempty"`
+	AttachID  string `json:"attach_id,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 }
 
@@ -419,7 +421,7 @@ type ErrorPayload struct {
 // FileListPayload 请求列目录。
 type FileListPayload struct {
 	SessionID string `json:"session_id"`
-	Path string `json:"path"` // 空串 = 列根目录
+	Path      string `json:"path"` // 空串 = 列根目录
 }
 
 // FileListedPayload 是目录内容。
@@ -442,7 +444,7 @@ type FileEntry struct {
 // FileStatPayload 请求单个文件的元信息。
 type FileStatPayload struct {
 	SessionID string `json:"session_id"`
-	Path string `json:"path"`
+	Path      string `json:"path"`
 }
 
 // FileStatResultPayload 是文件元信息。
@@ -465,17 +467,17 @@ type FileStatResultPayload struct {
 // Length 为 0 表示读到文件末尾；预览时前端传 64 KB。
 type FileReadPayload struct {
 	SessionID string `json:"session_id"`
-	Path   string `json:"path"`
-	Offset int64  `json:"offset"`
-	Length int64  `json:"length"`
+	Path      string `json:"path"`
+	Offset    int64  `json:"offset"`
+	Length    int64  `json:"length"`
 }
 
 // FileReadResultPayload 返回一个有界文件块。数据为 base64，前端按 offset 顺序拼接。
 type FileReadResultPayload struct {
-	Path string `json:"path"`
-	Size int64 `json:"size"`
-	Offset int64 `json:"offset"`
-	Data string `json:"data"`
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	Offset int64  `json:"offset"`
+	Data   string `json:"data"`
 }
 
 // FileReadBeginPayload 通知传输即将开始。
@@ -502,12 +504,12 @@ type FileAckPayload struct {
 // FileWritePayload 请求上传。
 type FileWritePayload struct {
 	SessionID string `json:"session_id"`
-	UploadID string `json:"upload_id"`
-	Offset int64 `json:"offset"`
-	Data string `json:"data"`
-	Final bool `json:"final"`
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	UploadID  string `json:"upload_id"`
+	Offset    int64  `json:"offset"`
+	Data      string `json:"data"`
+	Final     bool   `json:"final"`
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
 	// Overwrite 默认为 false：目标已存在时拒绝。
 	// 远程界面误操作的概率远高于本地，多一次显式确认的成本很低。
 	Overwrite bool `json:"overwrite,omitempty"`
@@ -528,54 +530,61 @@ type FileWriteDonePayload struct {
 
 // FileCancelPayload 取消一次传输。
 type FileCancelPayload struct {
-	SessionID string `json:"session_id"`
+	SessionID  string `json:"session_id"`
 	TransferID string `json:"transfer_id"`
 	Reason     string `json:"reason,omitempty"`
 }
 
 // Repository describes a discovered working tree, not an authorization grant.
 type Repository struct {
- Name string `json:"name"`
- Path string `json:"path"`
- Root string `json:"root"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Root string `json:"root"`
 }
 type RepositoryListPayload struct {
- Offset int `json:"offset"`
- Limit int `json:"limit"`
- Refresh bool `json:"refresh,omitempty"`
+	Offset  int  `json:"offset"`
+	Limit   int  `json:"limit"`
+	Refresh bool `json:"refresh,omitempty"`
 }
 type RepositoryListResult struct {
- State string `json:"state"`
- Repositories []Repository `json:"repositories"`
- Total int `json:"total"`
- NextOffset *int `json:"next_offset,omitempty"`
- ScannedAt int64 `json:"scanned_at"`
- Partial bool `json:"partial"`
- ErrorCount int `json:"error_count"`
- Warnings []string `json:"warnings,omitempty"`
+	State        string       `json:"state"`
+	Repositories []Repository `json:"repositories"`
+	Total        int          `json:"total"`
+	NextOffset   *int         `json:"next_offset,omitempty"`
+	ScannedAt    int64        `json:"scanned_at"`
+	Partial      bool         `json:"partial"`
+	ErrorCount   int          `json:"error_count"`
+	Warnings     []string     `json:"warnings,omitempty"`
 }
 
 // Git requests originate only from the authenticated Server HTTP endpoint.
 type GitPayload struct {
- Message string `json:"message,omitempty"`
- ExpectedHead string `json:"expected_head,omitempty"`
- Confirm bool `json:"confirm,omitempty"`
- Path string `json:"path"`
- Action string `json:"action"`
- File string `json:"file,omitempty"`
- Staged bool `json:"staged,omitempty"`
+	Message      string `json:"message,omitempty"`
+	ExpectedHead string `json:"expected_head,omitempty"`
+	Confirm      bool   `json:"confirm,omitempty"`
+	Path         string `json:"path"`
+	Action       string `json:"action"`
+	File         string `json:"file,omitempty"`
+	Staged       bool   `json:"staged,omitempty"`
 }
 type GitFile struct {
- Path string `json:"path"`
- Status string `json:"status"`
- Original string `json:"original,omitempty"`
+	Path     string `json:"path"`
+	Status   string `json:"status"`
+	Original string `json:"original,omitempty"`
 }
 type GitResult struct {
- Head string `json:"head"`
- Message string `json:"message,omitempty"`
- Root string `json:"root"`
- Branch string `json:"branch"`
- Files []GitFile `json:"files"`
- Diff string `json:"diff,omitempty"`
- Truncated bool `json:"truncated"`
+	Head      string    `json:"head"`
+	Message   string    `json:"message,omitempty"`
+	Root      string    `json:"root"`
+	Branch    string    `json:"branch"`
+	Files     []GitFile `json:"files"`
+	Diff      string    `json:"diff,omitempty"`
+	Truncated bool      `json:"truncated"`
+}
+
+// ManagedHealth is a private progress marker consumed by the local supervisor.
+type ManagedHealth struct {
+	Version       string `json:"version"`
+	Authenticated bool   `json:"authenticated"`
+	UpdatedAt     int64  `json:"updated_at"`
 }

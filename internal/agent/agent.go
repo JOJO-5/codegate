@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -28,34 +27,38 @@ var Version = "dev"
 // 生命周期上它比任何一条 WebSocket 连接都长 —— 连接断了重连，
 // 会话不受影响（这是不变量 I1/I2 在 Agent 侧的体现）。
 type Agent struct {
-	cfg Config
-	id  *Identity
-	ws  *Workspace
-	mgr *session.Manager
-	log *slog.Logger
-	toolMu sync.RWMutex
+	cfg           Config
+	id            *Identity
+	ws            *Workspace
+	mgr           *session.Manager
+	log           *slog.Logger
+	toolMu        sync.RWMutex
 	approvedTools map[string]bool
 
-	gitMu sync.Mutex
- repositoryMu sync.Mutex
- repositories protocol.RepositoryListResult
- repositoryRefresh chan struct{}
- startedAt time.Time
+	activityMu         sync.Mutex
+	activities         int
+	activityGeneration uint64
+	updateFrozen       bool
+	gitMu              sync.Mutex
+	repositoryMu       sync.Mutex
+	repositories       protocol.RepositoryListResult
+	repositoryRefresh  chan struct{}
+	startedAt          time.Time
 
 	// OnVerifiedUpdate is set by the supervised CLI before Run starts.
 	OnVerifiedUpdate func(path, version string) error
 
-	updateMu sync.RWMutex
+	updateMu     sync.RWMutex
 	updateStatus protocol.AgentUpdateStatus
 
-	connMu sync.RWMutex
-	conn   *Conn
-	webMu sync.Mutex
-	webProcess *exec.Cmd
-	webHost string
-	webCookie string
+	connMu       sync.RWMutex
+	conn         *Conn
+	webMu        sync.Mutex
+	webProcess   *exec.Cmd
+	webHost      string
+	webCookie    string
 	webStreamsMu sync.Mutex
-	webStreams map[uuid.UUID]*webStream
+	webStreams   map[uuid.UUID]*webStream
 
 	// views 记录每个会话当前有哪些 view 在 attach。
 	//
@@ -65,7 +68,7 @@ type Agent struct {
 	// Agent 作为唯一调用方自己记一份，语义更清楚 ——
 	// 这份记录只用于 detach 时反查，不参与任何业务判断。
 	uploadMu sync.Mutex
-	uploads map[string]*fileUpload
+	uploads  map[string]*fileUpload
 
 	viewMu sync.Mutex
 	views  map[uuid.UUID]map[string]struct{}
@@ -109,20 +112,26 @@ func NewWithIdentity(cfg Config, id *Identity, log *slog.Logger) (*Agent, error)
 	}
 
 	approvedTools, err := loadApprovedTools(cfg.StateDir)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
+	workspace := NewWorkspace(cfg.AllowedRoots)
+	if err := workspace.ExcludePrivateState(cfg.StateDir); err != nil {
+		return nil, err
+	}
 	return &Agent{
-		cfg:       cfg,
-		approvedTools: approvedTools,
-		id:        id,
-		ws:        NewWorkspace(cfg.AllowedRoots),
-		mgr:       session.NewManager(factory, session.Config{BufferSize: cfg.BufferSize, MaxSessions: cfg.MaxSessions}),
-		log:       log,
-		startedAt: time.Now(),
- repositories: protocol.RepositoryListResult{State: "scanning", Repositories: []protocol.Repository{}},
- repositoryRefresh: make(chan struct{}, 1),
-		updateStatus: protocol.AgentUpdateStatus{Enabled: cfg.UpdateEnabled && Version != "dev", State: "disabled"},
-		views:     make(map[uuid.UUID]map[string]struct{}),
-		uploads:   make(map[string]*fileUpload),
+		cfg:               cfg,
+		approvedTools:     approvedTools,
+		id:                id,
+		ws:                workspace,
+		mgr:               session.NewManager(factory, session.Config{BufferSize: cfg.BufferSize, MaxSessions: cfg.MaxSessions}),
+		log:               log,
+		startedAt:         time.Now(),
+		repositories:      protocol.RepositoryListResult{State: "scanning", Repositories: []protocol.Repository{}},
+		repositoryRefresh: make(chan struct{}, 1),
+		updateStatus:      protocol.AgentUpdateStatus{Enabled: cfg.UpdateEnabled && Version != "dev", State: "disabled"},
+		views:             make(map[uuid.UUID]map[string]struct{}),
+		uploads:           make(map[string]*fileUpload),
 	}, nil
 }
 
@@ -168,12 +177,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	// 会话回收定时器：已退出的会话保留一段时间（让用户能回看最后的输出），
 	// 超期后回收（§7.5）。
 	go a.reapLoop(ctx)
- go a.repositoryLoop(ctx)
+	go a.repositoryLoop(ctx)
 	if a.cfg.UpdateEnabled && Version != "dev" {
 		go a.updateLoop(ctx)
 	}
 
 	for {
+		a.writeManagedHealth(false)
 		err := a.runOnce(ctx)
 
 		if ctx.Err() != nil {
@@ -197,7 +207,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(delay):
+		case <-a.waitReconnect(ctx, delay):
 		}
 	}
 }
@@ -232,9 +242,7 @@ func (a *Agent) runOnce(ctx context.Context) error {
 	// 连上了才算一次成功：重置退避。
 	// （调用方看到 nil 以外的错误才会退避，所以这里只能通过"返回 nil 之外的路径"
 	//  来表达成功 —— 见 Run 里的处理。）
-	if readyFile := os.Getenv("CODEGATE_AGENT_READY_FILE"); readyFile != "" {
-		if err := os.WriteFile(readyFile, []byte(Version), 0o600); err != nil { a.log.Warn("写入更新健康标记失败", "err", err) }
-	}
+	a.writeManagedHealth(true)
 	a.log.Info("已连接到 Server",
 		"server", a.cfg.ServerURL,
 		"device_id", a.id.DeviceID,
@@ -260,7 +268,9 @@ func (a *Agent) runOnce(ctx context.Context) error {
 	if ready.HeartbeatInterval > 0 {
 		hbInterval = time.Duration(ready.HeartbeatInterval) * time.Second
 	}
-	go newHeartbeatTicker(hbInterval, a.log, a.sendHeartbeat).run(hbCtx)
+	heartbeat := newHeartbeatTicker(hbInterval, a.log, a.sendHeartbeat)
+	heartbeat.onProgress = func() { a.writeManagedHealth(true) }
+	go heartbeat.run(hbCtx)
 
 	disp.attach(a.handleMessage, a.handleFrame)
 
@@ -316,13 +326,13 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 		Arch:         arch,
 		AgentVersion: Version,
 		Caps: protocol.AgentCaps{
-			MaxSessions: a.cfg.MaxSessions,
- RepositoryScan: true,
- GitReview: true,
- GitActions: true,
- Worktrees: true,
-			ConPTY:      platform == "windows" && terminal.Available() == nil,
-			UnixPTY:     platform != "windows" && terminal.Available() == nil,
+			MaxSessions:    a.cfg.MaxSessions,
+			RepositoryScan: true,
+			GitReview:      true,
+			GitActions:     true,
+			Worktrees:      true,
+			ConPTY:         platform == "windows" && terminal.Available() == nil,
+			UnixPTY:        platform != "windows" && terminal.Available() == nil,
 		},
 	})
 	if err != nil {
@@ -591,13 +601,21 @@ func (s *sessionSink) SendBuffer(p []byte, end bool) bool {
 	// Large snapshots must be split: one huge WebSocket message can exceed
 	// intermediary limits, and losing a middle chunk must fail the attach.
 	const chunkSize = 16 << 10
-	if len(p) == 0 { return true }
+	if len(p) == 0 {
+		return true
+	}
 	for len(p) > 0 {
 		n := len(p)
-		if n > chunkSize { n = chunkSize }
+		if n > chunkSize {
+			n = chunkSize
+		}
 		var flags uint16
-		if end && n == len(p) { flags = protocol.FlagBufferEnd }
-		if !s.a.sendTerminalFrame(s.sid, protocol.FrameBuffer, flags, p[:n]) { return false }
+		if end && n == len(p) {
+			flags = protocol.FlagBufferEnd
+		}
+		if !s.a.sendTerminalFrame(s.sid, protocol.FrameBuffer, flags, p[:n]) {
+			return false
+		}
 		p = p[n:]
 	}
 	return true
