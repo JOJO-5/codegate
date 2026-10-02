@@ -42,7 +42,7 @@ func readJSON(path string, value any) error {
 	if !info.Mode().IsRegular() || info.Size() > 64<<10 {
 		return errors.New("invalid update state file")
 	}
-	f, err := os.Open(path)
+	f, err := openStateFile(path)
 	if err != nil {
 		return err
 	}
