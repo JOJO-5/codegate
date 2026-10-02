@@ -1,20 +1,30 @@
 package agent
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/jojo/codegate/internal/protocol"
+	"github.com/jojo/codegate/internal/updatefile"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"testing"
-	"context"
+	"time"
 )
 
 func TestNewerVersion(t *testing.T) {
-	for _, tc := range []struct{ next, current string; want bool }{
+	for _, tc := range []struct {
+		next, current string
+		want          bool
+	}{
 		{"v1.2.4", "v1.2.3", true},
 		{"v1.3.0", "v1.2.99", true},
 		{"v1.2.3", "v1.2.3", false},
@@ -41,20 +51,24 @@ func TestStageUpdateRequiresIdleAndValidChecksum(t *testing.T) {
 		hits.Add(1)
 		if r.URL.Path == "/manifest" {
 			digest := hex.EncodeToString(sum[:])
-			if corrupt.Load() { digest = hex.EncodeToString(make([]byte, 32)) }
+			if corrupt.Load() {
+				digest = hex.EncodeToString(make([]byte, 32))
+			}
 			_ = json.NewEncoder(w).Encode(updateManifest{
-				Version:"v1.2.4", OS:runtime.GOOS, Arch:runtime.GOARCH,
-				URL:server.URL+"/binary", SHA256:digest, Size:int64(len(payload)),
+				Version: "v1.2.4", OS: runtime.GOOS, Arch: runtime.GOARCH,
+				URL: server.URL + "/binary", SHA256: digest, Size: int64(len(payload)),
 			})
 			return
 		}
-		if interruptDownload.Load() { interrupted.Store(true) }
+		if interruptDownload.Load() {
+			interrupted.Store(true)
+		}
 		_, _ = w.Write(payload)
 	}))
 	defer server.Close()
 	oldClient := updateHTTPClient
 	updateHTTPClient = server.Client()
-	defer func(){ updateHTTPClient = oldClient }()
+	defer func() { updateHTTPClient = oldClient }()
 	dir := t.TempDir()
 	active := func() int { return 1 }
 	path, _, err := stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", active, nil)
@@ -62,14 +76,16 @@ func TestStageUpdateRequiresIdleAndValidChecksum(t *testing.T) {
 		t.Fatalf("active session fetched update: path=%q err=%v hits=%d", path, err, hits.Load())
 	}
 	corrupt.Store(true)
-	path, _, err = stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func()int{return 0}, nil)
+	path, _, err = stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func() int { return 0 }, nil)
 	if err == nil || path != "" {
 		t.Fatalf("bad checksum accepted: path=%q err=%v", path, err)
 	}
 	corrupt.Store(false)
 	interruptDownload.Store(true)
 	path, _, err = stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func() int {
-		if interrupted.Load() { return 1 }
+		if interrupted.Load() {
+			return 1
+		}
 		return 0
 	}, nil)
 	if err == nil || path != "" {
@@ -77,12 +93,71 @@ func TestStageUpdateRequiresIdleAndValidChecksum(t *testing.T) {
 	}
 	interruptDownload.Store(false)
 	interrupted.Store(false)
-	path, version, err := stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func()int{return 0}, nil)
+	path, version, err := stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func() int { return 0 }, nil)
 	if err != nil || path == "" || version != "v1.2.4" {
 		t.Fatalf("valid artifact not staged: path=%q version=%q err=%v", path, version, err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil || string(data) != string(payload) {
 		t.Fatalf("staged bytes: %q, %v", data, err)
+	}
+}
+
+func TestPinnedReleaseSignatureAndFailureCooldown(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("signed artifact")
+	sum := sha256.Sum256(payload)
+	var tampered, unsigned bool
+	var binaryHits int
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/manifest" {
+			m := updateManifest{Version: "v1.2.4", OS: runtime.GOOS, Arch: runtime.GOARCH, URL: server.URL + "/binary", SHA256: hex.EncodeToString(sum[:]), Size: int64(len(payload))}
+			m.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, protocol.ReleaseSigningPayload(m.Version, m.OS, m.Arch, m.SHA256, m.Size)))
+			if tampered {
+				m.Size++
+			}
+			if unsigned {
+				m.Signature = ""
+			}
+			json.NewEncoder(w).Encode(m)
+			return
+		}
+		binaryHits++
+		w.Write(payload)
+	}))
+	defer server.Close()
+	old := updateHTTPClient
+	updateHTTPClient = server.Client()
+	defer func() { updateHTTPClient = old }()
+	key := base64.StdEncoding.EncodeToString(public)
+	for _, kind := range []string{"tampered", "unsigned"} {
+		tampered = kind == "tampered"
+		unsigned = kind == "unsigned"
+		if path, _, err := stageUpdate(context.Background(), server.URL+"/manifest", t.TempDir(), "v1.2.3", func() int { return 0 }, nil, key); err == nil || path != "" {
+			t.Fatalf("accepted %s signature", kind)
+		}
+	}
+	if binaryHits != 0 {
+		t.Fatal("fetched untrusted artifact")
+	}
+	tampered = false
+	unsigned = false
+	dir := t.TempDir()
+	path, _, err := stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func() int { return 0 }, nil, key)
+	if err != nil || path == "" || binaryHits != 1 {
+		t.Fatalf("valid signature rejected: %s %v", path, err)
+	}
+	if err := updatefile.WriteJSON(filepath.Join(dir, "updates", "last-failure.json"), protocol.AgentUpdateFailure{Version: "v1.2.4", OccurredAt: time.Now().UnixMilli(), RetryAfter: time.Now().Add(time.Hour).UnixMilli(), Attempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if path, _, err := stageUpdate(context.Background(), server.URL+"/manifest", dir, "v1.2.3", func() int { return 0 }, nil, key); err == nil || path != "" {
+		t.Fatal("failure cooldown bypassed through cached artifact")
+	}
+	if binaryHits != 1 {
+		t.Fatal("cooldown fetched artifact again")
 	}
 }

@@ -213,6 +213,12 @@ func (a *Agent) onGitRequest(env *protocol.Envelope) {
 		return
 	}
 	defer a.gitMu.Unlock()
+	finish, activityErr := a.beginActivity()
+	if activityErr != nil {
+		a.replyError(env, activityErr)
+		return
+	}
+	defer finish()
 	req, err := protocol.DecodePayload[protocol.GitPayload](env)
 	if err != nil {
 		a.replyError(env, err)

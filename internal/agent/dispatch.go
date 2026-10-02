@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
- "time"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -59,10 +59,10 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 	case protocol.TypeWebStart:
 		a.onWebStart(env)
 	case protocol.TypeGitRequest:
- go a.onGitRequest(env)
- case protocol.TypeRepositoryList:
- a.onRepositoryList(env)
- case protocol.TypeToolSet:
+		go a.onGitRequest(env)
+	case protocol.TypeRepositoryList:
+		a.onRepositoryList(env)
+	case protocol.TypeToolSet:
 		a.onToolSet(env)
 	case protocol.TypeWebStop:
 		a.stopWeb()
@@ -158,6 +158,11 @@ func (a *Agent) onSessionCreate(env *protocol.Envelope) {
 // 都不应该走到那一步 —— 否则一个恶意的 cwd 就能让 Agent 反复
 // 起进程再杀掉，形成资源耗尽攻击。
 func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Session, error) {
+	finish, err := a.beginActivity()
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	// 1. 命令：只能从白名单里选（除非显式开启自定义命令）。
 	cmd, err := a.commandConfig().ResolveCommand(req.CommandID, req.Command, req.Args, req.Resume)
 	if err != nil {
@@ -174,16 +179,20 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 	}
 
 	// Isolated task directories are created only after command and path validation.
- var rollback func()
- if req.Worktree {
-  if req.Resume { return nil, fmt.Errorf("%w: 独立工作区必须新建对话", protocol.ErrInvalidPayload) }
-  ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-  cwd, rollback, err = createWorktree(ctx, a.ws, cwd)
-  cancel()
-  if err != nil { return nil, err }
- }
+	var rollback func()
+	if req.Worktree {
+		if req.Resume {
+			return nil, fmt.Errorf("%w: 独立工作区必须新建对话", protocol.ErrInvalidPayload)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		cwd, rollback, err = createWorktree(ctx, a.ws, cwd)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+	}
 
- // 3. 尺寸：0 值用安全默认（80x24），前端 attach 后会立刻覆盖。
+	// 3. 尺寸：0 值用安全默认（80x24），前端 attach 后会立刻覆盖。
 	cols, rows := req.Cols, req.Rows
 	if cols == 0 {
 		cols = terminal.DefaultCols
@@ -212,8 +221,10 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 		Cols:    cols,
 		Rows:    rows,
 	})
- if err != nil && rollback != nil { rollback() }
- return sess, err
+	if err != nil && rollback != nil {
+		rollback()
+	}
+	return sess, err
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +478,7 @@ func (a *Agent) sendSessionSync() {
 
 // sendHeartbeat 上报心跳 + 会话摘要（§3.3）。
 func (a *Agent) sendHeartbeat(context.Context) error {
+	a.writeManagedHealth(true)
 	summaries := a.mgr.Snapshot()
 	out := make([]protocol.HeartbeatSession, 0, len(summaries))
 	for _, s := range summaries {
@@ -488,11 +500,11 @@ func (a *Agent) sendHeartbeat(context.Context) error {
 	}
 
 	env, err := protocol.NewEnvelope(protocol.TypeAgentHeartbeat, protocol.HeartbeatPayload{
-		Sessions: out,
-		Update: a.currentUpdateStatus(),
-		Commands: a.commandInventory(),
+		Sessions:      out,
+		Update:        a.currentUpdateStatus(),
+		Commands:      a.commandInventory(),
 		DSHWebEnabled: &a.cfg.DSHWebEnabled,
-		Roots: a.ws.Roots(),
+		Roots:         a.ws.Roots(),
 	})
 	if err != nil {
 		return err

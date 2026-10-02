@@ -19,9 +19,11 @@ import (
 // 所以心跳**不能省**，也不能"连上就不发了"。它是分布式状态收敛的
 // 唯一周期信号。
 type heartbeatTicker struct {
-	interval time.Duration
-	onTick   func(ctx context.Context) error
-	log      *slog.Logger
+	interval         time.Duration
+	onTick           func(ctx context.Context) error
+	onProgress       func()
+	progressInterval time.Duration
+	log              *slog.Logger
 }
 
 func newHeartbeatTicker(interval time.Duration, log *slog.Logger, onTick func(context.Context) error) *heartbeatTicker {
@@ -39,12 +41,22 @@ func (h *heartbeatTicker) run(ctx context.Context) {
 	t := time.NewTicker(h.interval)
 	defer t.Stop()
 
+	progressInterval := h.progressInterval
+	if progressInterval <= 0 {
+		progressInterval = 15 * time.Second
+	}
+	progress := time.NewTicker(progressInterval)
+	defer progress.Stop()
 	h.log.Debug("心跳已启动", "interval", h.interval)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-progress.C:
+			if h.onProgress != nil {
+				h.onProgress()
+			}
 		case <-t.C:
 			// 心跳失败**不终止连接**：发送失败通常意味着链路已经出问题，
 			// 而 readPump 会更快地发现（读超时 / 写失败）。

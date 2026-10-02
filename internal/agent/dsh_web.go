@@ -19,27 +19,36 @@ import (
 )
 
 const dshLoopback = "127.0.0.1:3080"
+
 var webAuthority = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]$`)
 
 type webStream struct {
-	mu sync.Mutex
-	conn net.Conn
+	mu    sync.Mutex
+	conn  net.Conn
 	queue chan []byte
-	done chan struct{}
-	once sync.Once
+	done  chan struct{}
+	once  sync.Once
 }
 
 func (s *webStream) close() {
 	s.once.Do(func() {
 		close(s.done)
 		s.mu.Lock()
-		if s.conn != nil { _ = s.conn.Close() }
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
 		s.mu.Unlock()
 	})
 }
 
 func (a *Agent) onWebStart(req *protocol.Envelope) {
 	go func() {
+		finish, activityErr := a.beginActivity()
+		if activityErr != nil {
+			a.replyError(req, activityErr)
+			return
+		}
+		defer finish()
 		p, err := protocol.DecodePayload[protocol.WebStartPayload](req)
 		if err != nil || !a.cfg.DSHWebEnabled || !webAuthority.MatchString(p.Host) ||
 			strings.Contains(p.Host, "..") || !strings.Contains(p.Host, ".") {
@@ -64,15 +73,24 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 		}
 		cmd := exec.Command(binary, "web", "--no-open", "--trusted-host", p.Host)
 		stdout, err := cmd.StdoutPipe()
-		if err != nil { a.replyError(req, err); return }
+		if err != nil {
+			a.replyError(req, err)
+			return
+		}
 		cmd.Stderr = io.Discard // DSH may print credentials; never copy them into Agent logs.
-		if err := cmd.Start(); err != nil { a.replyError(req, err); return }
+		if err := cmd.Start(); err != nil {
+			a.replyError(req, err)
+			return
+		}
 		exited := make(chan struct{})
 		go func() {
 			_ = cmd.Wait()
 			close(exited)
 			a.webMu.Lock()
-			if a.webProcess == cmd { a.webProcess = nil; a.webCookie = "" }
+			if a.webProcess == cmd {
+				a.webProcess = nil
+				a.webCookie = ""
+			}
 			a.webMu.Unlock()
 		}()
 		ready := make(chan string, 1)
@@ -82,12 +100,15 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
 				if strings.HasPrefix(line, "dsh web: http://") {
-					select { case ready <- strings.TrimPrefix(line, "dsh web: "): default: }
+					select {
+					case ready <- strings.TrimPrefix(line, "dsh web: "):
+					default:
+					}
 				}
 			}
 		}()
 		var launchURL string
-		timer := time.NewTimer(40*time.Second)
+		timer := time.NewTimer(40 * time.Second)
 		defer timer.Stop()
 		select {
 		case launchURL = <-ready:
@@ -115,13 +136,19 @@ func bootstrapDSH(rawURL, host string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	req.Host = host
-	client := &http.Client{Timeout: 5*time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	res, err := client.Do(req)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusSeeOther { return "", errors.New("DSH did not exchange browser token") }
+	if res.StatusCode != http.StatusSeeOther {
+		return "", errors.New("DSH did not exchange browser token")
+	}
 	for _, c := range res.Cookies() {
 		if strings.HasPrefix(c.Name, "dsh-auth-") && c.Value != "" {
 			return c.Name + "=" + c.Value, nil
@@ -133,7 +160,9 @@ func bootstrapDSH(rawURL, host string) (string, error) {
 func (a *Agent) stopWeb() {
 	a.webMu.Lock()
 	defer a.webMu.Unlock()
-	if a.webProcess != nil { _ = a.webProcess.Process.Kill() }
+	if a.webProcess != nil {
+		_ = a.webProcess.Process.Kill()
+	}
 	a.webProcess = nil
 	a.webCookie = ""
 	a.closeWebStreams()
@@ -150,12 +179,16 @@ func (a *Agent) closeWebStreams() {
 	streams := a.webStreams
 	a.webStreams = nil
 	a.webStreamsMu.Unlock()
-	for _, s := range streams { s.close() }
+	for _, s := range streams {
+		s.close()
+	}
 }
 
 func (a *Agent) removeWebStream(id uuid.UUID, s *webStream) {
 	a.webStreamsMu.Lock()
-	if a.webStreams[id] == s { delete(a.webStreams, id) }
+	if a.webStreams[id] == s {
+		delete(a.webStreams, id)
+	}
 	a.webStreamsMu.Unlock()
 	s.close()
 }
@@ -163,32 +196,56 @@ func (a *Agent) removeWebStream(id uuid.UUID, s *webStream) {
 func (a *Agent) onWebOpen(req *protocol.Envelope) {
 	p, err := protocol.DecodePayload[protocol.WebStreamPayload](req)
 	id, parseErr := uuid.Parse(p.StreamID)
-	if err != nil || parseErr != nil || !a.cfg.DSHWebEnabled { return }
+	if err != nil || parseErr != nil || !a.cfg.DSHWebEnabled {
+		return
+	}
 	a.webMu.Lock()
 	ready := a.webProcess != nil && a.webCookie != ""
 	a.webMu.Unlock()
-	if !ready { return }
+	if !ready {
+		return
+	}
 	s := &webStream{queue: make(chan []byte, 16), done: make(chan struct{})}
 	a.webStreamsMu.Lock()
-	if len(a.webStreams) >= 32 { a.webStreamsMu.Unlock(); return }
-	if a.webStreams == nil { a.webStreams = make(map[uuid.UUID]*webStream) }
+	if len(a.webStreams) >= 32 {
+		a.webStreamsMu.Unlock()
+		return
+	}
+	if a.webStreams == nil {
+		a.webStreams = make(map[uuid.UUID]*webStream)
+	}
 	a.webStreams[id] = s
 	a.webStreamsMu.Unlock()
 	go func() {
 		defer a.removeWebStream(id, s)
 		local, err := net.DialTimeout("tcp", dshLoopback, 5*time.Second)
-		if err != nil { a.sendWebClose(id); return }
+		if err != nil {
+			a.sendWebClose(id)
+			return
+		}
 		s.mu.Lock()
-		select { case <-s.done: s.mu.Unlock(); _ = local.Close(); return; default: }
+		select {
+		case <-s.done:
+			s.mu.Unlock()
+			_ = local.Close()
+			return
+		default:
+		}
 		s.conn = local
 		s.mu.Unlock()
 		go func() {
 			for {
 				select {
-				case <-s.done: return
+				case <-s.done:
+					return
 				case data := <-s.queue:
-					if len(data) == 0 { continue }
-					if _, err := local.Write(data); err != nil { s.close(); return }
+					if len(data) == 0 {
+						continue
+					}
+					if _, err := local.Write(data); err != nil {
+						s.close()
+						return
+					}
 				}
 			}
 		}()
@@ -197,11 +254,17 @@ func (a *Agent) onWebOpen(req *protocol.Envelope) {
 			n, err := local.Read(buf)
 			if n > 0 {
 				frame, encErr := protocol.EncodeFrame(protocol.FrameWebToServer, 0, id, buf[:n])
-				if encErr != nil { break }
+				if encErr != nil {
+					break
+				}
 				conn := a.currentConn()
-				if conn == nil || conn.SendBinaryReliable(frame) != nil { break }
+				if conn == nil || conn.SendBinaryReliable(frame) != nil {
+					break
+				}
 			}
-			if err != nil { break }
+			if err != nil {
+				break
+			}
 		}
 		a.sendWebClose(id)
 	}()
@@ -209,26 +272,36 @@ func (a *Agent) onWebOpen(req *protocol.Envelope) {
 
 func (a *Agent) sendWebClose(id uuid.UUID) {
 	env, err := protocol.NewEnvelope(protocol.TypeWebClose, protocol.WebStreamPayload{StreamID: id.String()})
-	if err == nil { _ = a.sendControl(env) }
+	if err == nil {
+		_ = a.sendControl(env)
+	}
 }
 
 func (a *Agent) onWebClose(env *protocol.Envelope) {
 	p, err := protocol.DecodePayload[protocol.WebStreamPayload](env)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	id, err := uuid.Parse(p.StreamID)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	a.webStreamsMu.Lock()
 	s := a.webStreams[id]
 	delete(a.webStreams, id)
 	a.webStreamsMu.Unlock()
-	if s != nil { s.close() }
+	if s != nil {
+		s.close()
+	}
 }
 
 func (a *Agent) onWebFrame(f protocol.Frame) {
 	a.webStreamsMu.Lock()
 	s := a.webStreams[f.StreamID]
 	a.webStreamsMu.Unlock()
-	if s == nil { return }
+	if s == nil {
+		return
+	}
 	if len(f.Payload) > 16<<10 {
 		a.removeWebStream(f.StreamID, s)
 		a.sendWebClose(f.StreamID)

@@ -37,7 +37,8 @@ var (
 type Workspace struct {
 	// roots 是已归一化（绝对路径 + Clean + 去重）的根目录。
 	// 由 Config.Prepare 保证。
-	roots []string
+	roots    []string
+	excluded []string
 }
 
 // NewWorkspace 创建一个工作区校验器。
@@ -47,6 +48,29 @@ type Workspace struct {
 // 「没有配置工作区」应该是"什么都访问不了"，而不是"什么都能访问"。
 func NewWorkspace(roots []string) *Workspace {
 	return &Workspace{roots: append([]string(nil), roots...)}
+}
+
+// ExcludePrivateState prevents remote file/Git APIs from reaching Agent keys,
+// updater tickets and binaries even when a broader allowed root contains them.
+func (w *Workspace) ExcludePrivateState(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	real, err := resolveReal(abs)
+	if err != nil {
+		return err
+	}
+	w.excluded = append(w.excluded, filepath.Clean(abs), real)
+	return nil
+}
+func (w *Workspace) privatePath(path string) bool {
+	for _, root := range w.excluded {
+		if pathEqual(path, root) || strings.HasPrefix(normCase(path), normCase(root)+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Roots 返回允许的根目录副本。
@@ -84,7 +108,7 @@ func (w *Workspace) Resolve(p string) (string, error) {
 	abs = filepath.Clean(abs)
 
 	// 第二道防线：字面比对。
-	if !w.within(abs) {
+	if !w.within(abs) || w.privatePath(abs) {
 		return "", fmt.Errorf("%w: %s", ErrPathNotAllowed, abs)
 	}
 
@@ -98,7 +122,7 @@ func (w *Workspace) Resolve(p string) (string, error) {
 		// 解析失败不放过：宁可拒绝，也不要"因为查不出来就假设它安全"。
 		return "", fmt.Errorf("agent: 无法解析 %s 的真实路径: %w", abs, err)
 	}
-	if !w.within(real) {
+	if !w.within(real) || w.privatePath(real) {
 		return "", fmt.Errorf("%w: %s 解析后指向 %s", ErrPathNotAllowed, abs, real)
 	}
 	return real, nil

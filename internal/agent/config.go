@@ -17,6 +17,8 @@
 package agent
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -218,10 +220,11 @@ type Config struct {
 	ReconnectMax      Duration `json:"reconnect_max,omitempty"`
 
 	// UpdateManifestURL points to a trusted HTTPS manifest for optional idle updates.
-	UpdateEnabled     bool `json:"update_enabled,omitempty"`
+	UpdatePublicKey string `json:"update_public_key,omitempty"`
+	UpdateEnabled   bool   `json:"update_enabled,omitempty"`
 	// DSHWebEnabled permits starting dsh web and proxying its fixed loopback port.
-	DSHWebEnabled bool `json:"dsh_web_enabled,omitempty"`
-	UpdateInterval    Duration `json:"update_interval,omitempty"`
+	DSHWebEnabled  bool     `json:"dsh_web_enabled,omitempty"`
+	UpdateInterval Duration `json:"update_interval,omitempty"`
 }
 
 // DefaultConfig 返回一份可用的最小配置。
@@ -238,7 +241,7 @@ func DefaultConfig() Config {
 		ReconnectMin:        Duration(DefaultReconnectMin),
 		ReconnectMax:        Duration(DefaultReconnectMax),
 		AllowCustomCommands: false,
-		UpdateInterval: Duration(time.Hour),
+		UpdateInterval:      Duration(time.Hour),
 	}
 }
 
@@ -298,6 +301,13 @@ func (c Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("agent: server_url 的协议 %q 不支持（应为 wss:// 或 ws://）", u.Scheme)
+	}
+
+	if c.UpdatePublicKey != "" {
+		key, err := base64.StdEncoding.DecodeString(c.UpdatePublicKey)
+		if err != nil || len(key) != ed25519.PublicKeySize {
+			return errors.New("agent: update_public_key 须为 base64 Ed25519 公钥")
+		}
 	}
 
 	if c.UpdateEnabled {

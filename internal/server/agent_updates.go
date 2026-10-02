@@ -105,9 +105,16 @@ func (s *Server) handleAgentUpdateManifest(w http.ResponseWriter, r *http.Reques
 	downloadPath := "/api/v1/agent-updates/" + r.PathValue("os") + "/" + r.PathValue("arch") + "/binary"
 	// Preserve the Host received through the reverse proxy: it is also bound
 	// into the Agent's signature and must match the Agent's Server URL.
+	signature := ""
+	signaturePath := filepath.Join(s.cfg.AgentUpdatesDir, r.PathValue("os"), r.PathValue("arch"), "signature.txt")
+	if info, err := os.Lstat(signaturePath); err == nil && info.Mode().IsRegular() && info.Size() <= 1024 {
+		if raw, err := os.ReadFile(signaturePath); err == nil {
+			signature = strings.TrimSpace(string(raw))
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version": version, "os": r.PathValue("os"), "arch": r.PathValue("arch"),
-		"url": "https://" + r.Host + downloadPath,
+		"signature": signature, "version": version, "os": r.PathValue("os"), "arch": r.PathValue("arch"),
+		"url":    "https://" + r.Host + downloadPath,
 		"sha256": hex.EncodeToString(sum.Sum(nil)), "size": info.Size(),
 	})
 }
