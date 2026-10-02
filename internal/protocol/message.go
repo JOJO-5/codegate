@@ -140,6 +140,7 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
+ Worktrees bool `json:"worktrees,omitempty"`
  GitReview bool `json:"git_review,omitempty"`
  RepositoryScan bool `json:"repository_scan,omitempty"`
 	MaxSessions int  `json:"max_sessions"`
@@ -290,6 +291,7 @@ type SessionSyncPayload struct {
 //   - 走白名单时只传 CommandID
 //   - 允许自定义命令时传 Command/Args（需 Agent 侧显式开启，§21.1）
 type SessionCreatePayload struct {
+ Worktree bool `json:"worktree,omitempty"`
 	DeviceID  string   `json:"device_id"`
 	Name      string   `json:"name,omitempty"`
 	CommandID string   `json:"command_id,omitempty"`

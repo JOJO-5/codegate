@@ -125,3 +125,7 @@ Windows 上的 ConPTY 集成测试位于 `internal/terminal`。完整端到端�
 在会话终端点击 **Git**，可查看当前工作目录所属仓库的分支、改动文件，以及已暂存/未暂存差异。新文件提供有限长度文本预览，二进制文件不展示内容。大清单/差异会标记截断，完整内容可在终端查看。目标 Agent 和 Server 均需升级至 v0.1.7。仓库工作目录与共享 Git 元数据必须位于该 Agent 授权的工作目录内。
 
 分期范围与验收见 [远程编程计划](docs/REMOTE-CODING-ROADMAP.md)。
+
+### 独立 Git 工作区（v0.1.8）
+
+设备页新建会话时勾选 **创建独立 Git 工作区**，Agent 会从当前 HEAD 创建唯一的 `codegate/task-*` 分支与 `.codegate-worktrees/<任务 ID>` 目录。原目录未提交的修改不会复制。关闭会话后工作区保留，通过扫描清单或手动选择该路径可继续工作。新建 CLI 失败会尝试移除干净工作区；已有修改不会强制删除。目录仅通过 Git 本地 exclude 忽略，不修改项目的 .gitignore。清理可在终端使用 `git worktree remove <路径>`，本版本不提供自动合并或自动清理。Server 与 Agent 均需升级。

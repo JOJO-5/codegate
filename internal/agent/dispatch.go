@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+ "time"
 
 	"github.com/google/uuid"
 
@@ -172,7 +173,17 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 		return nil, err
 	}
 
-	// 3. 尺寸：0 值用安全默认（80x24），前端 attach 后会立刻覆盖。
+	// Isolated task directories are created only after command and path validation.
+ var rollback func()
+ if req.Worktree {
+  if req.Resume { return nil, fmt.Errorf("%w: 独立工作区必须新建对话", protocol.ErrInvalidPayload) }
+  ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+  cwd, rollback, err = createWorktree(ctx, a.ws, cwd)
+  cancel()
+  if err != nil { return nil, err }
+ }
+
+ // 3. 尺寸：0 值用安全默认（80x24），前端 attach 后会立刻覆盖。
 	cols, rows := req.Cols, req.Rows
 	if cols == 0 {
 		cols = terminal.DefaultCols
@@ -189,7 +200,7 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 		name = cmd.Label
 	}
 
-	return a.mgr.Create(context.Background(), session.CreateRequest{
+	sess, err := a.mgr.Create(context.Background(), session.CreateRequest{
 		DeviceID: a.deviceUUID(),
 		// UserID 由 Server 侧填充 —— Agent 不知道也不该知道是哪个用户在操作。
 		UserID:  uuid.Nil,
@@ -201,6 +212,8 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 		Cols:    cols,
 		Rows:    rows,
 	})
+ if err != nil && rollback != nil { rollback() }
+ return sess, err
 }
 
 // ---------------------------------------------------------------------------
