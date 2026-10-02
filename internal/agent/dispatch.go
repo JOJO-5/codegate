@@ -149,6 +149,28 @@ func (a *Agent) onSessionCreate(env *protocol.Envelope) {
 	a.reply(env, protocol.TypeSessionCreated, protocol.SessionCreatedPayload{
 		Session: sess.Summary(),
 	})
+	// Queue creation before watching Done, including commands that exit during
+	// launch. This preserves Server ownership registration before exit delivery.
+	go a.watchSessionExit(sess)
+}
+
+func (a *Agent) watchSessionExit(sess *session.Session) {
+	<-sess.Done()
+	if sess.Summary().Status != "exited" {
+		return
+	} // Explicit close has its own acknowledgement.
+	code, _, reason, ended := sess.ExitInfo()
+	if !ended {
+		return
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeSessionExit, protocol.SessionExitPayload{SessionID: sess.ID.String(), ExitCode: code, Reason: reason})
+	if err == nil {
+		env.SessionID = sess.ID.String()
+		err = a.sendControl(env)
+	}
+	if err != nil {
+		a.log.Warn("发送进程退出事件失败，重连后将通过会话对账同步状态", "session", sess.ID, "err", err)
+	}
 }
 
 // createSession 做全部安全校验，然后创建会话。

@@ -815,6 +815,17 @@ func (s *agentSession) handleSessionEnded(env *protocol.Envelope) error {
 func (s *agentSession) finishSession(env *protocol.Envelope, sid string, spontaneous bool, except *ClientConn) {
 	ctx, cancel := s.dbCtx()
 	defer cancel()
+	// An authenticated Agent may only report exits for its own registered
+	// sessions. Validate durable ownership before mutating or notifying anyone.
+	stored, err := s.srv.store.SessionByID(ctx, sid)
+	if err != nil || stored.UserID != s.ac.UserID || stored.DeviceID != s.ac.DeviceID || !s.ac.HasSession(sid) { return }
+	if env.Type == protocol.TypeSessionExit {
+		payload, err := protocol.DecodePayload[protocol.SessionExitPayload](env)
+		if err != nil || payload.SessionID != sid { return }
+	} else {
+		payload, err := protocol.DecodePayload[protocol.SessionClosedPayload](env)
+		if err != nil || payload.SessionID != sid { return }
+	}
 
 	now := s.srv.now()
 	status := "exited"
@@ -846,7 +857,13 @@ func (s *agentSession) finishSession(env *protocol.Envelope, sid string, spontan
 	//
 	// 这个顺序错了整整一个 Phase 才被端到端测试抓出来 ——
 	// 因为单元测试里通常只有一个订阅者，而它恰好是 except 的那个。
-	s.srv.relay.BroadcastToSession(sid, env, except)
+	if spontaneous {
+		// Clear request/reply IDs: lifecycle events are not request replies.
+		push, err := protocol.NewEnvelope(env.Type, env.Payload)
+		if err == nil { push.SessionID = sid; s.srv.relay.BroadcastToUser(s.ac.UserID, push) }
+	} else {
+		s.srv.relay.BroadcastToSession(sid, env, except)
+	}
 	s.srv.reg.ForgetSession(sid)
 
 	s.srv.audit(ctx, auditEntry{
