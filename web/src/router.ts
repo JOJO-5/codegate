@@ -43,6 +43,7 @@ const routes: RouteRecordRaw[] = [
     props: true,
     meta: { title: '设备详情' },
   },
+  { path: '/devices/:id/workspaces', name: 'workspaces', component: () => import('./views/WorkspacesView.vue'), props: true, meta: { title: '独立工作区' } },
   {
     path: '/sessions/:id',
     name: 'session',

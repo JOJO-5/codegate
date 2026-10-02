@@ -31,7 +31,8 @@
 import type { SessionSummary } from './protocol'
 
 export interface GitFile { path: string; status: string; original?: string }
-export interface GitResult { head: string; message?: string; root: string; branch: string; files: GitFile[]; diff?: string; truncated: boolean }
+export interface WorktreeInfo { path: string; branch: string; head: string; changed: boolean; unique_commits: number; occupied: boolean; blocked_reason?: string }
+export interface GitResult { worktrees?: WorktreeInfo[]; head: string; message?: string; root: string; branch: string; files: GitFile[]; diff?: string; truncated: boolean }
 
 const BASE = '/api/v1'
 
@@ -413,7 +414,7 @@ export const api = {
     return request<DeviceDTO>('GET', `/devices/${encodeURIComponent(id)}`)
   },
 
-  deviceGit(id: string, path: string, action: 'status' | 'diff' | 'commit' | 'push', file = '', staged = false, options: { message?: string; expected_head?: string; confirm?: boolean } = {}): Promise<GitResult> {
+  deviceGit(id: string, path: string, action: 'status' | 'diff' | 'commit' | 'push' | 'worktrees' | 'worktree_remove', file = '', staged = false, options: { message?: string; expected_head?: string; confirm?: boolean; target?: string } = {}): Promise<GitResult> {
     return request<GitResult>('POST', `/devices/${encodeURIComponent(id)}/git`, { path, action, file, staged, ...options })
   },
 

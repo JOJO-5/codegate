@@ -23,9 +23,19 @@ func (s *Server) handleDeviceGit(w http.ResponseWriter, r *http.Request) {
 	var req protocol.GitPayload
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil || (req.Action != "status" && req.Action != "diff" && req.Action != "commit" && req.Action != "push") || req.Path == "" {
+	if err := decoder.Decode(&req); err != nil || (req.Action != "status" && req.Action != "diff" && req.Action != "commit" && req.Action != "push" && req.Action != "worktrees" && req.Action != "worktree_remove") || req.Path == "" {
 		writeError(w, 400, "invalid_payload", "无效 Git 请求")
 		return
+	}
+	if req.Action == "worktrees" || req.Action == "worktree_remove" {
+		if !ac.Caps().WorktreeManagement {
+			writeError(w, 409, "agent_upgrade_required", "请更新 Agent 到 v0.1.12 后管理工作区")
+			return
+		}
+		if req.Action == "worktree_remove" && (!req.Confirm || req.ExpectedHead == "" || req.Target == "") {
+			writeError(w, 400, "invalid_payload", "请刷新工作区并确认目标后清理")
+			return
+		}
 	}
 	if req.Action == "commit" || req.Action == "push" {
 		if !ac.Caps().GitActions {

@@ -140,13 +140,14 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
-	GitActions     bool `json:"git_actions,omitempty"`
-	Worktrees      bool `json:"worktrees,omitempty"`
-	GitReview      bool `json:"git_review,omitempty"`
-	RepositoryScan bool `json:"repository_scan,omitempty"`
-	MaxSessions    int  `json:"max_sessions"`
-	ConPTY         bool `json:"conpty,omitempty"`
-	UnixPTY        bool `json:"unix_pty,omitempty"`
+	WorktreeManagement bool `json:"worktree_management,omitempty"`
+	GitActions         bool `json:"git_actions,omitempty"`
+	Worktrees          bool `json:"worktrees,omitempty"`
+	GitReview          bool `json:"git_review,omitempty"`
+	RepositoryScan     bool `json:"repository_scan,omitempty"`
+	MaxSessions        int  `json:"max_sessions"`
+	ConPTY             bool `json:"conpty,omitempty"`
+	UnixPTY            bool `json:"unix_pty,omitempty"`
 }
 
 // AgentChallengePayload 是 Server 发来的随机数，用于防重放。
@@ -559,6 +560,7 @@ type RepositoryListResult struct {
 
 // Git requests originate only from the authenticated Server HTTP endpoint.
 type GitPayload struct {
+	Target       string `json:"target,omitempty"`
 	Message      string `json:"message,omitempty"`
 	ExpectedHead string `json:"expected_head,omitempty"`
 	Confirm      bool   `json:"confirm,omitempty"`
@@ -573,13 +575,24 @@ type GitFile struct {
 	Original string `json:"original,omitempty"`
 }
 type GitResult struct {
-	Head      string    `json:"head"`
-	Message   string    `json:"message,omitempty"`
-	Root      string    `json:"root"`
-	Branch    string    `json:"branch"`
-	Files     []GitFile `json:"files"`
-	Diff      string    `json:"diff,omitempty"`
-	Truncated bool      `json:"truncated"`
+	Worktrees []WorktreeInfo `json:"worktrees,omitempty"`
+	Head      string         `json:"head"`
+	Message   string         `json:"message,omitempty"`
+	Root      string         `json:"root"`
+	Branch    string         `json:"branch"`
+	Files     []GitFile      `json:"files"`
+	Diff      string         `json:"diff,omitempty"`
+	Truncated bool           `json:"truncated"`
+}
+
+type WorktreeInfo struct {
+	Path          string `json:"path"`
+	Branch        string `json:"branch"`
+	Head          string `json:"head"`
+	Changed       bool   `json:"changed"`
+	UniqueCommits int    `json:"unique_commits"`
+	Occupied      bool   `json:"occupied"`
+	BlockedReason string `json:"blocked_reason,omitempty"`
 }
 
 // ManagedHealth is a private progress marker consumed by the local supervisor.

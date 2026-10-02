@@ -36,7 +36,7 @@
 import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -413,6 +413,10 @@ async function terminate(): Promise<void> {
   errorText.value = null
   try {
     await sessions.close(sessionId.value)
+	// Successful request replies are consumed by the request promise, not by
+	// the unsolicited-event listener. Reflect that acknowledgement explicitly.
+	exitInfo.value = { session_id: sessionId.value, exit_code: -1, reason: 'terminated' }
+	if (summary.value) summary.value = { ...summary.value, status: 'terminated' }
     confirmTerminate.value = false
   } catch (e) {
     errorText.value = humanizeError(e)
@@ -659,7 +663,7 @@ onUnmounted(() => {
 
     <details class="term__identity" :open="workspaceOpen" @toggle="workspaceOpen = ($event.target as HTMLDetailsElement).open">
       <summary>{{ devices.byId(sessionDevice)?.name || '设备' }} · {{ summary?.command || '工具' }} · {{ workspaceBranch || '分支待确认' }} · {{ isolatedWorkspace ? '独立工作区' : '原目录' }}</summary>
-      <div class="row"><span class="mono">{{ summary?.cwd }}</span><button class="btn btn--ghost btn--sm" @click="refreshIdentity">刷新分支</button></div><p v-if="workspaceError" class="small dim">{{ workspaceError }}</p>
+      <div class="row"><span class="mono">{{ summary?.cwd }}</span><button class="btn btn--ghost btn--sm" @click="refreshIdentity">刷新分支</button></div><RouterLink v-if="summary" class="btn btn--ghost btn--sm" :to="{ name: 'workspaces', params: { id: sessionDevice }, query: { path: summary.cwd } }">管理独立工作区</RouterLink><p v-if="workspaceError" class="small dim">{{ workspaceError }}</p>
     </details>
     <!-- ---- 终端 ---- -->
     <div class="term__workspace">

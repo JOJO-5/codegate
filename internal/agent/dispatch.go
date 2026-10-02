@@ -163,6 +163,9 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 		return nil, err
 	}
 	defer finish()
+	// Serialize directory selection and process creation with worktree removal.
+	a.workspaceMu.Lock()
+	defer a.workspaceMu.Unlock()
 	// 1. 命令：只能从白名单里选（除非显式开启自定义命令）。
 	cmd, err := a.commandConfig().ResolveCommand(req.CommandID, req.Command, req.Args, req.Resume)
 	if err != nil {

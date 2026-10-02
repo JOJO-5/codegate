@@ -226,7 +226,20 @@ func (a *Agent) onGitRequest(env *protocol.Envelope) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := gitReview(ctx, a.ws, req)
+	var out protocol.GitResult
+	if req.Action == "worktrees" || req.Action == "worktree_remove" {
+		a.workspaceMu.Lock()
+		out, err = managedWorktrees(ctx, a.ws, req, a.mgr.Snapshot())
+		a.workspaceMu.Unlock()
+		if err == nil && req.Action == "worktree_remove" {
+			select {
+			case a.repositoryRefresh <- struct{}{}:
+			default:
+			}
+		}
+	} else {
+		out, err = gitReview(ctx, a.ws, req)
+	}
 	if err != nil {
 		a.replyError(env, err)
 		return
@@ -241,6 +254,8 @@ func (a *Agent) onGitRequest(env *protocol.Envelope) {
 			out.Diff = out.Diff[:len(out.Diff)/2]
 		} else if len(out.Files) > 0 {
 			out.Files = out.Files[:len(out.Files)-1]
+		} else if len(out.Worktrees) > 0 {
+			out.Worktrees = out.Worktrees[:len(out.Worktrees)-1]
 		} else {
 			break
 		}
