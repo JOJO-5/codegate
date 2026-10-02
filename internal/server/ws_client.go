@@ -241,6 +241,14 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		return
 	}
 
+ if env.Type == protocol.TypeSessionCreate {
+  req, err := protocol.DecodePayload[protocol.SessionCreatePayload](env)
+  if err != nil { sendErrorEnvelope(s.c.TrySendText, env, err); return }
+  if req.Worktree && !agent.Caps().Worktrees {
+   sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "请更新 Agent 后创建独立 Git 工作区")); return
+  }
+ }
+
 	// Replay frames precede session.attached on the Agent connection. Subscribe
 	// before forwarding attach so the initial screen is not silently dropped.
 	var release func()

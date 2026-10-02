@@ -105,6 +105,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       cols: number
       rows: number
       name?: string
+      worktree?: boolean
       resume?: boolean
     },
   ): Promise<SessionSummary> {
@@ -118,6 +119,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       ...(opts.commandId !== undefined ? { command_id: opts.commandId } : {}),
       ...(opts.command !== undefined ? { command: opts.command } : {}),
       ...(opts.args !== undefined ? { args: opts.args } : {}),
+      ...(opts.worktree === true ? { worktree: true } : {}),
       ...(opts.resume === true ? { resume: true } : {}),
     }
 

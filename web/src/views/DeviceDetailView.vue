@@ -127,6 +127,7 @@ const updateLabel = computed(() => {
 const presetId = ref('claude')
 const cwd = ref('')
 const sessionName = ref('')
+const worktree = ref(false)
 const shortcuts = computed(() => preferences.projects.filter(p => p.device_id === props.id).map(p => ({ ...p, commandId: p.command_id })))
 function saveShortcut(): void {
   const command = selectedPreset.value
@@ -351,6 +352,7 @@ async function createSession(): Promise<void> {
     const name = sessionName.value.trim()
     const s = await sessions.create(props.id, {
       commandId: preset.id,
+      worktree: worktree.value,
       cwd: cwd.value.trim(),
       cols: size.cols,
       rows: size.rows,
@@ -493,6 +495,10 @@ function canOpen(s: SessionSummary): boolean {
           </span>
         </div>
 
+        <div class="field">
+          <label class="row"><input v-model="worktree" type="checkbox" :disabled="creating" />创建独立 Git 工作区</label>
+          <span class="field__hint">从当前 HEAD 创建新分支，原目录的未提交修改不会带入。工作区会保留，可通过仓库扫描再次打开；需要有初始提交且 Agent 至少为 v0.1.8。</span>
+        </div>
         <div class="field">
           <label for="sname">会话名（可选）</label>
           <input

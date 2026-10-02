@@ -102,7 +102,7 @@ async function remove(key: string): Promise<void> {
           <p v-if="!sessions.loading && !sessions.forDevice(project.device_id).some(s => s.cwd === project.cwd && !s.archived)" class="small dim">此目录还没有会话。</p>
         </div>
         <div class="row project-management">
-          <RouterLink v-if="devices.byId(project.device_id)" class="btn btn--ghost btn--sm" :to="{ name: 'device', params: { id: project.device_id } }">设备与工具</RouterLink>
+          <RouterLink v-if="devices.byId(project.device_id)" class="btn btn--ghost btn--sm" :to="{ name: 'device', params: { id: project.device_id } }">设备与工具 / 独立工作区</RouterLink>
           <button class="btn btn--ghost btn--sm" type="button" @click="editing = editing === project.key ? '' : project.key; label = project.label">{{ editing === project.key ? '取消改名' : '改名' }}</button>
           <button class="btn btn--ghost btn--sm" type="button" :disabled="preferences.saving" @click="remove(project.key)">{{ confirmRemove === project.key ? '确认移除项目' : '移除' }}</button>
           <button v-if="confirmRemove === project.key" class="btn btn--ghost btn--sm" type="button" @click="confirmRemove = ''">取消</button>
@@ -126,7 +126,7 @@ async function remove(key: string): Promise<void> {
           <p class="dim small">{{ repo.device_name }}{{ devices.byId(repo.device_id)?.online ? '' : ' · 离线' }}</p>
           <p class="mono project-path">{{ repo.path }}</p>
           <div class="field"><label :for="`repo-cli-${repo.device_id}-${repo.path}`">编程 CLI</label><select :id="`repo-cli-${repo.device_id}-${repo.path}`" :value="commandFor(repo.device_id)" :disabled="!devices.byId(repo.device_id)?.online" @change="repoCommands[repo.device_id] = ($event.target as HTMLSelectElement).value"><option v-if="!repositories.commands[repo.device_id]?.length" value="">请先在设备页授权已安装的工具</option><option v-for="tool in repositories.commands[repo.device_id]" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>
-          <div class="row project-launch"><button class="btn btn--primary" type="button" :disabled="!!opening || !conn.isOpen || !devices.byId(repo.device_id)?.online || !commandFor(repo.device_id)" @click="create({ key: `${repo.device_id}:${repo.path}`, label: repo.name, name: repo.name, device_id: repo.device_id, command_id: commandFor(repo.device_id), cwd: repo.path })">{{ opening === `${repo.device_id}:${repo.path}` ? '正在新建…' : '新建对话' }}</button><RouterLink class="btn btn--ghost" :to="{ name: 'device', params: { id: repo.device_id } }">设备与工具</RouterLink></div>
+          <div class="row project-launch"><button class="btn btn--primary" type="button" :disabled="!!opening || !conn.isOpen || !devices.byId(repo.device_id)?.online || !commandFor(repo.device_id)" @click="create({ key: `${repo.device_id}:${repo.path}`, label: repo.name, name: repo.name, device_id: repo.device_id, command_id: commandFor(repo.device_id), cwd: repo.path })">{{ opening === `${repo.device_id}:${repo.path}` ? '正在新建…' : '新建对话' }}</button><RouterLink class="btn btn--ghost" :to="{ name: 'device', params: { id: repo.device_id } }">设备与工具 / 独立工作区</RouterLink></div>
         </section>
       </div>
     </section>

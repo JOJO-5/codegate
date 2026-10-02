@@ -295,6 +295,7 @@ export type SessionStatus = 'starting' | 'running' | 'detached' | 'exited' | 'fa
 
 /** `protocol.SessionCreatePayload`。 */
 export interface SessionCreatePayload {
+  worktree?: boolean
   device_id: string
   name?: string
   /** 与 command/args 二选一：走白名单时只传这个。 */
