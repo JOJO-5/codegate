@@ -13,7 +13,8 @@
  * 再被实时数据覆盖，视觉上会闪一下。
  */
 
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { useAuthStore } from './auth'
 import { defineStore } from 'pinia'
 import { api } from '../lib/api'
 import { MessageType } from '../lib/protocol'
@@ -34,6 +35,15 @@ export const useSessionsStore = defineStore('sessions', () => {
 
   /** 本次列表来自哪里，UI 可以据此提示「这是缓存」。 */
   const source = ref<'live' | 'cache' | null>(null)
+  const sources = ref<Record<string, 'live' | 'cache'>>({})
+  const inflight = new Map<string, Promise<void>>()
+  const drafts = new Map<string, string>()
+  let generation = 0
+  const auth = useAuthStore()
+  watch(() => auth.user?.id, reset, { flush: 'sync' })
+  function setDraft(id: string, text: string): void { drafts.set(id, text) }
+  function takeDraft(id: string): string { const text = drafts.get(id) ?? ''; drafts.delete(id); return text }
+
 
   function forDevice(deviceId: string): SessionSummary[] {
     return byDevice.value[deviceId] ?? []
@@ -43,8 +53,17 @@ export const useSessionsStore = defineStore('sessions', () => {
     byDevice.value = { ...byDevice.value, [deviceId]: list }
   }
 
-  async function load(deviceId: string, force = false): Promise<void> {
-    if (loading.value && !force) return
+  function load(deviceId: string, _force = false): Promise<void> {
+    const pending = inflight.get(deviceId)
+    if (pending) return pending
+    const current = generation
+    const request = loadDevice(deviceId, current).finally(() => {
+      if (current === generation) { inflight.delete(deviceId); loading.value = inflight.size > 0 }
+    })
+    inflight.set(deviceId, request)
+    return request
+  }
+  async function loadDevice(deviceId: string, current: number): Promise<void> {
     loading.value = true
     error.value = null
     source.value = null
@@ -55,18 +74,22 @@ export const useSessionsStore = defineStore('sessions', () => {
     let saved: SessionSummary[] = []
     try {
       saved = await api.deviceSessions(deviceId)
+      if (current !== generation) return
       setFor(deviceId, saved)
       source.value = 'cache'
+      sources.value[deviceId] = 'cache'
     } catch (e) {
-      error.value = humanizeError(e)
+      if (current === generation) error.value = humanizeError(e)
     }
 
+    if (current !== generation) return
     if (conn.isOpen) {
       try {
         const env = await conn.request<SessionListedPayload>(
           MessageType.SessionList,
           { device_id: deviceId },
         )
+        if (current !== generation) return
         const live = env.payload?.sessions ?? []
         const active = new Set(live.map(s => s.session_id))
         const archived = new Map(saved.map(s => [s.session_id, s.archived]))
@@ -79,7 +102,7 @@ export const useSessionsStore = defineStore('sessions', () => {
           ),
         ])
         source.value = 'live'
-        loading.value = false
+        sources.value[deviceId] = 'live'
         return
       } catch {
         // device_offline / timeout 都是预期情况，静默回落到缓存。
@@ -87,7 +110,6 @@ export const useSessionsStore = defineStore('sessions', () => {
       }
     }
 
-    loading.value = false
   }
 
   /**
@@ -171,6 +193,7 @@ export const useSessionsStore = defineStore('sessions', () => {
   }
 
   function reset(): void {
+    generation++; inflight.clear(); drafts.clear(); sources.value = {}; loading.value = false
     byDevice.value = {}
     error.value = null
     source.value = null
@@ -180,7 +203,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     byDevice,
     loading,
     error,
-    source,
+    source, sources, setDraft, takeDraft,
     forDevice,
     setFor,
     load,

@@ -16,7 +16,7 @@ import { useConnStore } from '../stores/conn'
 import { useRepositoriesStore } from '../stores/repositories'
 import { usePreferencesStore } from '../stores/preferences'
 import { api, type DeviceUpdateStatus } from '../lib/api'
-import { humanizeError, platformLabel, relativeTime, statusKind, statusLabel, toMs } from '../lib/format'
+import { humanizeError, platformLabel, absoluteTime, relativeTime, statusKind, statusLabel, toMs } from '../lib/format'
 import { PRESETS, type CommandPreset } from '../lib/commands'
 import { estimateTerminalSize } from '../lib/viewport'
 import { MessageType, isLiveStatus, type SessionSummary } from '../lib/protocol'
@@ -114,7 +114,7 @@ const updateLabel = computed(() => {
   if (u === null || !u.state) return '等待 Agent 心跳'
   if (!u.enabled || u.state === 'disabled') return '自动更新未启用'
   return ({
-    waiting: '等待会话空闲',
+    waiting: '等待设备空闲',
     checking: '正在检查更新',
     current: '未发现新版本',
     staged: '更新包已校验',
@@ -724,11 +724,11 @@ function canOpen(s: SessionSummary): boolean {
         </span>
       </div>
       <p v-if="updateInfo?.update?.enabled && updateInfo.update.state === 'waiting'" class="dim small">
-        当前有会话正在运行或等待回看。明确关闭这些会话后，Agent 才会在下次检查时下载更新。
+        当前会话、Git 操作、工作区创建或 Web 服务可能占用设备。操作结束后自动更新会再次检查；需要保留的会话无需为了更新而关闭。
       </p>
       <div v-if="updateInfo?.update?.last_failure" class="notice notice--warn small" style="margin-bottom: 8px">
         上次升级未完成（{{ updateInfo.update.last_failure.version }}）：{{ updateInfo.update.last_failure.reason }}。
-        {{ relativeTime(updateInfo.update.last_failure.occurred_at) }}，已继续使用旧版。
+        {{ relativeTime(updateInfo.update.last_failure.occurred_at) }}，已继续使用旧版。<span v-if="updateInfo.update.last_failure.retry_after"> 此版本下次允许重试：{{ absoluteTime(updateInfo.update.last_failure.retry_after) }}。</span>
       </div>
       <p v-if="updateInfo?.update?.version" class="dim small">目标版本：{{ updateInfo.update.version }}</p>
       <p v-if="updateInfo?.update?.detail" class="dim small">{{ updateInfo.update.detail }}</p>

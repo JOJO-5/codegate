@@ -266,7 +266,7 @@ export interface AgentUpdateStatus {
   version?: string
   detail?: string
   checked_at?: number
-  last_failure?: { version: string; reason: string; occurred_at: number }
+  last_failure?: { version: string; reason: string; occurred_at: number; attempts?: number; retry_after?: number }
 }
 
 export interface CommandAvailability {
