@@ -33,6 +33,7 @@
  *   - `FlagBufferEnd` 只用来判断「重放结束」，不参与计数
  */
 
+import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -73,6 +74,21 @@ const hostEl = ref<HTMLDivElement | null>(null)
 const sessionId = computed(() => props.id)
 
 const summary = ref<SessionSummary | null>(null)
+const workspaceBranch = ref('')
+const workspaceError = ref('')
+const workspaceOpen = ref(false)
+const sessionDevice = computed(() => summary.value?.device_id.replace(/-/g, '') ?? '')
+const isolatedWorkspace = computed(() => /[\\/]\.codegate-worktrees[\\/]/.test(summary.value?.cwd ?? ''))
+async function refreshIdentity(): Promise<void> {
+  const s = summary.value
+  if (!s) return
+  const id = s.session_id
+  try {
+    const result = await api.deviceGit(sessionDevice.value, s.cwd, 'status')
+    if (summary.value?.session_id === id) { workspaceBranch.value = result.branch; workspaceError.value = '' }
+  } catch { if (summary.value?.session_id === id) { workspaceBranch.value = ''; workspaceError.value = '分支信息暂不可用，可能不是 Git 目录。' } }
+}
+
 const role = ref<'controller' | 'viewer'>('viewer')
 const replaying = ref(false)
 const exiting = ref(false)
@@ -349,6 +365,9 @@ async function attach(since: number): Promise<void> {
     }
 
     summary.value = p.session
+    const draft = sessions.takeDraft(p.session.session_id)
+    if (draft && !mobileDraft.value) mobileDraft.value = draft
+    void refreshIdentity()
     role.value = p.role
     void sessions.load(p.session.device_id.replace(/-/g, ''))
 
@@ -638,6 +657,10 @@ onUnmounted(() => {
       <span v-if="!conn.isOpen" class="badge badge--warn">连接中断 · 会话保留</span>
     </div>
 
+    <details class="term__identity" :open="workspaceOpen" @toggle="workspaceOpen = ($event.target as HTMLDetailsElement).open">
+      <summary>{{ devices.byId(sessionDevice)?.name || '设备' }} · {{ summary?.command || '工具' }} · {{ workspaceBranch || '分支待确认' }} · {{ isolatedWorkspace ? '独立工作区' : '原目录' }}</summary>
+      <div class="row"><span class="mono">{{ summary?.cwd }}</span><button class="btn btn--ghost btn--sm" @click="refreshIdentity">刷新分支</button></div><p v-if="workspaceError" class="small dim">{{ workspaceError }}</p>
+    </details>
     <!-- ---- 终端 ---- -->
     <div class="term__workspace">
       <aside class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区">

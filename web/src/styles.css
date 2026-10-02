@@ -838,3 +838,15 @@ a.item:hover {
 
 .task-templates { gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .task-templates select { width: auto; max-width: 100%; font-size: 12px; padding: 5px 8px; }
+
+/* Task entry and persistent workspace identity. */
+.recent-work, .task-launch { margin-bottom: 20px; }
+.recent-work__item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.recent-work__item > div { min-width: 0; }
+.recent-work__item .btn { flex-shrink: 0; }
+.launch-summary { overflow-wrap: anywhere; }
+.task-launch { scroll-margin-top: 20px; }
+.term__identity { padding: 6px 12px; background: var(--bg-elev); border-bottom: 1px solid var(--border); font-size: 12px; flex-shrink: 0; overflow-wrap: anywhere; }
+.term__identity summary { cursor: pointer; }
+.term__identity .row { padding-top: 8px; }
+.term__identity .mono { min-width: 0; flex: 1; overflow-wrap: anywhere; }
