@@ -23,9 +23,19 @@ func (s *Server) handleDeviceGit(w http.ResponseWriter, r *http.Request) {
 	var req protocol.GitPayload
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil || (req.Action != "status" && req.Action != "diff") || req.Path == "" {
+	if err := decoder.Decode(&req); err != nil || (req.Action != "status" && req.Action != "diff" && req.Action != "commit" && req.Action != "push") || req.Path == "" {
 		writeError(w, 400, "invalid_payload", "无效 Git 请求")
 		return
+	}
+	if req.Action == "commit" || req.Action == "push" {
+		if !ac.Caps().GitActions {
+			writeError(w, 409, "agent_upgrade_required", "请更新 Agent 后提交或推送")
+			return
+		}
+		if !req.Confirm || req.ExpectedHead == "" {
+			writeError(w, 400, "invalid_payload", "请先刷新改动并确认操作")
+			return
+		}
 	}
 	id := uuid.NewString()
 	ch := make(chan *protocol.Envelope, 1)
@@ -50,7 +60,7 @@ func (s *Server) handleDeviceGit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "agent_busy", "Agent 暂时繁忙")
 		return
 	}
-	timer := time.NewTimer(12 * time.Second)
+	timer := time.NewTimer(40 * time.Second)
 	defer timer.Stop()
 	select {
 	case response := <-ch:

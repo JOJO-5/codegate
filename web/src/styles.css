@@ -835,3 +835,6 @@ a.item:hover {
 .git-file span { overflow-wrap: anywhere; min-width: 0; }
 .git-file--active { border-color: var(--accent); }
 .git-diff { max-width: 100%; overflow: auto; background: var(--bg); padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.6; max-height: 65vh; }
+
+.task-templates { gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.task-templates select { width: auto; max-width: 100%; font-size: 12px; padding: 5px 8px; }

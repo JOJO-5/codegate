@@ -319,6 +319,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 			MaxSessions: a.cfg.MaxSessions,
  RepositoryScan: true,
  GitReview: true,
+ GitActions: true,
  Worktrees: true,
 			ConPTY:      platform == "windows" && terminal.Available() == nil,
 			UnixPTY:     platform != "windows" && terminal.Available() == nil,

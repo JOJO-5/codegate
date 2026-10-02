@@ -120,6 +120,9 @@ func gitFiles(ctx context.Context, root string) ([]protocol.GitFile, bool, error
 
 func gitReview(ctx context.Context, ws *Workspace, req protocol.GitPayload) (protocol.GitResult, error) {
 	out := protocol.GitResult{Files: []protocol.GitFile{}}
+	if req.Action == "commit" || req.Action == "push" {
+		return gitMutation(ctx, ws, req)
+	}
 	if req.Action != "status" && req.Action != "diff" {
 		return out, fmt.Errorf("%w: 不支持的 Git 操作", protocol.ErrInvalidPayload)
 	}
@@ -128,6 +131,8 @@ func gitReview(ctx context.Context, ws *Workspace, req protocol.GitPayload) (pro
 		return out, err
 	}
 	out.Root = root
+	head, _, _ := runGit(ctx, root, "rev-parse", "--verify", "HEAD")
+	out.Head = strings.TrimSpace(head)
 	branch, _, err := runGit(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil {
 		branch = "分离 HEAD"
@@ -213,7 +218,7 @@ func (a *Agent) onGitRequest(env *protocol.Envelope) {
 		a.replyError(env, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, err := gitReview(ctx, a.ws, req)
 	if err != nil {
