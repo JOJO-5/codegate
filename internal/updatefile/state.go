@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 func EnsureDir(dir string) error {
@@ -24,6 +25,16 @@ func EnsureDir(dir string) error {
 }
 
 func ReadJSON(path string, value any) error {
+	for attempt := 0; ; attempt++ {
+		err := readJSON(path, value)
+		if attempt >= 40 || !transientSharingError(err) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func readJSON(path string, value any) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err

@@ -1,6 +1,15 @@
 package updatefile
 
-import "golang.org/x/sys/windows"
+import (
+	"errors"
+	"time"
+
+	"golang.org/x/sys/windows"
+)
+
+func transientSharingError(err error) bool {
+	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)
+}
 
 func Replace(source, target string) error {
 	from, err := windows.UTF16PtrFromString(source)
@@ -11,5 +20,11 @@ func Replace(source, target string) error {
 	if err != nil {
 		return err
 	}
-	return windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+	for attempt := 0; ; attempt++ {
+		err = windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+		if attempt >= 40 || !transientSharingError(err) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
