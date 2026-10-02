@@ -33,6 +33,7 @@
  *   - `FlagBufferEnd` 只用来判断「重放结束」，不参与计数
  */
 
+import { TASK_TEMPLATES } from '../lib/tasks'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
@@ -368,6 +369,16 @@ async function attach(since: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Ctrl+C：只有 tui 类命令可用（§6.5）。 */
+function fillTaskTemplate(event: Event): void {
+  const select = event.target as HTMLSelectElement
+  const task = TASK_TEMPLATES.find(item => item.id === select.value)
+  if (task) {
+    if (mobileDraft.value.trim()) { errorText.value = '输入框已有文字，请先发送或清空后选择模板。' }
+    else { mobileDraft.value = task.prompt; void nextTick(() => composer.value?.focus()) }
+  }
+  select.value = ''
+}
+
 function sendInterrupt(): void {
   if (windowsShell.value || role.value !== 'controller' || !isLive.value) return
   void conn.request(
@@ -714,6 +725,11 @@ onUnmounted(() => {
           </button>
           <button class="btn btn--sm" type="button" :disabled="exiting" @click="confirmTerminate = false">取消</button>
         </div>
+      </div>
+      <div v-if="role === 'controller' && isLive && !isShell" class="row task-templates">
+        <select aria-label="任务模板" :disabled="!conn.isOpen" value="" @change="fillTaskTemplate">
+          <option value="">任务模板…</option><option v-for="task in TASK_TEMPLATES" :key="task.id" :value="task.id">{{ task.label }}</option>
+        </select><span class="small dim">仅填入输入框，确认后发送</span>
       </div>
       <div class="term__composer" v-if="role === 'controller' && isLive">
         <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown="onComposerKeydown" />
