@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 9106)
-Total output lines: 978
-
 package server
 
 import (
@@ -472,7 +469,28 @@ func (s *agentSession) handlePairBegin(env *protocol.Envelope) error {
 	code, hash, err := auth.NewPairingCode()
 	if err != nil {
 		s.srv.log.Error("生成配对码失败", "err", err)
-		return &fatalClose{CloseInternalError, "pair_code_f…106 tokens truncated…fer cancel()
+		return &fatalClose{CloseInternalError, "pair_code_failed"}
+	}
+
+	now := s.srv.now()
+	expires := now.Add(s.srv.cfg.PairingCodeTTL)
+
+	pc := &storage.PairingCode{
+		ID:           uuid.NewString(),
+		CodeHash:     hash,
+		DeviceID:     p.DeviceID,
+		PublicKey:    pub,
+		Name:         p.Name,
+		Platform:     p.Platform,
+		Arch:         p.Arch,
+		AgentVersion: p.AgentVersion,
+		AgentIP:      s.ip,
+		ExpiresAt:    expires,
+		CreatedAt:    now,
+	}
+
+	ctx, cancel := s.dbCtx()
+	defer cancel()
 	if err := s.srv.store.CreatePairingCode(ctx, pc); err != nil {
 		s.srv.log.Error("保存配对码失败", "device_id", p.DeviceID, "err", err)
 		return &fatalClose{CloseInternalError, "store_error"}
