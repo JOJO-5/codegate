@@ -771,29 +771,30 @@ onUnmounted(() => {
         <p class="small dim">粘贴后不会额外发送回车；文本中的换行可能让 Shell 执行多条命令。</p>
         <div class="row"><button class="btn btn--primary btn--sm" type="button" :disabled="!pasteDraft || role !== 'controller' || !conn.isOpen || !isLive" @click="pasteToTerminal">粘贴到终端</button><button class="btn btn--sm" type="button" @click="pasteOpen = false">取消</button></div>
       </div>
-      <div class="row term__tools" style="gap: 6px; flex-wrap: wrap">
+      <div class="row term__quick-keys" role="group" aria-label="终端常用按键">
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送 Esc（返回或取消）" @pointerdown.prevent @click="sendText('\x1b')">Esc</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送 Tab（切换或补全）" @pointerdown.prevent @click="sendText('\t')">Tab</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" aria-label="方向键向上" title="发送方向键 ↑" @pointerdown.prevent @click="sendText('\x1b[A')">↑</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" aria-label="方向键向下" title="发送方向键 ↓" @pointerdown.prevent @click="sendText('\x1b[B')">↓</button>
+        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送回车（确认选择）" @pointerdown.prevent @click="sendText('\r')">Enter</button>
+      </div>
+      <div class="row term__tools term__actions" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" @click="focusTerminal">⌨ 键盘</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="readClipboard">粘贴</button>
-        <button class="btn btn--sm" type="button" @click="copyOutput()">复制选中</button>
+        <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @pointerdown.prevent @click="sendInterrupt">Ctrl+C</button>
+        <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" aria-controls="terminal-extra-keys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起按键' : '更多按键' }}</button>
+      </div>
+      <div v-if="showExtraKeys" id="terminal-extra-keys" class="row term__tools term__extra-keys" role="group" aria-label="终端辅助按键" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
         <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
         <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>
-        <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @click="sendInterrupt">Ctrl+C</button>
-        <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起按键' : '更多按键' }}</button>
-        <div class="grow" />
-        <button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button>
-      </div>
-      <div v-if="showExtraKeys" class="row term__tools term__extra-keys" aria-label="终端辅助按键" style="gap: 6px; flex-wrap: wrap">
+        <button class="btn btn--sm" type="button" @click="copyOutput()">复制选中</button>
         <button class="btn btn--sm" type="button" @click="copyOutput(true)">复制画面</button>
         <label class="row small">字号<select :value="preferences.fontSize" :disabled="preferences.saving" aria-label="终端字号（随账号同步）" @change="setFontSize"><option v-for="size in [10, 12, 14, 16, 18, 20, 22, 24]" :key="size" :value="size">{{ size }}</option></select></label>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="redraw">重绘</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b')">Esc</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\t')">Tab</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b[A')">↑</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="sendText('\x1b[B')">↓</button>
         <!-- 手机上没有 Ctrl+Shift+F，所以搜索也必须有个可点的入口 -->
         <button class="btn btn--sm" type="button" title="查找" @click="openSearch">查找</button>
-
+        <button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button>
       </div>
     </div>
   </div>
