@@ -751,8 +751,20 @@ a.item:hover {
   .device-update { order: 6; }
   .device-sessions { min-height: 0; }
 }
-.term__composer { display: none; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+.term__composer { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
 .term__composer textarea { min-width: 0; flex: 1; resize: none; font-size: 16px; min-height: 40px; background: var(--bg); color: var(--fg); }
+.term__attach-button { flex: none; min-width: 44px; justify-content: center; }
+.term__attachments { padding: 10px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; max-height: 45dvh; overflow-y: auto; }
+.term__attachment-actions { flex-wrap: wrap; }
+.term__attachment { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.term__attachment img { width: 56px; height: 56px; object-fit: contain; flex: none; border-radius: 4px; background: var(--bg); }
+.term__attachment-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.term__attachment-info progress { width: 100%; }
+.term__attachment-buttons { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.files-view { width: 100%; }
+.files-view .row { flex-wrap: wrap; }
+.files-view .file-entry > .btn { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.files-view .mono { overflow-wrap: anywhere; }
 .term__tools { overflow-x: auto; max-height: 80px; }
 .term__host { overflow: hidden; background: #000000; }
 .term__host .xterm-viewport { overflow-y: auto !important; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
@@ -790,6 +802,8 @@ a.item:hover {
   .session-time { margin-right: auto; }
   .term__bar { gap: 5px; }
   .term__composer { display: flex; }
+  .term__attachment { flex-wrap: wrap; }
+  .term__attachment-buttons { width: 100%; flex-direction: row; flex-wrap: wrap; }
   .term__footer { padding: 6px 6px calc(6px + var(--safe-bottom)); }
   .term__tools { flex-wrap: nowrap !important; }
   .term__tools .btn { flex: none; }

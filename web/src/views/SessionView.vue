@@ -35,6 +35,8 @@
 
 import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
+import SessionAttachments from '../components/SessionAttachments.vue'
+import { workspaceFilePath, type UploadedAttachment } from '../lib/uploads'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
@@ -98,6 +100,35 @@ const exitInfo = ref<SessionExitPayload | null>(null)
 const errorText = ref<string | null>(null)
 const mobileDraft = ref('')
 const composer = ref<HTMLTextAreaElement | null>(null)
+const shortcutInput = ref(false)
+const attachmentsOpen = ref(false)
+const nativeImages = computed(() => !isShell.value && /(?:^|[\\/\s])opencode(?:\.exe)?(?:\s|$)/i.test(summary.value?.command ?? ''))
+function referenceAttachments(files: UploadedAttachment[]): void {
+  if (!summary.value || role.value !== 'controller' || !conn.isOpen || !isLive.value) return
+  const paths = files.map(file => workspaceFilePath(summary.value!.cwd, file.path))
+  const references = paths.map(path => {
+    if (!isShell.value) return JSON.stringify(path)
+    if (/\b(?:powershell|pwsh)(?:\.exe)?\b/i.test(summary.value!.command)) return `'${path.replace(/'/g, "''")}'`
+    if (windowsShell.value) return JSON.stringify(path)
+    return `'${path.replace(/'/g, "'\\''")}'`
+  }).join(' ')
+  mobileDraft.value = mobileDraft.value
+    ? `${mobileDraft.value} ${references}`
+    : `${isShell.value ? '' : '请查看这些文件：'}${references}`
+  attachmentsOpen.value = false
+  clipboardStatus.value = '文件路径已加入输入框，请补充说明后确认发送。'
+}
+function pasteNativeAttachment(file: UploadedAttachment): void {
+  if (!summary.value || !nativeImages.value || !term || role.value !== 'controller' || !conn.isOpen || !isLive.value) return
+  const path = workspaceFilePath(summary.value.cwd, file.path)
+  if (/[\x00-\x1f\x7f]/.test(path)) { errorText.value = '目录包含控制字符，请通过文件路径引用附件。'; return }
+  if (!term.modes.bracketedPasteMode) { referenceAttachments([file]); return }
+  // OpenCode recognizes a bracketed paste of a local image/PDF path as an
+  // attachment. Keep its own attachment parsing; never send a submit key.
+  term.paste(path)
+  attachmentsOpen.value = false
+  clipboardStatus.value = '附件已粘贴到 OpenCode，请检查 CLI 中的预览后确认发送。'
+}
 const showSessionPanel = ref(false)
 const showExtraKeys = ref(false)
 const pasteOpen = ref(false)
@@ -152,7 +183,24 @@ function onComposerKeydown(event: KeyboardEvent): void {
   event.preventDefault()
   submitDraft()
 }
-function focusTerminal(): void { term?.focus() }
+function enableSoftKeyboard(): void {
+  shortcutInput.value = false
+  if (term?.textarea) term.textarea.inputMode = 'text'
+}
+function prepareShortcutInput(event: PointerEvent | MouseEvent): void {
+  const touch = 'pointerType' in event
+    ? event.pointerType === 'touch' || event.pointerType === 'pen'
+    : event.detail > 0 && window.matchMedia('(pointer: coarse)').matches
+  if (!touch) return
+  shortcutInput.value = true
+  // Keeping an editable field focused can reactivate the mobile IME even
+  // when pointerdown's default focus change is prevented. Explicit keyboard
+  // intent (the keyboard button, composer, or terminal) re-enables it.
+  if (term?.textarea) term.textarea.inputMode = 'none'
+  composer.value?.blur()
+  term?.blur()
+}
+function focusTerminal(): void { enableSoftKeyboard(); term?.focus() }
 function scrollHistory(lines: number): void {
   if (term?.buffer.active.type === 'alternate') {
     // Full-screen TUIs own their history. Their alternate buffer has no
@@ -677,7 +725,7 @@ onUnmounted(() => {
         </button>
         <button class="term__session-link" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">▣ 工作区文件</button>
       </aside>
-      <div ref="hostEl" class="term__host" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
+      <div ref="hostEl" class="term__host" @pointerdown="enableSoftKeyboard" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
       <div v-if="replaying" class="term__overlay">
         <span class="spinner" />
         <span class="small dim">正在重放历史输出…</span>
@@ -758,8 +806,10 @@ onUnmounted(() => {
           <option value="">任务模板…</option><option v-for="task in TASK_TEMPLATES" :key="task.id" :value="task.id">{{ task.label }}</option>
         </select><span class="small dim">仅填入输入框，确认后发送</span>
       </div>
+      <SessionAttachments v-if="summary" v-show="attachmentsOpen" :key="sessionId" :session-id="sessionId" :enabled="role === 'controller' && isLive && conn.isOpen" :native-images="nativeImages" @close="attachmentsOpen = false" @reference="referenceAttachments" @native="pasteNativeAttachment" />
       <div class="term__composer" v-if="role === 'controller' && isLive">
-        <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown="onComposerKeydown" />
+        <button class="btn btn--sm term__attach-button" type="button" aria-label="添加图片或文件" :aria-expanded="attachmentsOpen" :disabled="!conn.isOpen" @click="attachmentsOpen = !attachmentsOpen">附件</button>
+        <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" :inputmode="shortcutInput ? 'none' : 'text'" autocapitalize="none" autocorrect="off" spellcheck="false" @pointerdown="enableSoftKeyboard" @keydown="onComposerKeydown" />
         <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !conn.isOpen" @click="submitDraft()">发送 ↵</button>
       </div>
       <div v-if="clipboardStatus" class="small" role="status" style="margin-bottom: 6px">{{ clipboardStatus }}</div>
@@ -771,7 +821,7 @@ onUnmounted(() => {
         <p class="small dim">粘贴后不会额外发送回车；文本中的换行可能让 Shell 执行多条命令。</p>
         <div class="row"><button class="btn btn--primary btn--sm" type="button" :disabled="!pasteDraft || role !== 'controller' || !conn.isOpen || !isLive" @click="pasteToTerminal">粘贴到终端</button><button class="btn btn--sm" type="button" @click="pasteOpen = false">取消</button></div>
       </div>
-      <div class="row term__quick-keys" role="group" aria-label="终端常用按键">
+      <div class="row term__quick-keys" role="group" aria-label="终端常用按键" @pointerdown="prepareShortcutInput" @click.capture="prepareShortcutInput">
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送 Esc（返回或取消）" @pointerdown.prevent @click="sendText('\x1b')">Esc</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送 Tab（切换或补全）" @pointerdown.prevent @click="sendText('\t')">Tab</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" aria-label="方向键向上" title="发送方向键 ↑" @pointerdown.prevent @click="sendText('\x1b[A')">↑</button>
@@ -781,7 +831,7 @@ onUnmounted(() => {
       <div class="row term__tools term__actions" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" @click="focusTerminal">⌨ 键盘</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="readClipboard">粘贴</button>
-        <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @pointerdown.prevent @click="sendInterrupt">Ctrl+C</button>
+        <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @pointerdown.prevent="prepareShortcutInput" @click="prepareShortcutInput($event); sendInterrupt()">Ctrl+C</button>
         <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" aria-controls="terminal-extra-keys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起按键' : '更多按键' }}</button>
       </div>
       <div v-if="showExtraKeys" id="terminal-extra-keys" class="row term__tools term__extra-keys" role="group" aria-label="终端辅助按键" style="gap: 6px; flex-wrap: wrap">
