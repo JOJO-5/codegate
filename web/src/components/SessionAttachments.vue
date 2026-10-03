@@ -100,7 +100,7 @@ onUnmounted(() => {
         <strong>{{ item.name }}</strong><span class="small dim">{{ formatSize(item.size) }}</span>
         <span v-if="item.state === 'uploading'" class="small" role="status">正在上传 · {{ item.percent }}%</span>
         <progress v-if="item.state === 'uploading'" :value="item.percent" max="100" :aria-label="`${item.name} 上传进度`" />
-        <span v-if="item.state === 'ready'" class="small" role="status">已上传 · 未发送</span>
+        <span v-if="item.state === 'ready'" class="small" role="status">已上传到工作区</span>
         <span v-if="item.error" class="small" role="alert">{{ item.error }}</span>
         <code v-if="item.state === 'ready'" class="small">{{ item.path }}</code>
       </div>
