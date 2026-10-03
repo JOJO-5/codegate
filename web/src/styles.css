@@ -734,6 +734,7 @@ a.item:hover {
 .setup-steps span { margin-top: 4px; font-size: 12px; color: var(--fg-dim); }
 .setup-details summary { cursor: pointer; font-weight: 600; }
 .setup-details[open] summary { margin-bottom: 10px; }
+.term__quick-keys { gap: 6px; margin-bottom: 6px; }
 .term__extra-keys { margin-top: 6px; }
 .clipboard-panel { padding: 10px; margin: 8px 0; max-height: 45dvh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
 .clipboard-panel textarea { min-height: 80px; font-size: 16px; }
@@ -792,6 +793,11 @@ a.item:hover {
   .term__footer { padding: 6px 6px calc(6px + var(--safe-bottom)); }
   .term__tools { flex-wrap: nowrap !important; }
   .term__tools .btn { flex: none; }
+  .term__quick-keys { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .term__quick-keys .btn { min-width: 0; min-height: 44px; padding: 6px; }
+  .term__actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; max-height: none; }
+  .term__actions .btn { min-width: 0; min-height: 40px; padding: 6px 4px; }
+  .term__extra-keys { flex-wrap: wrap !important; overflow: visible; max-height: none; }
   .term__sidebar { display: none; position: absolute; z-index: 7; top: 45px; bottom: 76px; left: 0; box-shadow: 12px 0 24px #0007; }
   .term__sidebar--open { display: flex; }
   .term__panel-button { display: inline-flex; }
