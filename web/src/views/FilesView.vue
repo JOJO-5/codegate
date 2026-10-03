@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useConnStore } from '../stores/conn'
 import { MessageType, type SessionCreatedPayload } from '../lib/protocol'
 import { humanizeError } from '../lib/format'
+import { uploadFile } from '../lib/uploads'
 
 interface Entry { name: string; path: string; is_dir: boolean; size: number; modified: number; symlink?: boolean }
 interface Listed { path: string; entries: Entry[] }
@@ -132,22 +133,9 @@ async function upload(): Promise<void> {
   transferDone.value = ''
   transferLabel.value = `上传 ${file.name}`
   transferPercent.value = 0
-  const uploadId = crypto.randomUUID()
   const path = [folder.value, file.name].filter(Boolean).join('/')
   try {
-    for (let offset = 0; offset < file.size || (file.size === 0 && offset === 0);) {
-      const bytes = new Uint8Array(await file.slice(offset, offset + 192 * 1024).arrayBuffer())
-      let binary = ''
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!)
-      const next = offset + bytes.length
-      await conn.request(MessageType.FileWrite, {
-        session_id: props.id, upload_id: uploadId, path, size: file.size,
-        offset, data: btoa(binary), final: next === file.size, overwrite: overwrite.value,
-      }, props.id)
-      if (file.size === 0) break
-      offset = next
-      transferPercent.value = Math.round(offset / file.size * 100)
-    }
+    await uploadFile(conn, props.id, file, path, { overwrite: overwrite.value, progress: value => { transferPercent.value = value } })
     selected.value = null
     if (picker.value) picker.value.value = ''
     await list()
@@ -155,7 +143,6 @@ async function upload(): Promise<void> {
     transferDone.value = `已上传 ${file.name}`
   } catch (e) {
     error.value = humanizeError(e)
-    if (conn.isOpen) void conn.request(MessageType.FileCancel, { session_id: props.id, transfer_id: uploadId }, props.id).catch(() => {})
   } finally { uploading.value = false; transferLabel.value = '' }
 }
 
@@ -170,7 +157,7 @@ onUnmounted(clearPreview)
 </script>
 
 <template>
-  <main class="page">
+  <main class="page files-view">
     <div class="row row--between" style="margin-bottom: 16px">
       <div class="row">
         <button class="btn btn--sm" type="button" @click="router.push({ name: 'session', params: { id } })">‹ 返回终端</button>
@@ -188,7 +175,7 @@ onUnmounted(clearPreview)
       </div>
       <div v-if="error" class="notice notice--err">{{ error }}</div>
       <div v-if="!busy && entries.length === 0" class="empty">目录为空</div>
-      <div v-for="entry in entries" :key="entry.path" class="row row--between" style="padding: 8px 0; border-bottom: 1px solid var(--border)">
+      <div v-for="entry in entries" :key="entry.path" class="row row--between file-entry" style="padding: 8px 0; border-bottom: 1px solid var(--border)">
         <button class="btn btn--ghost btn--sm mono" type="button" :disabled="busy" @click="entry.is_dir ? list(entry.path) : preview(entry)">
           {{ entry.is_dir ? '📁' : '📄' }} {{ entry.name }}
         </button>
