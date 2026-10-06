@@ -92,6 +92,11 @@ async function refreshIdentity(): Promise<void> {
 }
 
 const role = ref<'controller' | 'viewer'>('viewer')
+const terminalReady = ref(false)
+const attachmentReady = ref(false)
+const attaching = ref(false)
+let attachmentEpoch = 0
+let fullReplayQueued = false
 const replaying = ref(false)
 const exiting = ref(false)
 const confirmTerminate = ref(false)
@@ -315,7 +320,7 @@ function sendResize(): void {
 }
 
 function onFrame(frame: DecodedFrame): void {
-  if (frame.streamId !== sessionId.value) return
+  if (frame.streamId !== sessionId.value || !terminalReady.value || !conn.isOpen) return
   const t = term
   if (t === null) return
 
@@ -324,7 +329,8 @@ function onFrame(frame: DecodedFrame): void {
     case FrameType.Stdout:
       // ★ 直接写字节，不解码、不转字符串。见文件头第 1 条纪律。
       if (frame.type === FrameType.Buffer && (frame.flags & FrameFlag.BufferEnd) !== 0) {
-        t.write(frame.payload, () => { replaying.value = false })
+        const epoch = attachmentEpoch
+        t.write(frame.payload, () => { if (epoch === attachmentEpoch) replaying.value = false })
       } else {
         t.write(frame.payload)
       }
@@ -345,7 +351,7 @@ function onFrame(frame: DecodedFrame): void {
     // 服务端明确告知有字节被丢弃 —— 只能全量重放，增量补不回来。
     replaying.value = true
     lastSeq = 0
-    void attach(0)
+    void attach(0, true)
     return
   }
 
@@ -393,7 +399,17 @@ function onControl(env: Envelope): void {
 // attach
 // ---------------------------------------------------------------------------
 
-async function attach(since: number): Promise<void> {
+async function attach(since: number, queueFullReplay = false): Promise<void> {
+  if (!terminalReady.value || !conn.isOpen) return
+  if (attaching.value) {
+    if (queueFullReplay) fullReplayQueued = true
+    return
+  }
+  const epoch = attachmentEpoch
+  attaching.value = true
+  attachmentReady.value = false
+  role.value = 'viewer'
+  replaying.value = true
   errorText.value = null
   try {
     const env = await conn.request<SessionAttachedPayload>(
@@ -406,10 +422,12 @@ async function attach(since: number): Promise<void> {
       },
       sessionId.value,
     )
+    // A closed socket or an unmounted page must not finish an old recovery
+    // attempt over a newer connection's state.
+    if (epoch !== attachmentEpoch || !terminalReady.value || !conn.isOpen) return
     const p = env.payload
     if (p === undefined) {
-      errorText.value = '服务端未返回会话信息'
-      return
+      throw new Error('服务端未返回会话信息')
     }
 
     summary.value = p.session
@@ -417,17 +435,31 @@ async function attach(since: number): Promise<void> {
     if (draft && !mobileDraft.value) mobileDraft.value = draft
     void refreshIdentity()
     role.value = p.role
+    attachmentReady.value = true
     void sessions.load(p.session.device_id.replace(/-/g, ''))
 
     // 落后太多、中间有丢帧：必须清屏后按 seq_from 重放，否则屏幕上会
     // 拼出错误的画面（新旧内容交错，光标位置也不对）。
     // 清屏本身由 Agent 的六步重放里的 reset/clear 完成，这里只需要记账。
     lastSeq = p.seq_to
-    replaying.value = p.seq_from < since && since > 0
-
     replayWarning.value = p.seq_from > since && since > 0
+    // Reconcile the fitted terminal size on every successful attachment.
+    sentCols = 0
+    sentRows = 0
+    sendResize()
   } catch (e) {
-    errorText.value = humanizeError(e)
+    if (epoch === attachmentEpoch && terminalReady.value && conn.isOpen) {
+      replaying.value = false
+      errorText.value = humanizeError(e)
+    }
+  } finally {
+    if (epoch === attachmentEpoch) {
+      attaching.value = false
+      if (fullReplayQueued && terminalReady.value && conn.isOpen) {
+        fullReplayQueued = false
+        void attach(0)
+      }
+    }
   }
 }
 
@@ -482,13 +514,18 @@ function goBack(): void {
   }
 }
 
-// Reattach only the current session after a new WebSocket connection.
-watch(() => conn.reconnectCount, () => {
-  if (conn.isOpen && term !== null) {
-    replaying.value = true
-    void attach(lastSeq)
-  }
-})
+// Cold refresh has no reconnectCount increment. Wait for BOTH the first
+// socket and the terminal subscriptions, regardless of which is ready first.
+// The same path restores this exact session on subsequent connections.
+watch([() => conn.isOpen, terminalReady], ([open, ready]) => {
+  attachmentEpoch++
+  fullReplayQueued = false
+  attaching.value = false
+  attachmentReady.value = false
+  role.value = 'viewer'
+  replaying.value = false
+  if (open && ready) void attach(lastSeq)
+}, { flush: 'sync' })
 
 // ---------------------------------------------------------------------------
 // 搜索
@@ -643,23 +680,15 @@ onMounted(async () => {
   unsubFrame = conn.onFrame(onFrame)
   unsubControl = conn.onControl(onControl)
 
-  // ---- attach ----
-  await attach(0)
-  if (errorText.value === null) {
-    // The create-page estimate can differ from this actual xterm fit.
-    sentCols = 0
-    sentRows = 0
-    sendResize()
-  }
-
-  // A new WebSocket has no server-side attachment. Reattach this exact
-  // session from its last output byte; never create a second process.
   // ---- resize ----
   ro = new ResizeObserver(scheduleFit)
   ro.observe(host)
+  terminalReady.value = true
 })
 
 onUnmounted(() => {
+  terminalReady.value = false
+  attachmentEpoch++
   window.visualViewport?.removeEventListener('resize', syncViewport)
   window.removeEventListener('resize', syncViewport)
   // 先退订，再销毁 —— 反过来的话，dispose 过程中触发的帧会打到已销毁的实例上
@@ -705,7 +734,7 @@ onUnmounted(() => {
       <span v-if="summary !== null" class="badge" :class="`badge--${statusKind(summary.status)}`">
         {{ statusLabel(summary.status) }}
       </span>
-      <span v-if="role === 'viewer'" class="badge badge--idle">只读</span>
+      <span v-if="attachmentReady && role === 'viewer'" class="badge badge--idle">只读</span>
       <span v-if="!conn.isOpen" class="badge badge--warn">连接中断 · 会话保留</span>
     </div>
 
@@ -726,7 +755,12 @@ onUnmounted(() => {
         <button class="term__session-link" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">▣ 工作区文件</button>
       </aside>
       <div ref="hostEl" class="term__host" @pointerdown="enableSoftKeyboard" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
-      <div v-if="replaying" class="term__overlay">
+      <div v-if="attaching" class="term__overlay" role="status">
+        <span class="spinner" />
+        <span class="small dim">正在接回原会话…</span>
+      </div>
+
+      <div v-else-if="replaying" class="term__overlay">
         <span class="spinner" />
         <span class="small dim">正在重放历史输出…</span>
       </div>
@@ -735,6 +769,12 @@ onUnmounted(() => {
         <span class="spinner" />
         <div class="small dim">{{ conn.healthText }}</div>
         <div class="small faint">恢复后会自动接着上次的位置继续，不需要刷新</div>
+      </div>
+
+      <div v-else-if="terminalReady && !attachmentReady" class="term__overlay">
+        <span class="small dim">{{ errorText ? '暂未接回会话，请重试或返回设备查看状态' : '正在接回原会话…' }}</span>
+        <button v-if="errorText" class="btn btn--sm" type="button" @click="attach(lastSeq)">重试连接</button>
+        <button v-if="errorText" class="btn btn--ghost btn--sm" type="button" @click="goBack">返回设备</button>
       </div>
 
       <div v-else-if="exitInfo !== null" class="term__overlay">
