@@ -769,6 +769,14 @@ a.item:hover {
 .term__host { overflow: hidden; background: #000000; }
 .term__host .xterm-viewport { overflow-y: auto !important; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 .term__host .xterm { touch-action: pan-x pinch-zoom; }
+.terminal-reader { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); padding: var(--safe-top) 0 var(--safe-bottom); }
+.terminal-reader__header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
+.terminal-reader__header strong { flex: 1; }
+.terminal-reader__header .btn { min-height: 44px; }
+.terminal-reader__hint { margin: 0; padding: 8px 12px; font-size: 12px; color: var(--fg-dim); }
+.terminal-reader__body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-y pinch-zoom; }
+.terminal-reader__text { margin: 0; padding: 12px; font: 14px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.terminal-reader__manual { flex: none; margin: 0 12px 8px; font-size: 16px; }
 .term__workspace { display: flex; flex: 1; min-height: 0; }
 .term__workspace .term__host { flex: 1; min-width: 0; }
 .term__sidebar { width: 214px; flex: none; padding: 16px 10px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; background: var(--bg-elev); border-right: 1px solid var(--border); color: var(--fg); }
@@ -810,7 +818,7 @@ a.item:hover {
   .term__tools .btn { flex: none; }
   .term__quick-keys { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .term__quick-keys .btn { min-width: 0; min-height: 44px; padding: 6px; }
-  .term__actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; max-height: none; }
+  .term__actions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: visible; max-height: none; }
   .term__actions .btn { min-width: 0; min-height: 40px; padding: 6px 4px; }
   .term__extra-keys { flex-wrap: wrap !important; overflow: visible; max-height: none; }
   .term__sidebar { display: none; position: absolute; z-index: 7; top: 45px; bottom: 76px; left: 0; box-shadow: 12px 0 24px #0007; }

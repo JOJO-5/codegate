@@ -36,6 +36,8 @@
 import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
 import SessionAttachments from '../components/SessionAttachments.vue'
+import TerminalTextReader from '../components/TerminalTextReader.vue'
+import { terminalTextSnapshot, type TerminalTextSnapshot } from '../lib/terminalText'
 import { workspaceFilePath, type UploadedAttachment } from '../lib/uploads'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
@@ -140,6 +142,16 @@ const pasteOpen = ref(false)
 const pasteDraft = ref('')
 const clipboardStatus = ref('')
 const copyFallback = ref('')
+const textSnapshot = ref<TerminalTextSnapshot | null>(null)
+function openTextReader(): void {
+  if (!term || textSnapshot.value) return
+  cancelTerminalTouch()
+  shortcutInput.value = true
+  if (term.textarea) term.textarea.inputMode = 'none'
+  composer.value?.blur()
+  term.blur()
+  textSnapshot.value = terminalTextSnapshot(term.buffer.active)
+}
 async function readClipboard(): Promise<void> {
   pasteOpen.value = true
   pasteDraft.value = ''
@@ -219,15 +231,25 @@ function scrollHistory(lines: number): void {
 }
 let terminalTouch: { id: number; x: number; y: number; lastY: number; pending: number; started: number; dragging: boolean } | null = null
 let suppressTerminalClickUntil = 0
+let terminalLongPress: ReturnType<typeof setTimeout> | null = null
+function cancelTerminalTouch(): void {
+  terminalTouch = null
+  if (terminalLongPress !== null) clearTimeout(terminalLongPress)
+  terminalLongPress = null
+}
 function onTerminalPointerDown(e: PointerEvent): void {
   if (e.pointerType !== 'touch') enableSoftKeyboard()
 }
 function onTerminalTouchStart(e: TouchEvent): void {
-  terminalTouch = null
+  cancelTerminalTouch()
   if (e.touches.length !== 1 || !term || (e.target as Element).closest('.term__overlay')) return
   suppressTerminalClickUntil = 0
   const touch = e.touches[0]!
   terminalTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, pending: 0, started: Date.now(), dragging: false }
+  terminalLongPress = setTimeout(() => {
+    suppressTerminalClickUntil = Date.now() + 700
+    openTextReader()
+  }, 550)
   // Own vertical touch scrolling before xterm's viewport handler. Its handler
   // ignores touches when a TUI enables mouse tracking, and alt buffers have
   // no local scrollback. A tap still enables typing when the finger lifts.
@@ -237,16 +259,20 @@ function onTerminalTouchStart(e: TouchEvent): void {
 function onTerminalTouchMove(e: TouchEvent): void {
   const gesture = terminalTouch
   if (!gesture || !term) return
-  if (e.touches.length !== 1) { terminalTouch = null; return }
+  if (e.touches.length !== 1) { cancelTerminalTouch(); return }
   const touch = Array.from(e.touches).find(t => t.identifier === gesture.id)
   if (!touch) return
   e.stopPropagation()
   if (!gesture.dragging) {
     const dx = touch.clientX - gesture.x
     const dy = touch.clientY - gesture.y
-    // Leave horizontal gestures and long presses available to the browser.
-    if ((Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) || Date.now() - gesture.started > 500) {
-      terminalTouch = null
+    if (Math.max(Math.abs(dx), Math.abs(dy)) >= 8 && terminalLongPress !== null) {
+      clearTimeout(terminalLongPress)
+      terminalLongPress = null
+    }
+    // Leave horizontal gestures available to the browser.
+    if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
+      cancelTerminalTouch()
       return
     }
     if (Math.abs(dy) < 8) return
@@ -285,7 +311,7 @@ function onTerminalTouchMove(e: TouchEvent): void {
 function onTerminalTouchEnd(e: TouchEvent): void {
   const gesture = terminalTouch
   if (!gesture || !Array.from(e.changedTouches).some(t => t.identifier === gesture.id)) return
-  terminalTouch = null
+  cancelTerminalTouch()
   if (gesture.dragging) {
     if (e.cancelable) e.preventDefault()
     e.stopPropagation()
@@ -296,6 +322,12 @@ function onTerminalTouchEnd(e: TouchEvent): void {
 }
 function onTerminalClick(e: MouseEvent): void {
   if (Date.now() < suppressTerminalClickUntil) { e.preventDefault(); e.stopPropagation() }
+}
+function onTerminalContextMenu(e: MouseEvent): void {
+  if (textSnapshot.value || (terminalTouch && Date.now() - terminalTouch.started >= 450)) {
+    e.preventDefault()
+    openTextReader()
+  }
 }
 function redraw(): void {
   if (role.value !== 'controller' || !isLive.value) return
@@ -759,6 +791,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  cancelTerminalTouch()
   terminalReady.value = false
   attachmentEpoch++
   window.visualViewport?.removeEventListener('resize', syncViewport)
@@ -826,7 +859,7 @@ onUnmounted(() => {
         </button>
         <button class="term__session-link" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">▣ 工作区文件</button>
       </aside>
-      <div ref="hostEl" class="term__host" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="terminalTouch = null" @click.capture="onTerminalClick">
+      <div ref="hostEl" class="term__host" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="cancelTerminalTouch" @click.capture="onTerminalClick" @contextmenu.capture="onTerminalContextMenu">
       <div v-if="attaching" class="term__overlay" role="status">
         <span class="spinner" />
         <span class="small dim">正在接回原会话…</span>
@@ -942,6 +975,7 @@ onUnmounted(() => {
       </div>
       <div class="row term__tools term__actions" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" @click="focusTerminal">⌨ 键盘</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalReady" @click="openTextReader">选字</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="readClipboard">粘贴</button>
         <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @pointerdown.prevent="prepareShortcutInput" @click="prepareShortcutInput($event); sendInterrupt()">Ctrl+C</button>
         <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" aria-controls="terminal-extra-keys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起按键' : '更多按键' }}</button>
@@ -959,5 +993,6 @@ onUnmounted(() => {
         <button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button>
       </div>
     </div>
+    <TerminalTextReader v-if="textSnapshot" :snapshot="textSnapshot" @close="textSnapshot = null" />
   </div>
 </template>
