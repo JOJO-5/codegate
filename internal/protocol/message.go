@@ -140,14 +140,16 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
-	WorktreeManagement bool `json:"worktree_management,omitempty"`
-	GitActions         bool `json:"git_actions,omitempty"`
-	Worktrees          bool `json:"worktrees,omitempty"`
-	GitReview          bool `json:"git_review,omitempty"`
-	RepositoryScan     bool `json:"repository_scan,omitempty"`
-	MaxSessions        int  `json:"max_sessions"`
-	ConPTY             bool `json:"conpty,omitempty"`
-	UnixPTY            bool `json:"unix_pty,omitempty"`
+	DSHWebApproval       bool `json:"dsh_web_approval,omitempty"`
+	ConversationRecovery bool `json:"conversation_recovery,omitempty"`
+	WorktreeManagement   bool `json:"worktree_management,omitempty"`
+	GitActions           bool `json:"git_actions,omitempty"`
+	Worktrees            bool `json:"worktrees,omitempty"`
+	GitReview            bool `json:"git_review,omitempty"`
+	RepositoryScan       bool `json:"repository_scan,omitempty"`
+	MaxSessions          int  `json:"max_sessions"`
+	ConPTY               bool `json:"conpty,omitempty"`
+	UnixPTY              bool `json:"unix_pty,omitempty"`
 }
 
 // AgentChallengePayload 是 Server 发来的随机数，用于防重放。
@@ -207,22 +209,23 @@ type AgentPairCompletedPayload struct {
 // 这个结构同时出现在 Agent 上报、Server 转发、DB 落库三处，
 // 所以字段顺序和命名要保持稳定。
 type SessionSummary struct {
-	SessionID      string   `json:"session_id"`
-	DeviceID       string   `json:"device_id"`
-	Name           string   `json:"name"`
-	Command        string   `json:"command"`
-	Args           []string `json:"args,omitempty"`
-	Cwd            string   `json:"cwd"`
-	Status         string   `json:"status"` // starting|running|detached|exited|failed|terminated
-	Archived       bool     `json:"archived,omitempty"`
-	PID            int      `json:"pid,omitempty"`
-	ExitCode       *int     `json:"exit_code,omitempty"`
-	Cols           uint16   `json:"cols"`
-	Rows           uint16   `json:"rows"`
-	CreatedAt      int64    `json:"created_at"`
-	StartedAt      *int64   `json:"started_at,omitempty"`
-	EndedAt        *int64   `json:"ended_at,omitempty"`
-	LastAttachedAt *int64   `json:"last_attached_at,omitempty"`
+	Recovery       *ConversationBinding `json:"recovery,omitempty"`
+	SessionID      string               `json:"session_id"`
+	DeviceID       string               `json:"device_id"`
+	Name           string               `json:"name"`
+	Command        string               `json:"command"`
+	Args           []string             `json:"args,omitempty"`
+	Cwd            string               `json:"cwd"`
+	Status         string               `json:"status"` // starting|running|detached|exited|failed|terminated
+	Archived       bool                 `json:"archived,omitempty"`
+	PID            int                  `json:"pid,omitempty"`
+	ExitCode       *int                 `json:"exit_code,omitempty"`
+	Cols           uint16               `json:"cols"`
+	Rows           uint16               `json:"rows"`
+	CreatedAt      int64                `json:"created_at"`
+	StartedAt      *int64               `json:"started_at,omitempty"`
+	EndedAt        *int64               `json:"ended_at,omitempty"`
+	LastAttachedAt *int64               `json:"last_attached_at,omitempty"`
 	// BufferSeqFrom/To 让前端在 attach 前就知道 ring buffer 里还有多少可用，
 	// 从而判断自己断线期间丢了多少（§15.2）。
 	BufferSeqFrom uint64 `json:"buffer_seq_from"`
@@ -295,15 +298,16 @@ type SessionSyncPayload struct {
 //   - 走白名单时只传 CommandID
 //   - 允许自定义命令时传 Command/Args（需 Agent 侧显式开启，§21.1）
 type SessionCreatePayload struct {
-	Worktree  bool     `json:"worktree,omitempty"`
-	DeviceID  string   `json:"device_id"`
-	Name      string   `json:"name,omitempty"`
-	CommandID string   `json:"command_id,omitempty"`
-	Command   string   `json:"command,omitempty"`
-	Args      []string `json:"args,omitempty"`
-	Cwd       string   `json:"cwd"`
-	Cols      uint16   `json:"cols"`
-	Rows      uint16   `json:"rows"`
+	Recovery  *ConversationBinding `json:"recovery,omitempty"`
+	Worktree  bool                 `json:"worktree,omitempty"`
+	DeviceID  string               `json:"device_id"`
+	Name      string               `json:"name,omitempty"`
+	CommandID string               `json:"command_id,omitempty"`
+	Command   string               `json:"command,omitempty"`
+	Args      []string             `json:"args,omitempty"`
+	Cwd       string               `json:"cwd"`
+	Cols      uint16               `json:"cols"`
+	Rows      uint16               `json:"rows"`
 	// Resume 表示"恢复上次对话"（§21.3）。
 	// Agent 据此把 allowed_commands 里的 resume_args 追加到命令行。
 	// CodeGate 不知道对话内容，只知道这个 CLI 支持 resume 标志。
@@ -612,4 +616,31 @@ type ManagedHealth struct {
 	Version       string `json:"version"`
 	Authenticated bool   `json:"authenticated"`
 	UpdatedAt     int64  `json:"updated_at"`
+}
+
+// ConversationBinding identifies a native conversation, independent of a PTY.
+// StoreKey is an opaque UUID identifying DSH's private persistence namespace.
+type ConversationBinding struct {
+	CommandID  string `json:"command_id"`
+	NativeID   string `json:"native_id,omitempty"`
+	StoreKey   string `json:"store_key,omitempty"`
+	NativeRoot string `json:"native_root,omitempty"`
+	SourceID   string `json:"source_id,omitempty"`
+}
+type ConversationRequest struct {
+	SessionID string `json:"session_id"`
+	NativeID  string `json:"native_id,omitempty"`
+	Cols      uint16 `json:"cols,omitempty"`
+	Rows      uint16 `json:"rows,omitempty"`
+	// Server replaces Source with its owned, saved record; never trust the browser.
+	Source SessionSummary `json:"source"`
+}
+type NativeConversation struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+type ConversationListed struct {
+	Conversations []NativeConversation `json:"conversations"`
 }

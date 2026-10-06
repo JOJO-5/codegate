@@ -189,10 +189,24 @@ dsh --profile tui
 
 ### 内建 DSH Web 转发（可选）
 
-内建模式由 Agent 以其服务账户启动 `dsh web --no-open`，只访问本机 `127.0.0.1:3080`，通过 Agent 出站连接中继 HTTP 和 WebSocket。目标机器无需开放 3080 端口。DSH 本机的浏览器令牌由 Agent 换成 Cookie，Server 只在内存保存 Cookie；浏览器用 CodeGate 的单次打开票据和独立子域名会话。
+Agent 在电脑上启动 `dsh web --no-open`，通过现有出站连接把本机 `127.0.0.1:3080` 的 HTTP 和 WebSocket 转发到 Server。电脑不需要配置域名、证书或开放端口。DSH 的登录令牌和原生 Cookie 只留在 Agent/Server 内存中。
 
-1. Server 设置 `CODEGATE_BASE_URL=https://codegate.example.com` 和 `CODEGATE_DSH_PROXY_DOMAIN=dsh.example.com` 并重启。Agent 的 `agent.json` 添加 `"dsh_web_enabled": true` 后重启。确保开机服务账户能找到 `dsh`，并能写自己的 DSH 配置和工作区。
-2. 为 `*.dsh.example.com` 配置指向同一 Server 的通配 DNS 和通配 TLS 证书。把证书和私钥分别放在 `secrets/dsh-tls/fullchain.pem`、`secrets/dsh-tls/privkey.pem`，使用 `docker compose -f compose.yaml -f deploy/compose.dsh.yaml --profile public up -d` 启动（后续更新也使用相同参数）。覆盖文件使用 `deploy/Caddyfile.dsh.example` 的独立域名路由。通配证书通常需要 DNS 验证，默认 Caddyfile 不会自动完成此项。
-3. 在设备页点击“启动并打开 DSH Web”。Agent 启动 DSH 并以本地令牌取得浏览器 Cookie，CodeGate 为该设备打开独立 HTTPS 子域名。如果 3080 端口已被另一个 DSH 实例占用，请先关闭旧实例。
+**简化方式：同域名、独立 HTTPS 端口。** Compose 的 `public` 配置自动将 DSH 入口设为 `https://你的现有域名:8443`，复用 Caddy 已有证书，不需要另配子域名或通配证书。更新 `compose.yaml` 和 `deploy/Caddyfile`，保持 `CODEGATE_BASE_URL=https://你的域名`，开放服务器/云防火墙的 TCP 8443，再启动 `docker compose --profile public up -d`。`CODEGATE_DSH_PROXY_URL=auto` 是 Compose 默认值；本地 HTTP 部署不会启用公网代理。
 
-DSH Web 从根路径加载 `/api`、`/assets` 和 WebSocket，所以不能挂在 CodeGate 的子路径。同一 Server 可服务两个独立的 HTTPS 来源；CodeGate 只接受设备 ID 对应的 DSH 子域名，绝不使用浏览器提供的目标地址访问内网。内建登录会话有效一小时，过期或 Agent 重连后请从设备页重新打开。DSH 进程启动后会阻止 Agent 自动更新，以免打断后台任务；用设备页“停止 DSH Web”明确结束它后才会恢复空闲更新检查。没有配置通配 DNS/TLS 时，内建 Web 无法在公网访问；外部 `web_url` 依然可单独使用。
+使用自己的 Nginx/Caddy 也可以：添加同域名的 HTTPS 8443 监听，使用现有证书，代理到 CodeGate Server 的 8080，保留完整 Host（含端口），支持 WebSocket 升级。Server 设置 `CODEGATE_DSH_PROXY_URL=https://你的域名:8443` 并重启。DSH Web 必须使用与 CodeGate 主站不同的浏览器来源；原生应用从根路径加载 `/api`、资源和 WebSocket，不能直接挂到 `/dsh` 子路径。
+
+电脑上安装 DSH 并确保 Agent 服务账户能找到 `dsh`；在设备页点击“允许 Agent 启动 DSH Web”，然后“启动并打开 Web”。授权保存在本机状态目录，无需编辑 `agent.json` 或重启（Agent v0.1.14 起支持）。已有 `"dsh_web_enabled": true` 仍兼容。如果端口 3080 被其他 DSH 占用，先关闭那个实例。原生 Web profile 的安装与模型登录按 DSH 本身的提示完成。
+
+简化入口一次服务一台设备，切换电脑前在设备页停止 DSH Web，以免多个页面混用设备。需要多设备同时使用时，可保留独立通配域名模式：设置 `CODEGATE_DSH_PROXY_DOMAIN=dsh.example.com`，为 `*.dsh.example.com` 配置 DNS 和通配证书，将证书/私钥放到 `secrets/dsh-tls/fullchain.pem`、`privkey.pem`，使用 `docker compose -f compose.yaml -f deploy/compose.dsh.yaml --profile public up -d`。`auto` 会让已有通配域名配置优先；显式 URL 与域名配置不能同时启用。
+
+内建浏览器授权有效一小时，过期或 Agent 重连后从设备页重新打开。DSH Web 运行时会阻止 Agent 自动更新；点击“停止”后恢复空闲更新检查。外部 `web_url` 仍可独立使用。
+
+### 结束终端后恢复原对话
+
+刷新或离开页面只会重新连接现有进程；“关闭会话 / 确定结束进程”会结束进程。设备页已结束的 CLI 记录提供“恢复原对话”，以原生对话 ID 启动同一目录的 CLI，保留它的历史和上下文。OpenCode、DSH 自动记录原生 ID；Codex 仅在原生存储证实回调 ID 时自动关联。旧记录、尚未关联的 Codex 或 Windows CLI 首次恢复需要选择同工作目录的原生历史，之后保存选择，按精确 ID 恢复，不使用“最近一次”猜测。原生历史被删除或工作目录不再授权时无法恢复。
+
+### 传输压缩
+
+支持的 Agent/浏览器与 Server 协商 WebSocket `permessage-deflate`。512 字节以上的终端输出/回放和文件读写使用轻量压缩，小按键、登录控制消息和已压缩的 DSH 隧道不会重复压缩。发送端压缩、接收端解压，Server 作为两段连接的中继也会处理；并非所有工作都在手机端。旧客户端可继续无压缩连接。解压后的消息仍有长度上限。
+
+内嵌网页资源缓存 gzip 结果；Caddy 可协商 zstd/gzip。压缩率取决于数据，重复终端文本收益较大，图片本身通常已压缩。算法使用低压缩级别降低 CPU 和交互延迟。

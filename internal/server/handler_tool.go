@@ -9,23 +9,39 @@ import (
 	"github.com/jojo/codegate/internal/protocol"
 )
 
-type toolSetRequest struct { Enabled *bool `json:"enabled"` }
+type toolSetRequest struct {
+	Enabled *bool `json:"enabled"`
+}
 
 // Only the paired owner can change one of four fixed, locally validated CLI
 // approvals. No command path or arguments are accepted from HTTP.
 func (s *Server) handleDeviceToolSet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("tool")
-	switch id { case "claude", "codex", "opencode", "dsh": default:
+	switch id {
+	case "claude", "codex", "opencode", "dsh", "dsh-web":
+	default:
 		writeError(w, http.StatusBadRequest, "invalid_tool", "只能授权已识别的 CLI")
 		return
 	}
 	p, ok := decodeJSON[toolSetRequest](w, r)
-	if !ok { return }
-	if p.Enabled == nil { writeError(w, http.StatusBadRequest, "invalid_payload", "缺少 enabled"); return }
+	if !ok {
+		return
+	}
+	if p.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "invalid_payload", "缺少 enabled")
+		return
+	}
 	userID, _ := userIDFromContext(r.Context())
 	deviceID := r.PathValue("id")
 	ac, err := s.requireAgent(r.Context(), userID, deviceID)
-	if err != nil { writeProtoError(w, err); return }
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	if id == "dsh-web" && !ac.Caps().DSHWebApproval {
+		writeError(w, http.StatusConflict, "agent_upgrade_required", "请先更新 Agent 至 v0.1.14，再在页面授权 DSH Web")
+		return
+	}
 	reqID := uuid.NewString()
 	reply := make(chan error, 1)
 	s.web.mu.Lock()
@@ -33,15 +49,27 @@ func (s *Server) handleDeviceToolSet(w http.ResponseWriter, r *http.Request) {
 	s.web.mu.Unlock()
 	defer func() { s.web.mu.Lock(); delete(s.web.toolPending, reqID); s.web.mu.Unlock() }()
 	env, err := protocol.NewRequest(reqID, protocol.TypeToolSet, "", protocol.ToolSetPayload{ID: id, Enabled: *p.Enabled})
-	if err != nil { writeProtoError(w, err); return }
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
 	raw, err := protocol.Encode(env)
-	if err != nil { writeProtoError(w, err); return }
-	if err := ac.TrySendText(raw); err != nil { writeError(w, http.StatusServiceUnavailable, "agent_busy", "Agent 暂时繁忙"); return }
-	timer := time.NewTimer(12*time.Second)
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	if err := ac.TrySendText(raw); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "agent_busy", "Agent 暂时繁忙")
+		return
+	}
+	timer := time.NewTimer(12 * time.Second)
 	defer timer.Stop()
 	select {
 	case err := <-reply:
-		if err != nil { writeError(w, http.StatusConflict, "tool_unavailable", err.Error()); return }
+		if err != nil {
+			writeError(w, http.StatusConflict, "tool_unavailable", err.Error())
+			return
+		}
 		s.auditRequest(r, auditEntry{UserID: userID, DeviceID: deviceID, Action: auditDeviceToolSet, Result: auditResultOK, Meta: map[string]any{"tool": id, "enabled": *p.Enabled}})
 		writeJSON(w, http.StatusOK, map[string]any{"id": id, "enabled": *p.Enabled})
 	case <-ac.Done():
@@ -54,16 +82,26 @@ func (s *Server) handleDeviceToolSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) acceptToolReply(ac *AgentConn, env *protocol.Envelope) bool {
-	if env.ReplyTo == "" { return false }
+	if env.ReplyTo == "" {
+		return false
+	}
 	s.web.mu.Lock()
 	wait, ok := s.web.toolPending[env.ReplyTo]
-	if ok && wait.agent == ac { delete(s.web.toolPending, env.ReplyTo) }
+	if ok && wait.agent == ac {
+		delete(s.web.toolPending, env.ReplyTo)
+	}
 	s.web.mu.Unlock()
-	if !ok || wait.agent != ac { return false }
+	if !ok || wait.agent != ac {
+		return false
+	}
 	var err error
 	if env.Type == protocol.TypeError {
 		p, decodeErr := protocol.DecodePayload[protocol.ErrorPayload](env)
-		if decodeErr != nil { err = decodeErr } else { err = errors.New(p.Message) }
+		if decodeErr != nil {
+			err = decodeErr
+		} else {
+			err = errors.New(p.Message)
+		}
 	}
 	wait.reply <- err
 	return true

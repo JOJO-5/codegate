@@ -67,6 +67,7 @@ func (c Config) withDefaults() Config {
 // 全部由 Agent 层在调用之前完成（§21.1、§18）。
 // Manager 只负责资源与生命周期，不负责安全策略 —— 职责单一。
 type CreateRequest struct {
+	Recovery *protocol.ConversationBinding
 	DeviceID uuid.UUID
 	UserID   uuid.UUID
 	Name     string
@@ -83,12 +84,12 @@ type CreateRequest struct {
 // 并发模型：map + RWMutex。会话数量上限是几十个，锁竞争可以忽略，
 // 不值得为它上 shard 或 sync.Map（规范第 40 条：不要过度工程化）。
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[uuid.UUID]*Session
-	factory  Factory
-	cfg      Config
-	now      func() time.Time // 测试可注入
-	closed   bool
+	mu         sync.RWMutex
+	sessions   map[uuid.UUID]*Session
+	factory    Factory
+	cfg        Config
+	now        func() time.Time // 测试可注入
+	closed     bool
 	generation uint64 // increases on each successful Create, even if the session closes
 }
 
@@ -246,7 +247,9 @@ func (m *Manager) Close(id uuid.UUID, reason string) error {
 func (m *Manager) FreezeIfEmpty() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed || len(m.sessions) != 0 { return false }
+	if m.closed || len(m.sessions) != 0 {
+		return false
+	}
 	m.closed = true
 	return true
 }

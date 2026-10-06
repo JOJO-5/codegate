@@ -8,6 +8,7 @@
  * 否则他会对着一个显示"运行中"的会话点进去，然后发现连不上。
  */
 
+import ConversationRecovery from '../components/ConversationRecovery.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
@@ -73,6 +74,7 @@ function togglePin(id: string): void {
   void preferences.togglePin(id).catch(() => {})
 }
 const archivedCount = computed(() => list.value.filter(s => s.archived).length)
+const recoveringSession = ref<SessionSummary | null>(null)
 const sessionActionError = ref<string | null>(null)
 const deletingSession = ref<string | null>(null)
 async function toggleArchive(s: SessionSummary): Promise<void> {
@@ -408,6 +410,7 @@ function canOpen(s: SessionSummary): boolean {
 </script>
 
 <template>
+  <ConversationRecovery v-if="recoveringSession" :source="recoveringSession" @close="recoveringSession = null" />
   <main class="page device-page">
     <div class="device-heading">
       <div class="row row--between">
@@ -574,7 +577,7 @@ function canOpen(s: SessionSummary): boolean {
       </div>
       <div class="field"><label for="session-query">查找会话</label><input id="session-query" v-model="sessionQuery" type="search" placeholder="按名称、命令或工作目录搜索" /></div>
 
-      <p class="dim small session-help">离开终端后会话继续运行。设备在线时可接回；结束进程请在终端内关闭会话。</p>
+      <p class="dim small session-help">离开终端后会话继续运行，可直接接回。结束进程后，可用“恢复原对话”重新启动 CLI 并加载已保存的原生历史。</p>
 
       <div v-if="visibleSessions.length === 0" class="empty">{{ sessionQuery.trim() ? '没有匹配的会话。' : showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
 
@@ -597,6 +600,7 @@ function canOpen(s: SessionSummary): boolean {
             <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
             <button class="btn btn--ghost btn--sm" type="button" :aria-label="pinnedIds.includes(s.session_id) ? '取消置顶会话' : '置顶会话'" :aria-pressed="pinnedIds.includes(s.session_id)" @click="togglePin(s.session_id)">{{ pinnedIds.includes(s.session_id) ? '★ 已置顶' : '☆ 置顶' }}</button>
             <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : '设备离线，重新上线后可接回'" @click="openSession(s)">{{ canOpen(s) ? '接回' : '离线，暂不可接回' }}</button>
+            <button v-if="!isLiveStatus(s.status) && (s.recovery || /(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.command) || (s.command.endsWith('cmd.exe') && /^(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.args?.[1] ?? '')))" class="btn btn--primary btn--sm" type="button" :disabled="!device?.online || !conn.isOpen" @click="recoveringSession = s">恢复原对话</button>
             <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
             <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
               {{ deletingSession === s.session_id ? '确认删除' : '删除记录' }}
@@ -629,7 +633,7 @@ function canOpen(s: SessionSummary): boolean {
       <ol class="device-dsh__checklist">
         <li :class="updateInfo?.web_proxy_enabled ? 'device-dsh__ready' : ''">
           <span>{{ updateInfo?.web_proxy_enabled ? '✓' : '1' }}</span>
-          <div><strong>Server 域名与 HTTPS</strong><small>{{ updateInfo?.web_proxy_enabled ? '转发已启用' : '设置 CODEGATE_DSH_PROXY_DOMAIN，并为通配子域名配置 DNS 和 TLS 证书' }}</small></div>
+          <div><strong>Server 域名与 HTTPS</strong><small>{{ updateInfo?.web_proxy_enabled ? '转发已启用' : 'Compose HTTPS 部署复用现有域名与证书，开放 8443 端口；自建反代设置 CODEGATE_DSH_PROXY_URL' }}</small></div>
         </li>
         <li :class="dshCommand?.installed ? 'device-dsh__ready' : ''">
           <span>{{ dshCommand?.installed ? '✓' : '2' }}</span>
@@ -637,14 +641,17 @@ function canOpen(s: SessionSummary): boolean {
         </li>
         <li :class="updateInfo?.dsh_web_enabled ? 'device-dsh__ready' : ''">
           <span>{{ updateInfo?.dsh_web_enabled ? '✓' : '3' }}</span>
-          <div><strong>允许启动 Web</strong><small>{{ updateInfo?.dsh_web_enabled ? 'Agent 已允许' : '在目标电脑的 agent.json 设置 "dsh_web_enabled": true，然后重启 Agent' }}</small></div>
+          <div><strong>允许启动 Web</strong><small>{{ updateInfo?.dsh_web_enabled ? 'Agent 已允许' : '点击下方授权，无需修改电脑上的配置文件' }}</small></div>
         </li>
       </ol>
-      <a class="small" href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md#%E5%86%85%E5%BB%BA-dsh-web-%E8%BD%AC%E5%8F%91%E5%8F%AF%E9%80%89" target="_blank" rel="noopener noreferrer">查看 Server 域名和证书设置 ↗</a>
+      <a class="small" href="https://github.com/JOJO-5/codegate/blob/main/docs/DEPLOY-DOCKER.md#%E5%86%85%E5%BB%BA-dsh-web-%E8%BD%AC%E5%8F%91%E5%8F%AF%E9%80%89" target="_blank" rel="noopener noreferrer">查看反向代理设置 ↗</a>
       <div v-if="updateInfo && !updateInfo.online" class="notice notice--warn small">设备离线，连接后才能启动 DSH Web。</div>
+      <p v-if="updateInfo?.web_proxy_simple" class="dim small">简化转发一次服务一台设备；切换设备前请先停止。</p>
+      <div v-if="toolError" class="notice notice--err small">{{ toolError }}</div>
       <div class="row device-dsh__actions">
+        <button v-if="!updateInfo?.dsh_web_enabled" class="btn btn--sm" type="button" :disabled="!!toolBusy || !updateInfo?.online || !dshCommand?.installed" @click="setTool('dsh-web',true)">{{ toolBusy==='dsh-web' ? '正在授权…' : '允许 Agent 启动 DSH Web' }}</button>
         <button class="btn btn--primary btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled || !dshCommand?.installed || updateInfo?.dsh_web_enabled === false" @click="openDSHWeb">{{ dshOpening ? '正在启动…' : '启动并打开 Web ↗' }}</button>
-        <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online || !updateInfo?.web_proxy_enabled" @click="stopDSHWeb">{{ dshStopping ? '正在停止…' : '停止' }}</button>
+        <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled" @click="stopDSHWeb">{{ dshStopping ? '正在停止…' : '停止' }}</button>
       </div>
       <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">浏览器阻止了新窗口，点此打开 DSH Web ↗</a>
       <div v-if="dshOpenError" class="notice notice--err small">{{ dshOpenError }}</div>

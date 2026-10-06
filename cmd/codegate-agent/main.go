@@ -55,6 +55,8 @@ func dispatch(args []string) error {
 
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "record-conversation":
+		return agent.RecordConversation(rest)
 	case "run":
 		return cmdRun(rest)
 	case "supervise":

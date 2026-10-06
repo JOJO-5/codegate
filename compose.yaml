@@ -6,6 +6,7 @@ services:
     environment:
       CODEGATE_LISTEN: ":8080"
       CODEGATE_BASE_URL: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
+      CODEGATE_DSH_PROXY_URL: "${CODEGATE_DSH_PROXY_URL:-auto}"
       CODEGATE_DSH_PROXY_DOMAIN: "${CODEGATE_DSH_PROXY_DOMAIN:-}"
       CODEGATE_ALLOWED_ORIGINS: "${CODEGATE_BASE_URL:-http://127.0.0.1:8080}"
       CODEGATE_DB_PATH: /data/codegate.db
@@ -35,6 +36,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "8443:8443"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

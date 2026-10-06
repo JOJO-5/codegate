@@ -153,7 +153,7 @@ func (s *agentSession) run() (int, string) {
 	_ = s.ac.conn.SetReadDeadline(time.Now().Add(wsHandshakeTimeout))
 
 	for {
-		mt, data, err := s.ac.conn.ReadMessage()
+		mt, data, err := protocol.ReadWSMessage(s.ac.conn, wsMaxReadSize)
 		if err != nil {
 			return s.classifyReadError(err)
 		}
@@ -517,31 +517,48 @@ func (s *agentSession) handlePairBegin(env *protocol.Envelope) error {
 // ---------------------------------------------------------------------------
 
 func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
- if (env.Type == protocol.TypeGitResult || env.Type == protocol.TypeError) && s.srv.acceptGitReply(s.ac, env) { return nil }
- if (env.Type == protocol.TypeRepositoryListed || env.Type == protocol.TypeError) && s.srv.acceptRepositoryReply(s.ac, env) { return nil }
-	if (env.Type == protocol.TypeToolUpdated || env.Type == protocol.TypeError) && s.srv.acceptToolReply(s.ac, env) { return nil }
+	if (env.Type == protocol.TypeGitResult || env.Type == protocol.TypeError) && s.srv.acceptGitReply(s.ac, env) {
+		return nil
+	}
+	if (env.Type == protocol.TypeRepositoryListed || env.Type == protocol.TypeError) && s.srv.acceptRepositoryReply(s.ac, env) {
+		return nil
+	}
+	if (env.Type == protocol.TypeToolUpdated || env.Type == protocol.TypeError) && s.srv.acceptToolReply(s.ac, env) {
+		return nil
+	}
 	switch env.Type {
 	case protocol.TypeWebStarted, protocol.TypeWebStopped:
 		s.srv.acceptWebReply(s.ac, env)
 		return nil
 	case protocol.TypeGitResult, protocol.TypeRepositoryListed:
- return nil
- case protocol.TypeToolUpdated:
+		return nil
+	case protocol.TypeToolUpdated:
 		return nil
 	case protocol.TypeWebClose:
 		p, err := protocol.DecodePayload[protocol.WebStreamPayload](env)
-		if err != nil { return nil }
+		if err != nil {
+			return nil
+		}
 		id, err := uuid.Parse(p.StreamID)
-		if err != nil { return nil }
+		if err != nil {
+			return nil
+		}
 		s.srv.web.mu.Lock()
 		stream := s.srv.web.streams[id]
 		s.srv.web.mu.Unlock()
-		if stream != nil && stream.agent == s.ac { s.srv.finishWebStream(id, s.ac) }
+		if stream != nil && stream.agent == s.ac {
+			s.srv.finishWebStream(id, s.ac)
+		}
 		return nil
 	case protocol.TypeAgentHeartbeat:
 		return s.handleHeartbeat(env)
 	case protocol.TypeSessionSync:
 		return s.handleSessionSync(env)
+	case protocol.TypeConversationBound:
+		return s.handleConversationBound(env)
+	case protocol.TypeConversationListed:
+		s.routeToClient(env)
+		return nil
 	case protocol.TypeSessionCreated:
 		return s.handleSessionCreated(env)
 	case protocol.TypeSessionClosed, protocol.TypeSessionExit:
@@ -573,7 +590,9 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 		s.srv.log.Debug("认证后收到握手阶段消息", "type", env.Type, "device_id", s.ac.DeviceID)
 		return nil
 	case protocol.TypeError:
-		if s.srv.acceptWebReply(s.ac, env) { return nil }
+		if s.srv.acceptWebReply(s.ac, env) {
+			return nil
+		}
 		// Agent 报错：如果它是对某个客户端请求的响应，转给那个客户端；
 		// 否则只记日志（Agent 主动报的内部错误）。
 		s.routeToClient(env)
@@ -609,7 +628,9 @@ func (s *agentSession) routeToClient(env *protocol.Envelope) bool {
 	// 就发来一帧 stdin —— 而那时订阅关系还没建立，帧会被
 	// Relay 以「未 attach 到该会话」拒掉。用户看到的是
 	// 「终端一连上就输不进字」，而且只在时序巧合时出现。
-	if env.Type == protocol.TypeError && p.release != nil { p.release() }
+	if env.Type == protocol.TypeError && p.release != nil {
+		p.release()
+	}
 	s.applyResponseSideEffects(p, env)
 
 	data, err := protocol.Encode(env)
@@ -762,6 +783,17 @@ func (s *agentSession) handleSessionCreated(env *protocol.Envelope) error {
 	ctx, cancel := s.dbCtx()
 	defer cancel()
 
+	if sum.Recovery != nil && sum.Recovery.SourceID != "" {
+		source, e := s.srv.store.SessionByID(ctx, sum.Recovery.SourceID)
+		if e == nil && source.DeviceID == s.ac.DeviceID && source.UserID == s.ac.UserID && source.Cwd == sum.Cwd {
+			b := *sum.Recovery
+			b.SourceID = ""
+			source.Recovery = &b
+			if err := s.srv.store.UpsertSession(ctx, source); err != nil {
+				return err
+			}
+		}
+	}
 	m := sessionMetaFromSummary(s.ac.DeviceID, s.ac.UserID, sum)
 	if err := s.srv.store.UpsertSession(ctx, m); err != nil {
 		s.srv.log.Warn("写入新会话失败", "session_id", sum.SessionID, "err", err)
@@ -818,13 +850,19 @@ func (s *agentSession) finishSession(env *protocol.Envelope, sid string, spontan
 	// An authenticated Agent may only report exits for its own registered
 	// sessions. Validate durable ownership before mutating or notifying anyone.
 	stored, err := s.srv.store.SessionByID(ctx, sid)
-	if err != nil || stored.UserID != s.ac.UserID || stored.DeviceID != s.ac.DeviceID || !s.ac.HasSession(sid) { return }
+	if err != nil || stored.UserID != s.ac.UserID || stored.DeviceID != s.ac.DeviceID || !s.ac.HasSession(sid) {
+		return
+	}
 	if env.Type == protocol.TypeSessionExit {
 		payload, err := protocol.DecodePayload[protocol.SessionExitPayload](env)
-		if err != nil || payload.SessionID != sid { return }
+		if err != nil || payload.SessionID != sid {
+			return
+		}
 	} else {
 		payload, err := protocol.DecodePayload[protocol.SessionClosedPayload](env)
-		if err != nil || payload.SessionID != sid { return }
+		if err != nil || payload.SessionID != sid {
+			return
+		}
 	}
 
 	now := s.srv.now()
@@ -860,7 +898,10 @@ func (s *agentSession) finishSession(env *protocol.Envelope, sid string, spontan
 	if spontaneous {
 		// Clear request/reply IDs: lifecycle events are not request replies.
 		push, err := protocol.NewEnvelope(env.Type, env.Payload)
-		if err == nil { push.SessionID = sid; s.srv.relay.BroadcastToUser(s.ac.UserID, push) }
+		if err == nil {
+			push.SessionID = sid
+			s.srv.relay.BroadcastToUser(s.ac.UserID, push)
+		}
 	} else {
 		s.srv.relay.BroadcastToSession(sid, env, except)
 	}
@@ -887,7 +928,9 @@ func (s *agentSession) onBinary(data []byte) error {
 		return &fatalClose{CloseUnauthorized, "binary_before_auth"}
 	}
 	typ, _, _, err := protocol.PeekFrameHeader(data)
-	if err != nil { return &fatalClose{ClosePolicyViolation, "invalid_frame"} }
+	if err != nil {
+		return &fatalClose{ClosePolicyViolation, "invalid_frame"}
+	}
 	if typ == protocol.FrameWebToServer {
 		if err := s.srv.webFrame(s.ac, data); err != nil {
 			return &fatalClose{ClosePolicyViolation, "invalid_web_frame"}
@@ -965,6 +1008,7 @@ func newNonce() (string, error) {
 // sessionMetaFromSummary 把协议层的会话快照转成存储层模型。
 func sessionMetaFromSummary(deviceID, userID string, sum protocol.SessionSummary) *storage.SessionMeta {
 	m := &storage.SessionMeta{
+		Recovery:  sum.Recovery,
 		ID:        sum.SessionID,
 		DeviceID:  deviceID,
 		UserID:    userID,
@@ -992,4 +1036,19 @@ func sessionMetaFromSummary(deviceID, userID string, sum protocol.SessionSummary
 		m.LastAttachedAt = &t
 	}
 	return m
+}
+
+func (s *agentSession) handleConversationBound(env *protocol.Envelope) error {
+	sum, err := protocol.DecodePayload[protocol.SessionSummary](env)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.dbCtx()
+	defer cancel()
+	meta, err := s.srv.store.SessionByID(ctx, sum.SessionID)
+	if err != nil || meta.DeviceID != s.ac.DeviceID || meta.UserID != s.ac.UserID || meta.Cwd != sum.Cwd {
+		return nil
+	}
+	meta.Recovery = sum.Recovery
+	return s.srv.store.UpsertSession(ctx, meta)
 }

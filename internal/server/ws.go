@@ -75,9 +75,10 @@ const (
 // 同源策略保护，漏一次的代价是「用户访问恶意页面就被拿了 cookie」。
 func (s *Server) upgrader() websocket.Upgrader {
 	return websocket.Upgrader{
-		ReadBufferSize:  wsReadBufferSize,
-		WriteBufferSize: wsWriteBufferSize,
-		CheckOrigin:     func(r *http.Request) bool { return s.originOK(r) },
+		EnableCompression: true,
+		ReadBufferSize:    wsReadBufferSize,
+		WriteBufferSize:   wsWriteBufferSize,
+		CheckOrigin:       func(r *http.Request) bool { return s.originOK(r) },
 	}
 }
 
@@ -116,6 +117,7 @@ func (s *Server) upgrade(w http.ResponseWriter, r *http.Request) (*websocket.Con
 // ★ 刻意**不**在这里关连接：关连接由读循环的退出路径统一负责，
 // 两条路径都能关的话，「谁先关的、为什么关」就再也说不清了。
 func (s *Server) writePump(ws *websocket.Conn, send <-chan outbound, done <-chan struct{}, label string) {
+	protocol.ConfigureCompression(ws)
 	ticker := time.NewTicker(wsPingPeriod)
 	defer ticker.Stop()
 
@@ -132,6 +134,7 @@ func (s *Server) writePump(ws *websocket.Conn, send <-chan outbound, done <-chan
 			if err := ws.SetWriteDeadline(time.Now().Add(wsWriteWait)); err != nil {
 				return
 			}
+			ws.EnableWriteCompression(protocol.CompressWSMessage(o.binary, o.data))
 			if err := ws.WriteMessage(mt, o.data); err != nil {
 				s.log.Debug("WebSocket 写失败，连接将关闭", "conn", label, "err", err)
 				return

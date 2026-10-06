@@ -12,6 +12,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"github.com/jojo/codegate/internal/protocol"
 	"time"
 )
 
@@ -109,6 +110,7 @@ func (p *PairingCode) Usable(now time.Time) bool {
 // 这张表存在的意义是：给设备页一个不用等 Agent 的快速首屏 + 留一份历史。
 // 所以字段允许短暂过期，Agent 重连时会用 session.sync 覆盖。
 type SessionMeta struct {
+	Recovery       *protocol.ConversationBinding
 	ID             string
 	DeviceID       string
 	UserID         string
@@ -168,9 +170,9 @@ type AuditLog struct {
 //
 // 方法按域分组，顺序与 migrations/0001_init.sql 一致，便于对照。
 type Store interface {
-    Preferences(ctx context.Context, userID string) (map[string]string, error)
-    SetPreference(ctx context.Context, userID, key, value string) error
-    DeletePreference(ctx context.Context, userID, key string) error
+	Preferences(ctx context.Context, userID string) (map[string]string, error)
+	SetPreference(ctx context.Context, userID, key, value string) error
+	DeletePreference(ctx context.Context, userID, key string) error
 	// 生命周期
 	Close() error
 	Ping(ctx context.Context) error

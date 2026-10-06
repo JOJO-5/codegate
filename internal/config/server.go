@@ -33,11 +33,13 @@ type Config struct {
 	// DSHProxyDomain is a dedicated wildcard HTTPS domain, e.g. dsh.example.com.
 	// Each device uses <32 hex device id>.dsh.example.com. Empty disables Web proxy.
 	DSHProxyDomain string
+	// DSHProxyURL provides a separate HTTPS origin without wildcard DNS.
+	DSHProxyURL string
 
 	TLS TLSConfig
 
 	// ---- 存储 ----
-	DBPath string
+	DBPath          string
 	AgentUpdatesDir string // 只读更新仓库；为空时关闭更新端点
 
 	// ---- 认证 ----
@@ -126,6 +128,15 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	}
 	if v := getenv("CODEGATE_DSH_PROXY_DOMAIN"); v != "" {
 		c.DSHProxyDomain = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := getenv("CODEGATE_DSH_PROXY_URL"); v != "" {
+		c.DSHProxyURL = strings.TrimRight(strings.ToLower(strings.TrimSpace(v)), "/")
+		if c.DSHProxyURL == "auto" {
+			c.DSHProxyURL = ""
+			if u, err := url.Parse(c.BaseURL); err == nil && u.Scheme == "https" && c.DSHProxyDomain == "" {
+				c.DSHProxyURL = "https://" + u.Hostname() + ":8443"
+			}
+		}
 	}
 	if v := getenv("CODEGATE_DB_PATH"); v != "" {
 		c.DBPath = v
@@ -306,6 +317,29 @@ func (c *Config) Validate() error {
 		} else if u, err := url.Parse(c.BaseURL); err == nil &&
 			(u.Hostname() == c.DSHProxyDomain || strings.HasSuffix(u.Hostname(), "."+c.DSHProxyDomain)) {
 			problems = append(problems, "DSH 域名不能与 CodeGate 主站共用来源")
+		}
+	}
+	if c.DSHProxyURL != "" {
+		u, err := url.Parse(c.DSHProxyURL)
+		main, mainErr := url.Parse(c.BaseURL)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			problems = append(problems, "dsh_proxy_url 必须是没有路径的 HTTPS 地址")
+		} else {
+			port := u.Port()
+			if port != "" {
+				n, e := strconv.Atoi(port)
+				if e != nil || n < 1 || n > 65535 {
+					problems = append(problems, "dsh_proxy_url 端口非法")
+				}
+			}
+			if mainErr != nil || main.Scheme != "https" {
+				problems = append(problems, "启用 dsh_proxy_url 时 base_url 必须是 HTTPS")
+			} else if strings.EqualFold(strings.TrimSuffix(main.Host, ":443"), strings.TrimSuffix(u.Host, ":443")) {
+				problems = append(problems, "DSH Web 必须使用独立来源：可使用同域名的另一个 HTTPS 端口")
+			}
+		}
+		if c.DSHProxyDomain != "" {
+			problems = append(problems, "dsh_proxy_url 与 dsh_proxy_domain 只能启用一个")
 		}
 	}
 	switch c.LogLevel {

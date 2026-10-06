@@ -22,6 +22,11 @@ const (
 	TypeDeviceInfo Type = "device.info"
 
 	// ---- 会话 ----
+	TypeConversationList    Type = "conversation.list"
+	TypeConversationListed  Type = "conversation.list.result"
+	TypeConversationRestore Type = "conversation.restore"
+	TypeConversationBound   Type = "conversation.bound"
+
 	TypeSessionSync     Type = "session.sync"
 	TypeSessionCreate   Type = "session.create"
 	TypeSessionCreated  Type = "session.created"
@@ -58,18 +63,18 @@ const (
 	TypeFileCancel     Type = "file.cancel"
 
 	// DSH Web tunnel. The browser cannot emit these messages.
-	TypeWebStart Type = "web.start"
-	TypeWebStarted Type = "web.started"
-	TypeWebOpen Type = "web.open"
-	TypeWebClose Type = "web.close"
-	TypeWebStop Type = "web.stop"
-	TypeWebStopped Type = "web.stopped"
-	TypeToolSet Type = "tool.set"
-	TypeToolUpdated Type = "tool.updated"
- TypeGitRequest Type = "git.request"
- TypeGitResult Type = "git.result"
- TypeRepositoryList Type = "repository.list"
- TypeRepositoryListed Type = "repository.list.result"
+	TypeWebStart         Type = "web.start"
+	TypeWebStarted       Type = "web.started"
+	TypeWebOpen          Type = "web.open"
+	TypeWebClose         Type = "web.close"
+	TypeWebStop          Type = "web.stop"
+	TypeWebStopped       Type = "web.stopped"
+	TypeToolSet          Type = "tool.set"
+	TypeToolUpdated      Type = "tool.updated"
+	TypeGitRequest       Type = "git.request"
+	TypeGitResult        Type = "git.result"
+	TypeRepositoryList   Type = "repository.list"
+	TypeRepositoryListed Type = "repository.list.result"
 
 	// ---- 通用 ----
 	TypeError Type = "error"
@@ -132,6 +137,10 @@ func (s Side) Local() Sender { return SentByServer }
 // 而不是忽略后继续。理由：浏览器若能发 `session.exit` 或 `agent.ready`，
 // 就能伪造 Agent 事件，欺骗 UI 和 Server 的状态机。
 var allowedSenders = map[Type]Sender{
+	TypeConversationList:    SentByClient,
+	TypeConversationRestore: SentByClient,
+	TypeConversationListed:  SentByAgent,
+	TypeConversationBound:   SentByAgent,
 	// ---- 只有 Agent 能发 ----
 	TypeAgentHello:         SentByAgent,
 	TypeAgentAuth:          SentByAgent,
@@ -147,24 +156,24 @@ var allowedSenders = map[Type]Sender{
 	TypeSessionClosed:      SentByAgent,
 	TypeSessionExit:        SentByAgent,
 	TypeSessionRoleChanged: SentByAgent,
-	TypeWebStarted: SentByAgent,
-	TypeToolUpdated: SentByAgent,
- TypeRepositoryListed: SentByAgent,
- TypeGitResult: SentByAgent,
-	TypeWebStopped: SentByAgent,
+	TypeWebStarted:         SentByAgent,
+	TypeToolUpdated:        SentByAgent,
+	TypeRepositoryListed:   SentByAgent,
+	TypeGitResult:          SentByAgent,
+	TypeWebStopped:         SentByAgent,
 
 	// ---- 只有 Server 能发（对 Agent 的应答 / 对客户端的通知）----
 	TypeAgentChallenge:     SentByServer,
 	TypeAgentReady:         SentByServer,
 	TypeAgentPairCode:      SentByServer,
 	TypeAgentPairCompleted: SentByServer,
-	TypeWebStart: SentByServer,
-	TypeToolSet: SentByServer,
- TypeRepositoryList: SentByServer,
- TypeGitRequest: SentByServer,
-	TypeWebStop: SentByServer,
-	TypeWebOpen: SentByServer,
-	TypeWebClose: SentByServer | SentByAgent,
+	TypeWebStart:           SentByServer,
+	TypeToolSet:            SentByServer,
+	TypeRepositoryList:     SentByServer,
+	TypeGitRequest:         SentByServer,
+	TypeWebStop:            SentByServer,
+	TypeWebOpen:            SentByServer,
+	TypeWebClose:           SentByServer | SentByAgent,
 
 	// ---- 只有浏览器能发 ----
 	TypeSessionCreate:       SentByClient,

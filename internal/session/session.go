@@ -132,10 +132,11 @@ type Session struct {
 	DeviceID uuid.UUID
 	UserID   uuid.UUID
 
-	Name    string
-	Command string
-	Args    []string
-	Cwd     string
+	Recovery *protocol.ConversationBinding
+	Name     string
+	Command  string
+	Args     []string
+	Cwd      string
 
 	CreatedAt time.Time
 
@@ -179,6 +180,7 @@ func newSession(
 		ID:        uuid.New(),
 		DeviceID:  req.DeviceID,
 		UserID:    req.UserID,
+		Recovery:  req.Recovery,
 		Name:      req.Name,
 		Command:   req.Command,
 		Args:      req.Args,
@@ -353,20 +355,32 @@ func (s *Session) Attach(req AttachRequest) (AttachResult, error) {
 	// A new browser (Since=0), or one whose ring window was overrun, needs
 	// the full replay and the mode preamble.
 	send := func(data []byte, end bool) error {
-		if !req.Sink.SendBuffer(data, end) { return fmt.Errorf("会话历史重放队列已满，请稍后重试") }
+		if !req.Sink.SendBuffer(data, end) {
+			return fmt.Errorf("会话历史重放队列已满，请稍后重试")
+		}
 		return nil
 	}
 	if req.Since == 0 || truncated {
-		if err := send(resetSeq, false); err != nil { return AttachResult{}, err }
-		if pre := s.tracker.Preamble(); len(pre) > 0 {
-			if err := send(pre, false); err != nil { return AttachResult{}, err }
+		if err := send(resetSeq, false); err != nil {
+			return AttachResult{}, err
 		}
-		if err := send(clearSeq, false); err != nil { return AttachResult{}, err }
+		if pre := s.tracker.Preamble(); len(pre) > 0 {
+			if err := send(pre, false); err != nil {
+				return AttachResult{}, err
+			}
+		}
+		if err := send(clearSeq, false); err != nil {
+			return AttachResult{}, err
+		}
 	}
-	if len(data) > 0 {                   // 4
-		if err := send(data, false); err != nil { return AttachResult{}, err }
+	if len(data) > 0 { // 4
+		if err := send(data, false); err != nil {
+			return AttachResult{}, err
+		}
 	}
-	if err := send(syncOffSeq, true); err != nil { return AttachResult{}, err }
+	if err := send(syncOffSeq, true); err != nil {
+		return AttachResult{}, err
+	}
 
 	// ---- 6. 登记 ----
 	s.views[req.ConnID] = &View{
@@ -650,6 +664,7 @@ func (s *Session) Summary() protocol.SessionSummary {
 
 func (s *Session) summaryLocked() protocol.SessionSummary {
 	sum := protocol.SessionSummary{
+		Recovery:      s.Recovery,
 		SessionID:     s.ID.String(),
 		DeviceID:      s.DeviceID.String(),
 		Name:          s.Name,
@@ -688,4 +703,30 @@ func (s *Session) ExitInfo() (code int, sig terminal.Signal, reason string, ende
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.exitCode, s.exitSignal, s.exitReason, !s.endedAt.IsZero()
+}
+
+// BindConversation publishes immutable copies under the session lock.
+func (s *Session) BindConversation(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Recovery == nil || s.Recovery.NativeID == id {
+		return false
+	}
+	next := *s.Recovery
+	next.NativeID = id
+	s.Recovery = &next
+	return true
+}
+
+func (s *Session) BindConversationIdentity(id, root string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Recovery == nil || (s.Recovery.NativeID == id && s.Recovery.NativeRoot == root) {
+		return false
+	}
+	next := *s.Recovery
+	next.NativeID = id
+	next.NativeRoot = root
+	s.Recovery = &next
+	return true
 }

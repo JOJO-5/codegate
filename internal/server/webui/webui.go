@@ -20,11 +20,12 @@
 // pattern 匹配不到任何文件，编译失败。
 //
 // ★ 曾经的做法是「提交一个占位 index.html，内容是一句『前端未构建』」。
-//   它被换掉是因为那个文件会被 `make web` 覆盖：真实构建的 index.html
-//   必须落在同一个路径上。于是「提交前记得把占位页恢复回去」成了一条
-//   只能靠人记住的规矩，而违反它的后果是**安静地**提交一个引用了
-//   不存在资源的 index.html。现在未构建时伺服的是下面的 notBuiltPage
-//   常量，`make web-clean` 也简化成一条 rm，这类失误不再可能发生。
+//
+//	它被换掉是因为那个文件会被 `make web` 覆盖：真实构建的 index.html
+//	必须落在同一个路径上。于是「提交前记得把占位页恢复回去」成了一条
+//	只能靠人记住的规矩，而违反它的后果是**安静地**提交一个引用了
+//	不存在资源的 index.html。现在未构建时伺服的是下面的 notBuiltPage
+//	常量，`make web-clean` 也简化成一条 rm，这类失误不再可能发生。
 //
 // # 为什么 Built() 要校验资源存在性，而不只看 index.html 在不在
 //
@@ -268,7 +269,9 @@ func Handler() http.Handler {
 					// （请求日志里记的应该是用户真正请求的路径）。
 					r2 := r.Clone(r.Context())
 					r2.URL.Path = clean
-					files.ServeHTTP(w, r2)
+					if !serveGzipAsset(w, r2, distFS, name) {
+						files.ServeHTTP(w, r2)
+					}
 					return
 				}
 			}
@@ -291,6 +294,12 @@ func Handler() http.Handler {
 			return
 		}
 
+		if state, _ := analyzeDist(distFS); state == distBuilt {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			if serveGzipAsset(w, r, distFS, "index.html") {
+				return
+			}
+		}
 		serveIndex(w, distFS)
 	})
 }
