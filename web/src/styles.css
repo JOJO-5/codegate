@@ -768,6 +768,7 @@ a.item:hover {
 .term__tools { overflow-x: auto; max-height: 80px; }
 .term__host { overflow: hidden; background: #000000; }
 .term__host .xterm-viewport { overflow-y: auto !important; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.term__host .xterm { touch-action: pan-x pinch-zoom; }
 .term__workspace { display: flex; flex: 1; min-height: 0; }
 .term__workspace .term__host { flex: 1; min-width: 0; }
 .term__sidebar { width: 214px; flex: none; padding: 16px 10px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; background: var(--bg-elev); border-right: 1px solid var(--border); color: var(--fg); }

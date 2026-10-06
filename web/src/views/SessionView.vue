@@ -217,13 +217,85 @@ function scrollHistory(lines: number): void {
     term?.scrollLines(lines)
   }
 }
-let touchY = 0
-function onTerminalTouchStart(e: TouchEvent): void { touchY = e.changedTouches[0]?.clientY ?? 0 }
+let terminalTouch: { id: number; x: number; y: number; lastY: number; pending: number; started: number; dragging: boolean } | null = null
+let suppressTerminalClickUntil = 0
+function onTerminalPointerDown(e: PointerEvent): void {
+  if (e.pointerType !== 'touch') enableSoftKeyboard()
+}
+function onTerminalTouchStart(e: TouchEvent): void {
+  terminalTouch = null
+  if (e.touches.length !== 1 || !term || (e.target as Element).closest('.term__overlay')) return
+  suppressTerminalClickUntil = 0
+  const touch = e.touches[0]!
+  terminalTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, pending: 0, started: Date.now(), dragging: false }
+  // Own vertical touch scrolling before xterm's viewport handler. Its handler
+  // ignores touches when a TUI enables mouse tracking, and alt buffers have
+  // no local scrollback. A tap still enables typing when the finger lifts.
+  if (term.textarea) term.textarea.inputMode = 'none'
+  e.stopPropagation()
+}
+function onTerminalTouchMove(e: TouchEvent): void {
+  const gesture = terminalTouch
+  if (!gesture || !term) return
+  if (e.touches.length !== 1) { terminalTouch = null; return }
+  const touch = Array.from(e.touches).find(t => t.identifier === gesture.id)
+  if (!touch) return
+  e.stopPropagation()
+  if (!gesture.dragging) {
+    const dx = touch.clientX - gesture.x
+    const dy = touch.clientY - gesture.y
+    // Leave horizontal gestures and long presses available to the browser.
+    if ((Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) || Date.now() - gesture.started > 500) {
+      terminalTouch = null
+      return
+    }
+    if (Math.abs(dy) < 8) return
+    gesture.dragging = true
+    shortcutInput.value = true
+    composer.value?.blur()
+    term.blur()
+  }
+  if (e.cancelable) e.preventDefault()
+  suppressTerminalClickUntil = Date.now() + 700
+  gesture.pending += gesture.lastY - touch.clientY
+  gesture.lastY = touch.clientY
+  const screen = term.element?.querySelector('.xterm-screen')
+  const bounds = screen?.getBoundingClientRect()
+  if (!screen || !bounds || bounds.height <= 0) return
+  const alternate = term.buffer.active.type === 'alternate'
+  const mouse = alternate && term.modes.mouseTrackingMode !== 'none' && term.modes.mouseTrackingMode !== 'x10'
+  const step = alternate && !mouse ? Math.max(48, Math.min(96, bounds.height / 3)) : bounds.height / term.rows
+  const lines = Math.trunc(gesture.pending / step)
+  if (!lines) return
+  gesture.pending -= lines * step
+  if (!alternate) { term.scrollLines(lines); return }
+  if (role.value !== 'controller' || !isLive.value || !conn.isOpen) return
+  if (!mouse) { scrollHistory(lines); return }
+  // Let xterm encode the CLI's negotiated mouse protocol and coordinates.
+  // Use one wheel event per row: xterm mouse reports encode direction only.
+  for (let i = 0; i < Math.min(Math.abs(lines), 32); i++) {
+    screen.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaMode: WheelEvent.DOM_DELTA_LINE,
+      deltaY: Math.sign(lines),
+      clientX: Math.max(bounds.left + 1, Math.min(gesture.x, bounds.right - 1)),
+      clientY: Math.max(bounds.top + 1, Math.min(touch.clientY, bounds.bottom - 1)),
+    }))
+  }
+}
 function onTerminalTouchEnd(e: TouchEvent): void {
-  if (term?.buffer.active.type !== 'alternate' || !touchY) return
-  const delta = (e.changedTouches[0]?.clientY ?? touchY) - touchY
-  if (Math.abs(delta) > 55) scrollHistory(delta > 0 ? -12 : 12)
-  touchY = 0
+  const gesture = terminalTouch
+  if (!gesture || !Array.from(e.changedTouches).some(t => t.identifier === gesture.id)) return
+  terminalTouch = null
+  if (gesture.dragging) {
+    if (e.cancelable) e.preventDefault()
+    e.stopPropagation()
+    suppressTerminalClickUntil = Date.now() + 700
+  } else {
+    enableSoftKeyboard()
+  }
+}
+function onTerminalClick(e: MouseEvent): void {
+  if (Date.now() < suppressTerminalClickUntil) { e.preventDefault(); e.stopPropagation() }
 }
 function redraw(): void {
   if (role.value !== 'controller' || !isLive.value) return
@@ -754,7 +826,7 @@ onUnmounted(() => {
         </button>
         <button class="term__session-link" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">▣ 工作区文件</button>
       </aside>
-      <div ref="hostEl" class="term__host" @pointerdown="enableSoftKeyboard" @touchstart.passive="onTerminalTouchStart" @touchend.passive="onTerminalTouchEnd">
+      <div ref="hostEl" class="term__host" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="terminalTouch = null" @click.capture="onTerminalClick">
       <div v-if="attaching" class="term__overlay" role="status">
         <span class="spinner" />
         <span class="small dim">正在接回原会话…</span>
