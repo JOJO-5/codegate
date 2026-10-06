@@ -197,6 +197,11 @@ func isRecoverableLive(s protocol.SessionSummary) bool {
 }
 
 func (a *Agent) nativeHistory(tool, cwd string, env []string, key, target string) ([]protocol.NativeConversation, error) {
+	resolvedCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, err
+	}
+	cwd = resolvedCwd
 	if target != "" && !nativeIDPattern.MatchString(target) {
 		return nil, errors.New("无效的原生对话 ID")
 	}
@@ -230,7 +235,7 @@ func (a *Agent) nativeHistory(tool, cwd string, env []string, key, target string
 		}
 	}
 	count := 0
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if os.IsNotExist(walkErr) {
 				return nil
@@ -298,7 +303,7 @@ func openCodeHistory(cwd string, env []string, target string) ([]protocol.Native
 		return []protocol.NativeConversation{}, nil
 	}
 	// The native DB is always read-only. No migration or locking writes.
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}).String())
+	db, err := sql.Open("sqlite", nativeSQLiteURI(path))
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +515,15 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 		}
 		old, _ := json.Marshal(previous)
 		notify, _ := json.Marshal([]string{exe, "record-conversation", marker, string(old)})
-		cmd.Args = append(cmd.Args, "-c", "notify="+string(notify))
+		if binding.NativeID != "" {
+			// Keep overrides before the native subcommand: clap's resume-specific
+			// -c vector otherwise replaces existing provider/config overrides.
+			args := append([]string{}, cmd.Args[:len(cmd.Args)-2]...)
+			args = append(args, "-c", "notify="+string(notify), "resume", binding.NativeID)
+			cmd.Args = args
+		} else {
+			cmd.Args = append(cmd.Args, "-c", "notify="+string(notify))
+		}
 	case "opencode":
 		config := map[string]any{}
 		if raw := nativeEnvValue(env, "OPENCODE_CONFIG_CONTENT"); raw != "" {
@@ -740,7 +753,7 @@ func codexDatabaseHistory(cwd string, env []string, target string) ([]protocol.N
 	if path == "" {
 		return nil, nil
 	}
-	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}).String()
+	uri := nativeSQLiteURI(path)
 	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, err
@@ -779,4 +792,12 @@ func codexDatabaseHistory(cwd string, env []string, target string) ([]protocol.N
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func nativeSQLiteURI(path string) string {
+	p := filepath.ToSlash(path)
+	if filepath.VolumeName(path) != "" {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p, RawQuery: "mode=ro"}).String()
 }

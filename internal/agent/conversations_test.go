@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -82,5 +84,50 @@ func TestCodexCallbackStoresOnlyIdentity(t *testing.T) {
 	}
 	if len(actual) != 2 || actual["id"] != id || actual["cwd"] != "/workspace" {
 		t.Fatalf("unexpected private data: %v", actual)
+	}
+}
+
+func TestCodexSQLiteHistoryFiltersAndDoesNotMigrate(t *testing.T) {
+	home, cwd, other := t.TempDir(), t.TempDir(), t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("CREATE TABLE threads (id TEXT,title TEXT,cwd TEXT,created_at INTEGER,updated_at INTEGER,archived INTEGER)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	for _, row := range []struct {
+		id, dir  string
+		archived int
+	}{{id, cwd, 0}, {uuid.NewString(), other, 0}, {uuid.NewString(), cwd, 1}} {
+		if _, err = db.Exec("INSERT INTO threads VALUES(?,?,?,100,200,?)", row.id, "Original prompt", row.dir, row.archived); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	a := &Agent{}
+	list, err := a.nativeHistory("codex", cwd, []string{"CODEX_HOME=" + home}, "", "")
+	if err != nil || len(list) != 1 || list[0].ID != id {
+		t.Fatalf("history=%v err=%v", list, err)
+	}
+	if list[0].UpdatedAt != 200000 {
+		t.Fatal("incorrect native timestamp units")
+	}
+}
+func TestCodexResumeRetainsProviderOverrides(t *testing.T) {
+	a := &Agent{cfg: Config{StateDir: t.TempDir()}}
+	id := uuid.NewString()
+	cmd := ResolvedCommand{Command: "codex", Args: []string{"-c", "model_provider=fixture"}}
+	_, _, _, err := a.prepareConversation(&cmd, nil, t.TempDir(), "codex", &protocol.ConversationBinding{CommandID: "codex", NativeID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Args[len(cmd.Args)-2] != "resume" || cmd.Args[len(cmd.Args)-1] != id {
+		t.Fatal(cmd.Args)
+	}
+	if !strings.Contains(strings.Join(cmd.Args[:len(cmd.Args)-2], " "), "model_provider=fixture") {
+		t.Fatal("dropped approved provider config")
 	}
 }
