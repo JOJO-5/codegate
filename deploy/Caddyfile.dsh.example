@@ -1,10 +1,12 @@
 # Copy this file to deploy/Caddyfile after configuring wildcard DNS and TLS.
 # DSH must use a distinct origin from CodeGate's access-token storage.
 {$CODEGATE_DOMAIN} {
+    encode zstd gzip
     reverse_proxy server:8080
 }
 
 *.{$CODEGATE_DSH_PROXY_DOMAIN} {
     tls /etc/caddy/dsh-cert/fullchain.pem /etc/caddy/dsh-cert/privkey.pem
+    encode zstd gzip
     reverse_proxy server:8080
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/jojo/codegate/internal/protocol"
 )
 
 // 连接层的时间参数（§3.3）。
@@ -139,7 +140,8 @@ func Dial(ctx context.Context, opts DialOptions) (*Conn, error) {
 	}
 
 	dialer := websocket.Dialer{
-		HandshakeTimeout: DefaultConnectTimeout,
+		EnableCompression: true,
+		HandshakeTimeout:  DefaultConnectTimeout,
 		// Insecure 时跳过证书校验。仅供开发（自签证书）。
 		// 生产必须关掉 —— 终端流量是明文的，TLS 是唯一的保护层。
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.Insecure}, //nolint:gosec // 见上
@@ -241,6 +243,7 @@ func (c *Conn) writePump() {
 	// 正确分工：泵只负责「发现错误 → fail()」，等退出这件事由
 	// 外部调用方（或另一个泵退出后触发的 fail）通过 Close() 完成。
 	defer c.pumpDone.Done()
+	protocol.ConfigureCompression(c.ws)
 
 	for {
 		select {
@@ -257,6 +260,7 @@ func (c *Conn) writePump() {
 				c.fail(err)
 				return
 			}
+			c.ws.EnableWriteCompression(protocol.CompressWSMessage(out.binary, out.data))
 			if err := c.ws.WriteMessage(mt, out.data); err != nil {
 				c.fail(err)
 				return
@@ -290,7 +294,7 @@ func (c *Conn) readPump() {
 	})
 
 	for {
-		mt, data, err := c.ws.ReadMessage()
+		mt, data, err := protocol.ReadWSMessage(c.ws, maxReadSize)
 		if err != nil {
 			c.fail(err)
 			return

@@ -75,9 +75,9 @@ func (s *Server) buildRouter() http.Handler {
 	mux.Handle("POST /api/v1/auth/logout", authed(s.handleLogout))
 	mux.Handle("POST /api/v1/auth/password", authed(s.handleChangePassword))
 	mux.Handle("GET /api/v1/me", authed(s.handleMe))
-    mux.Handle("GET /api/v1/preferences", authed(s.handlePreferences))
-    mux.Handle("PUT /api/v1/preferences/{key}", authed(s.handlePreferenceSet))
-    mux.Handle("DELETE /api/v1/preferences/{key}", authed(s.handlePreferenceDelete))
+	mux.Handle("GET /api/v1/preferences", authed(s.handlePreferences))
+	mux.Handle("PUT /api/v1/preferences/{key}", authed(s.handlePreferenceSet))
+	mux.Handle("DELETE /api/v1/preferences/{key}", authed(s.handlePreferenceDelete))
 
 	// ---- 设备（§14.2）----
 	//
@@ -98,8 +98,8 @@ func (s *Server) buildRouter() http.Handler {
 	mux.Handle("PATCH /api/v1/devices/{id}/sessions/{session}", authed(s.handleSessionArchive))
 	mux.Handle("DELETE /api/v1/devices/{id}/sessions/{session}", authed(s.handleSessionDelete))
 	mux.Handle("POST /api/v1/devices/{id}/git", authed(s.handleDeviceGit))
- mux.Handle("GET /api/v1/devices/{id}/repositories", authed(s.handleDeviceRepositories))
- mux.Handle("GET /api/v1/devices/{id}/update-status", authed(s.handleDeviceUpdateStatus))
+	mux.Handle("GET /api/v1/devices/{id}/repositories", authed(s.handleDeviceRepositories))
+	mux.Handle("GET /api/v1/devices/{id}/update-status", authed(s.handleDeviceUpdateStatus))
 	mux.Handle("PUT /api/v1/devices/{id}/tools/{tool}", authed(s.handleDeviceToolSet))
 	mux.Handle("POST /api/v1/devices/{id}/dsh-web/start", authed(s.handleDSHWebStart))
 	mux.Handle("POST /api/v1/devices/{id}/dsh-web/stop", authed(s.handleDSHWebStop))
@@ -139,7 +139,7 @@ func (s *Server) buildRouter() http.Handler {
 	// DSH runs on a separate browser origin: its root /api and assets may not
 	// share CodeGate's path space or access-token storage.
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.DSHProxyDomain != "" && s.isDSHHost(r.Host) {
+		if s.dshProxyEnabled() && s.isDSHHost(r.Host) {
 			s.serveDSH(w, r)
 			return
 		}

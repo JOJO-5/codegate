@@ -296,6 +296,7 @@ export interface RepositoryListResult {
 export interface DeviceUpdateStatus {
   online: boolean
   web_proxy_enabled?: boolean
+  web_proxy_simple?: boolean
   dsh_web_enabled?: boolean | null
   agent_version?: string
   commands?: CommandAvailability[]

@@ -221,9 +221,15 @@ func (s *Server) sessionForDevice(w http.ResponseWriter, r *http.Request) *stora
 
 func (s *Server) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
 	m := s.sessionForDevice(w, r)
-	if m == nil { return }
-	body, ok := decodeJSON[struct { Archived *bool `json:"archived"` }](w, r)
-	if !ok { return }
+	if m == nil {
+		return
+	}
+	body, ok := decodeJSON[struct {
+		Archived *bool `json:"archived"`
+	}](w, r)
+	if !ok {
+		return
+	}
 	if body.Archived == nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "缺少 archived")
 		return
@@ -238,7 +244,9 @@ func (s *Server) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 	m := s.sessionForDevice(w, r)
-	if m == nil { return }
+	if m == nil {
+		return
+	}
 	ac, online := s.reg.Agent(m.DeviceID)
 	if online && ac.HasSession(m.ID) || m.Status == "running" || m.Status == "starting" || m.Status == "detached" {
 		writeError(w, http.StatusConflict, "session_running", "请先结束远端进程，再删除记录")
@@ -258,6 +266,7 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 // 前端只写一套解析逻辑。
 func sessionSummary(m *storage.SessionMeta) protocol.SessionSummary {
 	return protocol.SessionSummary{
+		Recovery:       m.Recovery,
 		SessionID:      m.ID,
 		DeviceID:       m.DeviceID,
 		Name:           m.Name,
@@ -772,8 +781,8 @@ func (s *Server) handleDeviceUpdateStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if agent, ok := s.reg.Agent(deviceID); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus(), "commands": agent.Commands(), "roots": agent.Roots(), "web_proxy_enabled": s.cfg.DSHProxyDomain != "", "dsh_web_enabled": agent.DSHWebEnabled()})
+		writeJSON(w, http.StatusOK, map[string]any{"online": true, "agent_version": agent.AgentVersion(), "update": agent.UpdateStatus(), "commands": agent.Commands(), "roots": agent.Roots(), "web_proxy_enabled": s.dshProxyEnabled(), "web_proxy_simple": s.cfg.DSHProxyURL != "", "dsh_web_enabled": agent.DSHWebEnabled()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil, "commands": []protocol.CommandAvailability{}, "roots": []string{}, "web_proxy_enabled": s.cfg.DSHProxyDomain != ""})
+	writeJSON(w, http.StatusOK, map[string]any{"online": false, "update": nil, "commands": []protocol.CommandAvailability{}, "roots": []string{}, "web_proxy_enabled": s.dshProxyEnabled()})
 }

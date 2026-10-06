@@ -97,7 +97,7 @@ func (s *clientSession) run() (int, string) {
 	armReadDeadline(s.c.conn, wsPongWait)
 
 	for {
-		mt, data, err := s.c.conn.ReadMessage()
+		mt, data, err := protocol.ReadWSMessage(s.c.conn, wsMaxReadSize)
 		if err != nil {
 			s.srv.log.Debug("浏览器读循环结束", "conn_id", s.c.ID, "err", err)
 			return CloseNormal, "closed"
@@ -147,7 +147,7 @@ func (s *clientSession) onText(data []byte) error {
 	case protocol.TypePong:
 		return nil
 
-	case protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
+	case protocol.TypeConversationList, protocol.TypeConversationRestore, protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
 		protocol.TypeSessionAttach, protocol.TypeSessionDetach, protocol.TypeSessionClose,
 		protocol.TypeSessionResize, protocol.TypeSessionSignal,
 		protocol.TypeSessionClaimControl,
@@ -155,7 +155,6 @@ func (s *clientSession) onText(data []byte) error {
 		protocol.TypeFileCancel:
 		s.routeRequest(env)
 		return nil
-
 
 	case protocol.TypeFileAck:
 		// 这两个是流控/取消通知，没有对应的实现，忽略即可。
@@ -241,13 +240,40 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		return
 	}
 
- if env.Type == protocol.TypeSessionCreate {
-  req, err := protocol.DecodePayload[protocol.SessionCreatePayload](env)
-  if err != nil { sendErrorEnvelope(s.c.TrySendText, env, err); return }
-  if req.Worktree && !agent.Caps().Worktrees {
-   sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "请更新 Agent 后创建独立 Git 工作区")); return
-  }
- }
+	if env.Type == protocol.TypeConversationList || env.Type == protocol.TypeConversationRestore {
+		if !agent.Caps().ConversationRecovery {
+			sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "请更新 Agent 至 v0.1.14 后恢复原对话"))
+			return
+		}
+		ctx, cancel := s.dbCtx()
+		meta, err := s.srv.store.SessionByID(ctx, sessionID)
+		cancel()
+		if err != nil || meta.UserID != s.c.UserID || meta.DeviceID != deviceID {
+			sendErrorEnvelope(s.c.TrySendText, env, errNoAccess())
+			return
+		}
+		req, err := protocol.DecodePayload[protocol.ConversationRequest](env)
+		if err != nil {
+			sendErrorEnvelope(s.c.TrySendText, env, err)
+			return
+		}
+		req.SessionID = sessionID
+		req.Source = sessionSummary(meta)
+		env.Payload, _ = json.Marshal(req)
+	}
+	if env.Type == protocol.TypeSessionCreate {
+		req, err := protocol.DecodePayload[protocol.SessionCreatePayload](env)
+		if err != nil {
+			sendErrorEnvelope(s.c.TrySendText, env, err)
+			return
+		}
+		req.Recovery = nil
+		env.Payload, _ = json.Marshal(req)
+		if req.Worktree && !agent.Caps().Worktrees {
+			sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "请更新 Agent 后创建独立 Git 工作区"))
+			return
+		}
+	}
 
 	// Replay frames precede session.attached on the Agent connection. Subscribe
 	// before forwarding attach so the initial screen is not silently dropped.
@@ -269,7 +295,9 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 	if env.Type == protocol.TypeSessionDetach {
 		p, err := protocol.DecodePayload[protocol.SessionDetachPayload](env)
 		if err != nil {
-			if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
+			if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil {
+				pending.release()
+			}
 			sendErrorEnvelope(s.c.TrySendText, env, err)
 			return
 		}
@@ -277,12 +305,16 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		// authenticated attach may be detached.
 		p.AttachID = s.c.AttachID(sessionID)
 		env.Payload, err = json.Marshal(p)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 	}
 
 	data, err := protocol.Encode(env)
 	if err != nil {
-		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
+		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil {
+			pending.release()
+		}
 		s.srv.log.Error("编码客户端请求失败", "type", env.Type, "err", err)
 		sendErrorEnvelope(s.c.TrySendText, env,
 			protocol.NewError(protocol.CodeInternal, "internal error"))
@@ -293,7 +325,9 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		// 队列满 = 这台 Agent 的某条客户端连接堵住了。
 		// ★ 必须把待回请求撤掉，否则它会一直挂到 TTL 超时，
 		// 而前端在这 60 秒里什么都等不到。
-		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil { pending.release() }
+		if pending, ok := s.srv.pending.Take(env.RequestID); ok && pending.release != nil {
+			pending.release()
+		}
 		s.srv.log.Warn("转发请求失败：Agent 发送队列已满",
 			"device_id", deviceID, "type", env.Type)
 		sendErrorEnvelope(s.c.TrySendText, env,

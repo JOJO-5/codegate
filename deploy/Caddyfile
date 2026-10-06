@@ -1,3 +1,10 @@
 {$CODEGATE_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy server:8080
+}
+
+# Same certificate and domain; a separate origin keeps DSH away from the login UI.
+https://{$CODEGATE_DOMAIN}:8443 {
+    encode zstd gzip
     reverse_proxy server:8080
 }

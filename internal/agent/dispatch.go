@@ -28,6 +28,8 @@ import (
 // 「Agent 到底认哪些指令」，而这个集合应该是**可枚举且短**的。
 func (a *Agent) handleMessage(env *protocol.Envelope) {
 	switch env.Type {
+	case protocol.TypeConversationList, protocol.TypeConversationRestore:
+		go a.onConversationRequest(env)
 	case protocol.TypeSessionCreate:
 		a.onSessionCreate(env)
 	case protocol.TypeSessionAttach:
@@ -137,6 +139,7 @@ func (a *Agent) onSessionCreate(env *protocol.Envelope) {
 		return
 	}
 
+	req.Recovery = nil // Native bindings can only originate from the authorized recovery path.
 	sess, err := a.createSession(req)
 	if err != nil {
 		a.replyError(env, err)
@@ -188,6 +191,10 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 	// Serialize directory selection and process creation with worktree removal.
 	a.workspaceMu.Lock()
 	defer a.workspaceMu.Unlock()
+	return a.createSessionLocked(req)
+}
+
+func (a *Agent) createSessionLocked(req protocol.SessionCreatePayload) (*session.Session, error) {
 	// 1. 命令：只能从白名单里选（除非显式开启自定义命令）。
 	cmd, err := a.commandConfig().ResolveCommand(req.CommandID, req.Command, req.Args, req.Resume)
 	if err != nil {
@@ -229,12 +236,20 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 	// 4. 环境：白名单构造，绝不整体继承（F2 的教训，见 BuildEnv）。
 	childEnv := BuildEnv(a.cfg, cols, rows)
 
+	childEnv, binding, marker, err := a.prepareConversation(&cmd, childEnv, cwd, req.CommandID, req.Recovery)
+	if err != nil {
+		if rollback != nil {
+			rollback()
+		}
+		return nil, err
+	}
 	name := req.Name
 	if name == "" {
 		name = cmd.Label
 	}
 
 	sess, err := a.mgr.Create(context.Background(), session.CreateRequest{
+		Recovery: binding,
 		DeviceID: a.deviceUUID(),
 		// UserID 由 Server 侧填充 —— Agent 不知道也不该知道是哪个用户在操作。
 		UserID:  uuid.Nil,
@@ -248,6 +263,9 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 	})
 	if err != nil && rollback != nil {
 		rollback()
+	}
+	if err == nil && marker != "" {
+		go a.watchConversation(sess, marker)
 	}
 	return sess, err
 }
@@ -524,11 +542,12 @@ func (a *Agent) sendHeartbeat(context.Context) error {
 		})
 	}
 
+	dshWebEnabled := a.dshWebEnabled()
 	env, err := protocol.NewEnvelope(protocol.TypeAgentHeartbeat, protocol.HeartbeatPayload{
 		Sessions:      out,
 		Update:        a.currentUpdateStatus(),
 		Commands:      a.commandInventory(),
-		DSHWebEnabled: &a.cfg.DSHWebEnabled,
+		DSHWebEnabled: &dshWebEnabled,
 		Roots:         a.ws.Roots(),
 	})
 	if err != nil {

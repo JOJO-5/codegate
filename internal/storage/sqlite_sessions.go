@@ -13,7 +13,7 @@ import (
 // ---------------------------------------------------------------------------
 
 const sessionCols = `id, device_id, user_id, name, command, args_json, cwd, status,
-	pid, exit_code, cols, rows, created_at, started_at, ended_at, last_attached_at, created_by, archived`
+	pid, exit_code, cols, rows, created_at, started_at, ended_at, last_attached_at, created_by, archived, recovery_json`
 
 // UpsertSession 写入或覆盖一条会话元数据。
 //
@@ -23,6 +23,14 @@ const sessionCols = `id, device_id, user_id, name, command, args_json, cwd, stat
 // ★ 刻意**不覆盖** created_at：它是「这个会话什么时候建的」，
 // 由 Agent 首次上报确定，后续心跳不该改写它。
 func (s *SQLite) UpsertSession(ctx context.Context, m *SessionMeta) error {
+	recoveryJSON := ""
+	if m.Recovery != nil {
+		b, e := json.Marshal(m.Recovery)
+		if e != nil {
+			return e
+		}
+		recoveryJSON = string(b)
+	}
 	argsJSON, err := marshalArgs(m.Args)
 	if err != nil {
 		return err
@@ -30,9 +38,10 @@ func (s *SQLite) UpsertSession(ctx context.Context, m *SessionMeta) error {
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO sessions
 		 (id, device_id, user_id, name, command, args_json, cwd, status,
-		  pid, exit_code, cols, rows, created_at, started_at, ended_at, last_attached_at, created_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		  pid, exit_code, cols, rows, created_at, started_at, ended_at, last_attached_at, created_by, recovery_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
+		   recovery_json = excluded.recovery_json,
 		   name = excluded.name,
 		   command = excluded.command,
 		   args_json = excluded.args_json,
@@ -48,7 +57,7 @@ func (s *SQLite) UpsertSession(ctx context.Context, m *SessionMeta) error {
 		m.ID, m.DeviceID, m.UserID, m.Name, m.Command, argsJSON, m.Cwd, m.Status,
 		nullIfZero(m.PID), toIntArg(m.ExitCode), int(m.Cols), int(m.Rows),
 		toMs(m.CreatedAt), toMsArg(m.StartedAt), toMsArg(m.EndedAt),
-		toMsArg(m.LastAttachedAt), nullIfEmpty(m.CreatedBy),
+		toMsArg(m.LastAttachedAt), nullIfEmpty(m.CreatedBy), recoveryJSON,
 	)
 	return wrapErr(err)
 }
@@ -181,12 +190,16 @@ func scanSession(sc rowScanner) (*SessionMeta, error) {
 		lastAttachedAt sql.NullInt64
 		createdBy      sql.NullString
 		archived       bool
+		recoveryJSON   string
 	)
 	err := sc.Scan(&m.ID, &m.DeviceID, &m.UserID, &m.Name, &m.Command, &argsJSON,
 		&m.Cwd, &m.Status, &pid, &exitCode, &cols, &rows, &createdAt,
-		&startedAt, &endedAt, &lastAttachedAt, &createdBy, &archived)
+		&startedAt, &endedAt, &lastAttachedAt, &createdBy, &archived, &recoveryJSON)
 	if err != nil {
 		return nil, wrapErr(err)
+	}
+	if recoveryJSON != "" {
+		_ = json.Unmarshal([]byte(recoveryJSON), &m.Recovery)
 	}
 	m.Args, err = unmarshalArgs(argsJSON)
 	if err != nil {

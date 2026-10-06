@@ -237,3 +237,37 @@ func TestPathsAreNonEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestDSHSimpleOriginValidation(t *testing.T) {
+	for _, origin := range []string{"https://codegate.example.test", "https://codegate.example.test:443", "http://codegate.example.test:8443", "https://user:password@codegate.example.test:8443", "https://codegate.example.test:8443/path", "https://codegate.example.test:99999"} {
+		c := Defaults()
+		c.JWTSecret = make([]byte, 32)
+		c.BaseURL = "https://codegate.example.test"
+		c.DSHProxyURL = origin
+		if c.Validate() == nil {
+			t.Fatalf("accepted unsafe proxy origin %q", origin)
+		}
+	}
+	c := Defaults()
+	c.JWTSecret = make([]byte, 32)
+	c.BaseURL = "https://codegate.example.test"
+	c.DSHProxyURL = "https://codegate.example.test:8443"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c = Defaults()
+	if err := c.applyEnv(func(key string) string {
+		switch key {
+		case "CODEGATE_BASE_URL":
+			return "https://codegate.example.test"
+		case "CODEGATE_DSH_PROXY_URL":
+			return "auto"
+		}
+		return ""
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if c.DSHProxyURL != "https://codegate.example.test:8443" {
+		t.Fatal(c.DSHProxyURL)
+	}
+}

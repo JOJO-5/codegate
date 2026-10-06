@@ -118,6 +118,8 @@ export const MessageType = {
   SessionSync: 'session.sync',
   SessionCreate: 'session.create',
   SessionCreated: 'session.created',
+ ConversationList: 'conversation.list',
+ ConversationRestore: 'conversation.restore',
   SessionList: 'session.list',
   SessionListed: 'session.list.result',
   SessionGet: 'session.get',
@@ -269,6 +271,7 @@ export interface ErrorPayload {
  * 三处用同一个类型，前端就只需要一套解析逻辑。
  */
 export interface SessionSummary {
+ recovery?: { command_id: string; native_id?: string; store_key?: string; source_id?: string }
   session_id: string
   device_id: string
   name: string

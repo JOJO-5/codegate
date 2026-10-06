@@ -25,15 +25,15 @@ const webLoopback = "127.0.0.1:3080"
 
 type webGrant struct {
 	userID, deviceID string
-	expires time.Time
+	expires          time.Time
 }
 type webUpstream struct {
-	agent *AgentConn
+	agent  *AgentConn
 	cookie string
 }
 type webStartReply struct {
 	cookie string
-	err error
+	err    error
 }
 type webStartWait struct {
 	agent *AgentConn
@@ -44,22 +44,24 @@ type toolWait struct {
 	reply chan error
 }
 type proxyStream struct {
-	agent *AgentConn
-	pipe net.Conn
+	agent  *AgentConn
+	pipe   net.Conn
 	client net.Conn
-	queue chan []byte
-	done chan struct{}
-	once sync.Once
+	queue  chan []byte
+	done   chan struct{}
+	once   sync.Once
 }
 
 type webGateway struct {
-	mu sync.Mutex
-	tickets map[string]webGrant
-	sessions map[string]webGrant
-	upstreams map[string]webUpstream
-	pending map[string]webStartWait
-	toolPending map[string]toolWait
-	streams map[uuid.UUID]*proxyStream
+	mu           sync.Mutex
+	simpleDevice string // URL mode serves one device until explicitly stopped.
+	simpleStarts int
+	tickets      map[string]webGrant
+	sessions     map[string]webGrant
+	upstreams    map[string]webUpstream
+	pending      map[string]webStartWait
+	toolPending  map[string]toolWait
+	streams      map[uuid.UUID]*proxyStream
 }
 
 func newWebGateway() *webGateway {
@@ -74,41 +76,63 @@ func (g *webGateway) sweep(now time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for token, grant := range g.tickets {
-		if !now.Before(grant.expires) { delete(g.tickets, token) }
+		if !now.Before(grant.expires) {
+			delete(g.tickets, token)
+		}
 	}
 	for token, grant := range g.sessions {
-		if !now.Before(grant.expires) { delete(g.sessions, token) }
+		if !now.Before(grant.expires) {
+			delete(g.sessions, token)
+		}
 	}
 }
 func randomWebToken() (string, error) {
 	var buf [32]byte
-	if _, err := rand.Read(buf[:]); err != nil { return "", err }
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
 	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
 }
 
+func (s *Server) dshProxyEnabled() bool { return s.cfg.DSHProxyDomain != "" || s.cfg.DSHProxyURL != "" }
 func (s *Server) isDSHHost(raw string) bool {
+	if s.cfg.DSHProxyURL != "" {
+		u, _ := url.Parse(s.cfg.DSHProxyURL)
+		return strings.EqualFold(raw, u.Host)
+	}
+
 	host := strings.TrimSuffix(strings.ToLower(raw), ":443")
 	return strings.HasSuffix(host, "."+s.cfg.DSHProxyDomain)
 }
 
 func (s *Server) dshDeviceHost(deviceID string) string {
+	if s.cfg.DSHProxyURL != "" {
+		u, _ := url.Parse(s.cfg.DSHProxyURL)
+		return u.Host
+	}
 	return deviceID + "." + s.cfg.DSHProxyDomain
 }
 
 func (s *Server) deviceFromDSHHost(raw string) (string, bool) {
 	host := strings.TrimSuffix(strings.ToLower(raw), ":443")
-	suffix := "."+s.cfg.DSHProxyDomain
-	if !strings.HasSuffix(host, suffix) { return "", false }
+	suffix := "." + s.cfg.DSHProxyDomain
+	if !strings.HasSuffix(host, suffix) {
+		return "", false
+	}
 	id := strings.TrimSuffix(host, suffix)
-	if len(id) != 32 { return "", false }
-	if _, err := hex.DecodeString(id); err != nil { return "", false }
+	if len(id) != 32 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return "", false
+	}
 	return id, true
 }
 
 // POST with a normal CodeGate Bearer token opens the host service, then returns
 // a one-use navigation URL. The DSH token and cookie never go to this browser.
 func (s *Server) handleDSHWebStart(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.DSHProxyDomain == "" {
+	if !s.dshProxyEnabled() {
 		writeError(w, http.StatusNotImplemented, "unavailable", "DSH Web 代理未配置")
 		return
 	}
@@ -131,10 +155,38 @@ func (s *Server) handleDSHWebStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "device_offline", "设备离线")
 		return
 	}
+	if s.cfg.DSHProxyURL != "" {
+		s.web.mu.Lock()
+		// Disconnected devices cannot retain the sole simple-mode reservation.
+		if old := s.web.upstreams[s.web.simpleDevice]; old.agent != nil {
+			select {
+			case <-old.agent.Done():
+				delete(s.web.upstreams, s.web.simpleDevice)
+				s.web.simpleDevice = ""
+			default:
+			}
+		}
+		if s.web.simpleDevice != "" && s.web.simpleDevice != deviceID {
+			s.web.mu.Unlock()
+			writeError(w, http.StatusConflict, "dsh_in_use", "简化转发正在服务另一台设备，请先停止该设备的 DSH Web；多设备同时使用可配置通配域名")
+			return
+		}
+		s.web.simpleDevice = deviceID
+		s.web.simpleStarts++
+		s.web.mu.Unlock()
+		defer func() {
+			s.web.mu.Lock()
+			defer s.web.mu.Unlock()
+			s.web.simpleStarts--
+			if _, ok := s.web.upstreams[deviceID]; !ok && s.web.simpleDevice == deviceID && s.web.simpleStarts == 0 {
+				s.web.simpleDevice = ""
+			}
+		}()
+	}
 	reqID := uuid.NewString()
 	reply := make(chan webStartReply, 1)
 	s.web.mu.Lock()
-	s.web.pending[reqID] = webStartWait{agent:ac,reply:reply}
+	s.web.pending[reqID] = webStartWait{agent: ac, reply: reply}
 	s.web.mu.Unlock()
 	defer func() {
 		s.web.mu.Lock()
@@ -142,14 +194,20 @@ func (s *Server) handleDSHWebStart(w http.ResponseWriter, r *http.Request) {
 		s.web.mu.Unlock()
 	}()
 	env, err := protocol.NewRequest(reqID, protocol.TypeWebStart, "", protocol.WebStartPayload{Host: s.dshDeviceHost(deviceID)})
-	if err != nil { writeProtoError(w, err); return }
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
 	raw, err := protocol.Encode(env)
-	if err != nil { writeProtoError(w, err); return }
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
 	if err := ac.TrySendText(raw); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "agent_busy", "Agent 忙碌")
 		return
 	}
-	timer := time.NewTimer(45*time.Second)
+	timer := time.NewTimer(45 * time.Second)
 	defer timer.Stop()
 	select {
 	case started := <-reply:
@@ -170,17 +228,20 @@ func (s *Server) handleDSHWebStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, err := randomWebToken()
-	if err != nil { writeProtoError(w, err); return }
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
 	s.web.mu.Lock()
 	if len(s.web.tickets) >= 1024 {
 		s.web.mu.Unlock()
 		writeError(w, http.StatusTooManyRequests, "busy", "打开票据过多，请稍后再试")
 		return
 	}
-	s.web.tickets[token] = webGrant{userID:userID, deviceID:deviceID, expires:s.now().Add(webTicketTTL)}
+	s.web.tickets[token] = webGrant{userID: userID, deviceID: deviceID, expires: s.now().Add(webTicketTTL)}
 	s.web.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]string{
-		"url":"https://"+s.dshDeviceHost(deviceID)+"/?cg_ticket="+url.QueryEscape(token),
+		"url": "https://" + s.dshDeviceHost(deviceID) + "/?cg_ticket=" + url.QueryEscape(token),
 	})
 }
 
@@ -188,61 +249,98 @@ func (s *Server) handleDSHWebStop(w http.ResponseWriter, r *http.Request) {
 	userID, _ := userIDFromContext(r.Context())
 	deviceID := r.PathValue("id")
 	ac, err := s.requireAgent(r.Context(), userID, deviceID)
-	if err != nil { writeDeviceError(w, err); return }
+	if err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	s.web.mu.Lock()
+	starting := s.cfg.DSHProxyURL != "" && s.web.simpleDevice == deviceID && s.web.simpleStarts > 0
+	s.web.mu.Unlock()
+	if starting {
+		writeError(w, http.StatusConflict, "dsh_starting", "DSH Web 正在启动，请完成后再停止")
+		return
+	}
 	reqID := uuid.NewString()
 	reply := make(chan webStartReply, 1)
 	s.web.mu.Lock()
-	s.web.pending[reqID] = webStartWait{agent:ac,reply:reply}
+	s.web.pending[reqID] = webStartWait{agent: ac, reply: reply}
 	s.web.mu.Unlock()
 	defer func() {
 		s.web.mu.Lock()
 		delete(s.web.pending, reqID)
 		s.web.mu.Unlock()
 	}()
-	env, err := protocol.NewRequest(reqID,protocol.TypeWebStop,"",nil)
-	if err != nil { writeProtoError(w, err); return }
-	raw, err := protocol.Encode(env)
-	if err != nil { writeProtoError(w, err); return }
-	if err := ac.TrySendText(raw); err != nil {
-		writeError(w,http.StatusServiceUnavailable,"agent_busy","Agent 忙碌")
+	env, err := protocol.NewRequest(reqID, protocol.TypeWebStop, "", nil)
+	if err != nil {
+		writeProtoError(w, err)
 		return
 	}
-	timer := time.NewTimer(10*time.Second)
+	raw, err := protocol.Encode(env)
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	if err := ac.TrySendText(raw); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "agent_busy", "Agent 忙碌")
+		return
+	}
+	timer := time.NewTimer(10 * time.Second)
 	defer timer.Stop()
 	select {
 	case result := <-reply:
-		if result.err != nil { writeError(w,http.StatusServiceUnavailable,"dsh_stop_failed","DSH Web 未能停止"); return }
+		if result.err != nil {
+			writeError(w, http.StatusServiceUnavailable, "dsh_stop_failed", "DSH Web 未能停止")
+			return
+		}
 	case <-timer.C:
-		writeError(w,http.StatusGatewayTimeout,"dsh_timeout","等待 DSH Web 停止超时")
+		writeError(w, http.StatusGatewayTimeout, "dsh_timeout", "等待 DSH Web 停止超时")
 		return
 	case <-ac.Done():
-		writeError(w,http.StatusServiceUnavailable,"device_offline","Agent 已断开")
+		writeError(w, http.StatusServiceUnavailable, "device_offline", "Agent 已断开")
 		return
-	case <-r.Context().Done(): return
+	case <-r.Context().Done():
+		return
 	}
 	s.web.mu.Lock()
-	if u := s.web.upstreams[deviceID]; u.agent == ac { delete(s.web.upstreams,deviceID) }
+	if u := s.web.upstreams[deviceID]; u.agent == ac {
+		delete(s.web.upstreams, deviceID)
+	}
+	if s.web.simpleDevice == deviceID {
+		s.web.simpleDevice = ""
+	}
 	for token, g := range s.web.tickets {
-		if g.deviceID == deviceID { delete(s.web.tickets,token) }
+		if g.deviceID == deviceID {
+			delete(s.web.tickets, token)
+		}
 	}
 	for token, g := range s.web.sessions {
-		if g.deviceID == deviceID { delete(s.web.sessions,token) }
+		if g.deviceID == deviceID {
+			delete(s.web.sessions, token)
+		}
 	}
 	var streams []uuid.UUID
 	for id, stream := range s.web.streams {
-		if stream.agent == ac { streams = append(streams,id) }
+		if stream.agent == ac {
+			streams = append(streams, id)
+		}
 	}
 	s.web.mu.Unlock()
-	for _, id := range streams { s.closeWebStream(id,false) }
-	writeJSON(w,http.StatusOK,map[string]bool{"stopped":true})
+	for _, id := range streams {
+		s.closeWebStream(id, false)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"stopped": true})
 }
 
 func (s *Server) acceptWebReply(ac *AgentConn, env *protocol.Envelope) bool {
 	s.web.mu.Lock()
 	wait := s.web.pending[env.ReplyTo]
-	if wait.reply != nil && wait.agent == ac { delete(s.web.pending, env.ReplyTo) }
+	if wait.reply != nil && wait.agent == ac {
+		delete(s.web.pending, env.ReplyTo)
+	}
 	s.web.mu.Unlock()
-	if wait.reply == nil || wait.agent != ac { return false }
+	if wait.reply == nil || wait.agent != ac {
+		return false
+	}
 	if env.Type == protocol.TypeWebStopped {
 		wait.reply <- webStartReply{}
 		return true
@@ -255,14 +353,23 @@ func (s *Server) acceptWebReply(ac *AgentConn, env *protocol.Envelope) bool {
 	if err != nil || p.Cookie == "" || len(p.Cookie) > 4096 || strings.ContainsAny(p.Cookie, ";\r\n") {
 		wait.reply <- webStartReply{err: errors.New("invalid DSH start response")}
 	} else {
-		wait.reply <- webStartReply{cookie:p.Cookie}
+		wait.reply <- webStartReply{cookie: p.Cookie}
 	}
 	return true
 }
 
 func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 	deviceID, valid := s.deviceFromDSHHost(r.Host)
-	if !valid { http.NotFound(w, r); return }
+	if s.cfg.DSHProxyURL != "" && s.isDSHHost(r.Host) {
+		s.web.mu.Lock()
+		deviceID = s.web.simpleDevice
+		s.web.mu.Unlock()
+		valid = true
+	}
+	if !valid {
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
@@ -292,17 +399,23 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session, err := randomWebToken()
-		if err != nil { http.Error(w, "internal error", http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		grant.expires = s.now().Add(webSessionTTL)
 		s.web.mu.Lock()
 		s.web.sessions[session] = grant
 		s.web.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name:webCookieName, Value:session, Path:"/", Secure:true, HttpOnly:true, SameSite:http.SameSiteStrictMode, MaxAge:int(webSessionTTL.Seconds())})
+		http.SetCookie(w, &http.Cookie{Name: webCookieName, Value: session, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: int(webSessionTTL.Seconds())})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	cookie, err := r.Cookie(webCookieName)
-	if err != nil { http.Error(w, "login required", http.StatusUnauthorized); return }
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
 	s.web.mu.Lock()
 	grant, ok := s.web.sessions[cookie.Value]
 	s.web.mu.Unlock()
@@ -327,12 +440,12 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DSH Web is offline; reopen it from CodeGate", http.StatusServiceUnavailable)
 		return
 	}
-	target := &url.URL{Scheme:"http", Host:webLoopback}
+	target := &url.URL{Scheme: "http", Host: webLoopback}
 	proxy := &httputil.ReverseProxy{
-		Transport:&http.Transport{DisableKeepAlives:true, DialContext:func(ctx context.Context, _, _ string) (net.Conn,error) {
+		Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return s.openWebStream(ctx, ac)
 		}},
-		Rewrite:func(pr *httputil.ProxyRequest) {
+		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.Host = s.dshDeviceHost(deviceID)
 			pr.Out.Header.Set("Cookie", upstream.cookie)
@@ -340,17 +453,17 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 			pr.Out.Header.Del("Proxy-Authorization")
 			pr.SetXForwarded()
 		},
-		ModifyResponse:func(res *http.Response) error {
+		ModifyResponse: func(res *http.Response) error {
 			res.Header.Del("Set-Cookie") // DSH's credential stays server-side.
 			if location := res.Header.Get("Location"); strings.HasPrefix(location, "http://"+webLoopback) {
 				res.Header.Set("Location", "https://"+s.dshDeviceHost(deviceID)+strings.TrimPrefix(location, "http://"+webLoopback))
 			}
 			return nil
 		},
-		ErrorHandler:func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
 			http.Error(w, "DSH Web tunnel unavailable", http.StatusBadGateway)
 		},
-		FlushInterval:-1,
+		FlushInterval: -1,
 	}
-	proxy.ServeHTTP(w,r)
+	proxy.ServeHTTP(w, r)
 }

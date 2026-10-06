@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,7 @@ import (
 
 const dshLoopback = "127.0.0.1:3080"
 
-var webAuthority = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]$`)
+var webAuthority = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9](?::[0-9]{1,5})?$`)
 
 type webStream struct {
 	mu    sync.Mutex
@@ -50,7 +51,7 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 		}
 		defer finish()
 		p, err := protocol.DecodePayload[protocol.WebStartPayload](req)
-		if err != nil || !a.cfg.DSHWebEnabled || !webAuthority.MatchString(p.Host) ||
+		if err != nil || !a.dshWebEnabled() || !validWebAuthority(p.Host) ||
 			strings.Contains(p.Host, "..") || !strings.Contains(p.Host, ".") {
 			a.replyError(req, errors.New("DSH Web is not enabled or host is invalid"))
 			return
@@ -72,6 +73,7 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 			return
 		}
 		cmd := exec.Command(binary, "web", "--no-open", "--trusted-host", p.Host)
+		cmd.Env = BuildEnv(a.cfg, 80, 24)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			a.replyError(req, err)
@@ -196,7 +198,7 @@ func (a *Agent) removeWebStream(id uuid.UUID, s *webStream) {
 func (a *Agent) onWebOpen(req *protocol.Envelope) {
 	p, err := protocol.DecodePayload[protocol.WebStreamPayload](req)
 	id, parseErr := uuid.Parse(p.StreamID)
-	if err != nil || parseErr != nil || !a.cfg.DSHWebEnabled {
+	if err != nil || parseErr != nil || !a.dshWebEnabled() {
 		return
 	}
 	a.webMu.Lock()
@@ -317,4 +319,15 @@ func (a *Agent) onWebFrame(f protocol.Frame) {
 		a.removeWebStream(f.StreamID, s)
 		a.sendWebClose(f.StreamID)
 	}
+}
+
+func validWebAuthority(host string) bool {
+	if !webAuthority.MatchString(host) {
+		return false
+	}
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		port, err := strconv.Atoi(host[i+1:])
+		return err == nil && port > 0 && port <= 65535
+	}
+	return true
 }
