@@ -81,6 +81,12 @@ const summary = ref<SessionSummary | null>(null)
 const workspaceBranch = ref('')
 const workspaceError = ref('')
 const workspaceOpen = ref(false)
+const sessionTool = computed(() => {
+  const s = summary.value
+  if (!s) return '终端'
+  const command = /(?:^|[\\/])cmd\.exe$/i.test(s.command) && s.args?.[1] ? s.args[1] : s.command
+  return command.split(/[\\/]/).pop() || '终端'
+})
 const sessionDevice = computed(() => summary.value?.device_id.replace(/-/g, '') ?? '')
 const isolatedWorkspace = computed(() => /[\\/]\.codegate-worktrees[\\/]/.test(summary.value?.cwd ?? ''))
 async function refreshIdentity(): Promise<void> {
@@ -844,8 +850,24 @@ onUnmounted(() => {
     </div>
 
     <details class="term__identity" :open="workspaceOpen" @toggle="workspaceOpen = ($event.target as HTMLDetailsElement).open">
-      <summary>{{ devices.byId(sessionDevice)?.name || '设备' }} · {{ summary?.command || '工具' }} · {{ workspaceBranch || '分支待确认' }} · {{ isolatedWorkspace ? '独立工作区' : '原目录' }}</summary>
-      <div class="row"><span class="mono">{{ summary?.cwd }}</span><button class="btn btn--ghost btn--sm" @click="refreshIdentity">刷新分支</button></div><RouterLink v-if="summary" class="btn btn--ghost btn--sm" :to="{ name: 'workspaces', params: { id: sessionDevice }, query: { path: summary.cwd } }">管理独立工作区</RouterLink><p v-if="workspaceError" class="small dim">{{ workspaceError }}</p>
+      <summary aria-label="会话信息">
+        <span class="term__identity-arrow" aria-hidden="true">▸</span>
+        <span class="term__identity-label">会话信息 · {{ sessionTool }}</span>
+        <span class="dim">{{ workspaceOpen ? '收起' : '展开' }}</span>
+      </summary>
+      <div class="term__identity-content">
+        <dl>
+          <dt>设备</dt><dd>{{ devices.byId(sessionDevice)?.name || '设备' }}</dd>
+          <dt>命令</dt><dd class="mono">{{ summary?.command || '工具' }}</dd>
+          <dt>分支</dt><dd>{{ workspaceBranch || '分支待确认' }} · {{ isolatedWorkspace ? '独立工作区' : '原目录' }}</dd>
+          <dt>目录</dt><dd class="mono">{{ summary?.cwd }}</dd>
+        </dl>
+        <div class="row">
+          <button class="btn btn--ghost btn--sm" type="button" @click="refreshIdentity">刷新分支</button>
+          <RouterLink v-if="summary" class="btn btn--ghost btn--sm" :to="{ name: 'workspaces', params: { id: sessionDevice }, query: { path: summary.cwd } }">管理独立工作区</RouterLink>
+        </div>
+        <p v-if="workspaceError" class="small dim">{{ workspaceError }}</p>
+      </div>
     </details>
     <!-- ---- 终端 ---- -->
     <div class="term__workspace">
