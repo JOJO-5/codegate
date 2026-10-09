@@ -687,7 +687,7 @@ a.item:hover {
 .device-heading__summary { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--fg-dim); font-size: 13px; }
 .device-workspace { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .device-workspace > * { min-width: 0; }
-.device-create { grid-column: 1; grid-row: 1; position: sticky; top: 74px; }
+.device-create { grid-column: 1; grid-row: 1; }
 .device-sessions { grid-column: 2; grid-row: 1 / span 5; min-height: 380px; }
 .device-tools, .device-dsh, .device-admin, .device-update { grid-column: 1; }
 .device-tools { grid-row: 2; }
