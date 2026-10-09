@@ -33,3 +33,16 @@ jobs:
       - name: Check missing task status
         shell: pwsh
         run: ./scripts/agent-autostart.ps1 status
+      - name: Verify non-interactive task definition and registration API
+        shell: pwsh
+        run: |
+          $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+          $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Password -RunLevel Limited
+          $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 0'
+          $definition = New-ScheduledTask -Action $action -Principal $principal
+          if ($definition.Principal.LogonType -ne 'Password') { throw 'Interactive principal' }
+          $compatible = (Get-Command Register-ScheduledTask).ParameterSets | Where-Object {
+            $names = $_.Parameters.Name
+            ('InputObject' -in $names) -and ('User' -in $names) -and ('Password' -in $names)
+          }
+          if (-not $compatible) { throw 'Registration API does not support password-backed task definitions' }

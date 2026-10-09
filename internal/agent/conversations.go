@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jojo/codegate/internal/processutil"
 	"io"
 	"net/url"
 	"os"
@@ -608,6 +609,7 @@ func RecordConversation(args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, previous[0], append(previous[1:], args[2])...)
+		processutil.Background(cmd)
 		return cmd.Run()
 	}
 	return nil

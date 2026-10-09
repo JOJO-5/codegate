@@ -6,6 +6,7 @@ on:
     branches: [fix/terminal-close-and-env]
   pull_request:
     paths:
+      - 'internal/processutil/**'
       - 'internal/terminal/**'
       - 'internal/agent/**'
       - 'internal/server/**'
@@ -36,7 +37,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Test terminal package
-        run: go test ./internal/terminal -count=1 -timeout=3m
+        run: go test ./internal/terminal ./internal/processutil ./cmd/codegate-agent -count=1 -timeout=3m
       - name: Build Agent and test file relay
         run: |
           go build ./cmd/codegate-agent

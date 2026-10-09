@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"github.com/jojo/codegate/internal/processutil"
 	"io"
 	"net"
 	"net/http"
@@ -73,6 +74,7 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 			return
 		}
 		cmd := exec.Command(binary, "web", "--no-open", "--trusted-host", p.Host)
+		processutil.Background(cmd)
 		cmd.Env = BuildEnv(a.cfg, 80, 24)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
