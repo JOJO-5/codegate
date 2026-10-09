@@ -71,7 +71,10 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 	case protocol.TypeToolSet:
 		a.onToolSet(env)
 	case protocol.TypeWebStop:
-		a.stopWeb()
+		if err := a.stopWeb(); err != nil {
+			a.replyError(env, errors.New("DSH Web process tree could not be stopped"))
+			return
+		}
 		a.reply(env, protocol.TypeWebStopped, nil)
 	case protocol.TypeWebOpen:
 		a.onWebOpen(env)

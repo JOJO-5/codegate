@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/jojo/codegate/internal/processutil"
 	"github.com/jojo/codegate/internal/protocol"
 	"github.com/jojo/codegate/internal/session"
 	"github.com/jojo/codegate/internal/terminal"
@@ -61,6 +62,8 @@ type Agent struct {
 	conn         *Conn
 	webMu        sync.Mutex
 	webProcess   *exec.Cmd
+	webTree      *processutil.Tree
+	webDone      chan struct{}
 	webHost      string
 	webCookie    string
 	webStreamsMu sync.Mutex
