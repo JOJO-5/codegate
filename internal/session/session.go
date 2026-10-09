@@ -147,6 +147,7 @@ type Session struct {
 	cancel    context.CancelFunc
 	closed    chan struct{} // 读循环退出后关闭
 	closeOnce sync.Once
+	closeErr  error
 
 	mu             sync.Mutex
 	proc           ProcState
@@ -241,6 +242,9 @@ func (s *Session) readLoop(ctx context.Context) {
 	// ★ 必须在 Read 返回之后才 Wait —— 这样能保证子进程退出前最后写入的
 	//   输出已经全部读完，不会丢最后几行（§6.2 第 3 点）。
 	res := s.pty.Wait()
+	if err := s.pty.Close(); err != nil && res.Err == nil {
+		res.Err = err
+	}
 	s.finish(res)
 }
 
@@ -510,9 +514,12 @@ func (s *Session) Close(reason string) error {
 		s.mu.Unlock()
 
 		s.cancel()
-		_ = s.pty.Close()
+		s.closeErr = s.pty.Close()
 	})
 
+	if s.closeErr != nil {
+		return fmt.Errorf("session %s: closing terminal: %w", s.ID, s.closeErr)
+	}
 	select {
 	case <-s.closed:
 	case <-time.After(closeWaitTimeout):

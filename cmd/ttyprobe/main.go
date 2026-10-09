@@ -57,6 +57,18 @@ func main() {
 		fmt.Fprintf(os.Stdout, format+"\n", args...)
 	}
 
+	stop := make(chan struct{})
+	ready := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		watchSize(stop, ready, func(c, r int) {
+			emit("RESIZE cols=%d rows=%d", c, r)
+		})
+	}()
+
+	<-ready
 	emit("SIZE cols=%d rows=%d", cols, rows)
 
 	// 报告控制台输入模式。
@@ -64,16 +76,6 @@ func main() {
 	if m, err := stdinConsoleMode(); err == nil {
 		emit("MODE stdin=0x%04x %s", m, describeInputMode(m))
 	}
-
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		watchSize(stop, func(c, r int) {
-			emit("RESIZE cols=%d rows=%d", c, r)
-		})
-	}()
 
 	run(emit)
 

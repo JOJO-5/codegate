@@ -258,11 +258,17 @@ function scrollHistory(lines: number): void {
     term?.scrollLines(lines)
   }
 }
-let terminalTouch: { id: number; x: number; y: number; lastY: number; pending: number; started: number; dragging: boolean } | null = null
+let terminalTouch: { id: number; x: number; y: number; lastY: number; pending: number; started: number; dragging: boolean; lastTime: number; velocity: number } | null = null
 let suppressTerminalClickUntil = 0
+let terminalScrollFrame: number | null = null
+let terminalMomentumFrame: number | null = null
+let terminalWheelBatch: Uint8Array[] | null = null
 let terminalLongPress: ReturnType<typeof setTimeout> | null = null
 function cancelTerminalTouch(): void {
   terminalTouch = null
+  if (terminalScrollFrame !== null) cancelAnimationFrame(terminalScrollFrame)
+  if (terminalMomentumFrame !== null) cancelAnimationFrame(terminalMomentumFrame)
+  terminalScrollFrame = terminalMomentumFrame = null
   if (terminalLongPress !== null) clearTimeout(terminalLongPress)
   terminalLongPress = null
 }
@@ -275,7 +281,7 @@ function onTerminalTouchStart(e: TouchEvent): void {
   if (e.touches.length !== 1 || !term || (e.target as Element).closest('.term__overlay')) return
   suppressTerminalClickUntil = 0
   const touch = e.touches[0]!
-  terminalTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, pending: 0, started: Date.now(), dragging: false }
+  terminalTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY, lastY: touch.clientY, pending: 0, started: Date.now(), dragging: false, lastTime: performance.now(), velocity: 0 }
   terminalLongPress = setTimeout(() => {
     suppressTerminalClickUntil = Date.now() + 700
     openTextReader()
@@ -313,8 +319,22 @@ function onTerminalTouchMove(e: TouchEvent): void {
   }
   if (e.cancelable) e.preventDefault()
   suppressTerminalClickUntil = Date.now() + 700
-  gesture.pending += gesture.lastY - touch.clientY
+  const now = performance.now()
+  const distance = gesture.lastY - touch.clientY
+  const elapsed = Math.max(1, now - gesture.lastTime)
+  gesture.velocity = gesture.velocity * 0.4 + distance / elapsed * 0.6
+  gesture.pending += distance
   gesture.lastY = touch.clientY
+  gesture.lastTime = now
+  if (terminalScrollFrame === null) {
+    terminalScrollFrame = requestAnimationFrame(() => {
+      terminalScrollFrame = null
+      if (terminalTouch === gesture) flushTerminalScroll(gesture)
+    })
+  }
+}
+function flushTerminalScroll(gesture: NonNullable<typeof terminalTouch>): void {
+  if (!term) return
   const screen = term.element?.querySelector('.xterm-screen')
   const bounds = screen?.getBoundingClientRect()
   if (!screen || !bounds || bounds.height <= 0) return
@@ -329,20 +349,50 @@ function onTerminalTouchMove(e: TouchEvent): void {
   if (!mouse) { scrollHistory(lines); return }
   // Let xterm encode the CLI's negotiated mouse protocol and coordinates.
   // Use one wheel event per row: xterm mouse reports encode direction only.
-  for (let i = 0; i < Math.min(Math.abs(lines), 32); i++) {
-    screen.dispatchEvent(new WheelEvent('wheel', {
-      bubbles: true, cancelable: true, deltaMode: WheelEvent.DOM_DELTA_LINE,
-      deltaY: Math.sign(lines),
-      clientX: Math.max(bounds.left + 1, Math.min(gesture.x, bounds.right - 1)),
-      clientY: Math.max(bounds.top + 1, Math.min(touch.clientY, bounds.bottom - 1)),
-    }))
+  terminalWheelBatch = []
+  try {
+    for (let i = 0; i < Math.min(Math.abs(lines), 32); i++) {
+      screen.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaMode: WheelEvent.DOM_DELTA_LINE,
+        deltaY: Math.sign(lines),
+        clientX: Math.max(bounds.left + 1, Math.min(gesture.x, bounds.right - 1)),
+        clientY: Math.max(bounds.top + 1, Math.min(gesture.lastY, bounds.bottom - 1)),
+      }))
+    }
+  } finally {
+    const chunks = terminalWheelBatch
+    terminalWheelBatch = null
+    if (chunks?.length) {
+      const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0))
+      let offset = 0
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
+      sendBytes(bytes)
+    }
   }
+}
+function startTerminalMomentum(gesture: NonNullable<typeof terminalTouch>): void {
+  if (!term || term.buffer.active.type !== 'normal' || performance.now() - gesture.lastTime > 80 || Math.abs(gesture.velocity) < 0.08) return
+  let last = performance.now()
+  const started = last
+  const step = (now: number): void => {
+    terminalMomentumFrame = null
+    if (!term || term.buffer.active.type !== 'normal' || now - started > 600) return
+    const dt = Math.min(32, now - last)
+    last = now
+    gesture.pending += gesture.velocity * dt
+    gesture.velocity *= Math.exp(-dt / 150)
+    flushTerminalScroll(gesture)
+    if (Math.abs(gesture.velocity) >= 0.03) terminalMomentumFrame = requestAnimationFrame(step)
+  }
+  terminalMomentumFrame = requestAnimationFrame(step)
 }
 function onTerminalTouchEnd(e: TouchEvent): void {
   const gesture = terminalTouch
   if (!gesture || !Array.from(e.changedTouches).some(t => t.identifier === gesture.id)) return
+  if (gesture.dragging) flushTerminalScroll(gesture)
   cancelTerminalTouch()
   if (gesture.dragging) {
+    startTerminalMomentum(gesture)
     if (e.cancelable) e.preventDefault()
     e.stopPropagation()
     suppressTerminalClickUntil = Date.now() + 700
@@ -429,6 +479,7 @@ const RESIZE_DEBOUNCE_MS = 120
 
 function sendBytes(bytes: Uint8Array): void {
   if (bytes.length === 0) return
+  if (terminalWheelBatch !== null) { terminalWheelBatch.push(bytes); return }
   conn.sendFrame(FrameType.Stdin, 0, sessionId.value, bytes)
 }
 

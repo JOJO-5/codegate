@@ -44,9 +44,10 @@ func consoleSize() (int, int, error) {
 // ⚠️ 本分支**尚未在本机验证**：开发机是 Windows，且 internal/terminal
 // 的 Unix 实现目前是明确报错的占位（terminal_unix.go）。
 // 等 Unix PTY 落地后，这个函数要和它一起过一遍真实 PTY。
-func watchSize(stop <-chan struct{}, onChange func(cols, rows int)) {
+func watchSize(stop <-chan struct{}, ready chan<- struct{}, onChange func(cols, rows int)) {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGWINCH)
+	close(ready)
 	defer signal.Stop(ch)
 	for {
 		select {

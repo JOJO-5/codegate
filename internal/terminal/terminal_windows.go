@@ -48,6 +48,9 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"github.com/jojo/codegate/internal/processutil"
+	"golang.org/x/sys/windows"
 )
 
 // debugf 输出 ConPTY 的中间状态到 stderr，用 CODEGATE_TERMINAL_DEBUG=1 开启。
@@ -228,6 +231,7 @@ type conPTY struct {
 	inMu  sync.RWMutex
 	outMu sync.RWMutex
 
+	tree  *processutil.Tree
 	hpcon syscall.Handle
 	hInW  syscall.Handle // 我们写 → 子进程读
 	hOutR syscall.Handle // 子进程写 → 我们读
@@ -340,6 +344,19 @@ func (p *conPTY) Start(ctx context.Context, cfg StartConfig) error {
 		procClosePseudoConsole.Call(uintptr(hpcon))
 		return err
 	}
+	tree, err := processutil.AdoptSuspended(windows.Handle(p.pi.Process), windows.Handle(p.pi.Thread))
+	if err != nil {
+		procTerminateProcess.Call(uintptr(p.pi.Process), 1)
+		procWaitForSingleObject.Call(uintptr(p.pi.Process), closeWaitTimeoutMS)
+		syscall.CloseHandle(p.pi.Thread)
+		syscall.CloseHandle(p.pi.Process)
+		p.pi = syscall.ProcessInformation{}
+		syscall.CloseHandle(hInW)
+		syscall.CloseHandle(hOutR)
+		procClosePseudoConsole.Call(uintptr(hpcon))
+		return fmt.Errorf("terminal: cannot own process tree: %w", err)
+	}
+	p.tree = tree
 	// 属性列表的内容已被 CreateProcessW 复制走，attrBuf 到这里才安全释放。
 	runtime.KeepAlive(attrBuf)
 
@@ -439,7 +456,7 @@ func (p *conPTY) spawn(cmdline, cwd string, envBlock []uint16, attrList unsafe.P
 		0, // lpProcessAttributes
 		0, // lpThreadAttributes
 		0, // bInheritHandles = FALSE
-		extendedStartupInfoPresent|createUnicodeEnvironment,
+		extendedStartupInfoPresent|createUnicodeEnvironment|windows.CREATE_SUSPENDED,
 		uintptr(unsafe.Pointer(envPtr)),
 		uintptr(unsafe.Pointer(cwdPtr)),
 		uintptr(unsafe.Pointer(&siEx)),
@@ -596,11 +613,15 @@ func (p *conPTY) Signal(sig Signal) error {
 		// 否则关会话时会挂住。
 		p.mu.Lock()
 		h := p.pi.Process
+		tree := p.tree
 		started := p.started
 		p.mu.Unlock()
 
 		if !started {
 			return ErrNotStarted
+		}
+		if tree != nil {
+			return tree.Stop()
 		}
 		if h == 0 {
 			return nil // 已经 reap 过了，进程早没了
@@ -628,6 +649,14 @@ func (p *conPTY) Signal(sig Signal) error {
 func (p *conPTY) Wait() ExitResult {
 	p.waitOnce.Do(func() {
 		p.exit = p.waitProcess()
+		p.mu.Lock()
+		tree := p.tree
+		p.mu.Unlock()
+		if tree != nil {
+			if err := tree.Stop(); err != nil && p.exit.Err == nil {
+				p.exit.Err = err
+			}
+		}
 		p.reap()
 	})
 	return p.exit
@@ -687,7 +716,7 @@ func (p *conPTY) Close() error {
 		return nil
 	}
 	p.closed = true
-	started, hpcon := p.started, p.hpcon
+	started, hpcon, tree := p.started, p.hpcon, p.tree
 	p.hpcon = 0
 	p.mu.Unlock()
 
@@ -695,11 +724,18 @@ func (p *conPTY) Close() error {
 		return nil
 	}
 
+	// Kill the owned tree first, including clients that detached from ConPTY.
+	// This also releases blocked child I/O before closing the pseudoconsole.
+	var treeErr error
+	if tree != nil {
+		treeErr = tree.Stop()
+	}
+
 	// ---- 1) 关伪控制台 ----
 	// 必须先于获取 inMu：Write 可能持有读锁阻塞在已写满的输入管道上。
 	// 先关闭伪控制台的读端，才能让该 Write 返回并释放读锁。
 	// 此时还不能关闭 hInW，因为另一个线程可能正用它执行同步 WriteFile。
-	// ★ 这一步会终止所有挂在伪控制台上的进程，并且关闭它内部的管道写端 ——
+	// 进程树已在上方终止；此处关闭伪控制台内部的管道写端 ——
 	//   后者正是让阻塞中的 ReadFile 返回 ERROR_BROKEN_PIPE 的原因。
 	//   必须先做这一步，第 3 步才不会变成"关闭正在被阻塞读的句柄"这种未定义行为。
 	if hpcon != 0 {
@@ -760,7 +796,7 @@ func (p *conPTY) Close() error {
 	// （启动失败清理、测试里直接 Close），这里兜底。
 	// 进程已经被第 2 步终止了，所以不会泄漏一个活着的进程。
 	p.reap()
-	return nil
+	return treeErr
 }
 
 // PID 返回子进程 ID。未启动时返回 0。
