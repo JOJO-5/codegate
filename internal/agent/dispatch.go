@@ -32,6 +32,8 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 		go a.onQuotaRead(env)
 	case protocol.TypeConversationList, protocol.TypeConversationRestore:
 		go a.onConversationRequest(env)
+	case protocol.TypeSessionClaimControl:
+		a.onClaimControl(env)
 	case protocol.TypeSessionCreate:
 		a.onSessionCreate(env)
 	case protocol.TypeSessionAttach:
@@ -110,7 +112,28 @@ func (a *Agent) handleFrame(data []byte) {
 		return
 	}
 
-	sess, ok := a.mgr.Get(frame.StreamID)
+	sid := frame.StreamID
+	viewID := ""
+	if a.terminalViews.Load() {
+		a.viewMu.Lock()
+		for id, views := range a.views {
+			for v := range views {
+				if protocol.TerminalViewID(v) == frame.StreamID {
+					sid = id
+					viewID = v
+					break
+				}
+			}
+			if viewID != "" {
+				break
+			}
+		}
+		a.viewMu.Unlock()
+		if viewID == "" {
+			return
+		}
+	}
+	sess, ok := a.mgr.Get(sid)
 	if !ok {
 		// 会话可能刚好被关闭。这是正常的竞态，不是错误。
 		a.log.Debug("stdin 帧指向不存在的会话", "session", frame.StreamID)
@@ -121,6 +144,9 @@ func (a *Agent) handleFrame(data []byte) {
 	// 这不是防人（同一账号都是自己），是防"两台设备同时敲键盘"
 	// 产生的字符交错，那会让命令行变成一堆乱码。
 	connID := sess.ControllerID()
+	if a.terminalViews.Load() {
+		connID = viewID
+	}
 	if connID == "" {
 		a.log.Debug("会话没有主控客户端，丢弃输入", "session", frame.StreamID)
 		return
@@ -316,9 +342,12 @@ func (a *Agent) onSessionAttach(env *protocol.Envelope) {
 	}
 
 	connID := connIDFor(env)
+	if a.terminalViews.Load() && req.AttachID != "" {
+		connID = req.AttachID
+	}
 	res, err := sess.Attach(session.AttachRequest{
 		ConnID: connID,
-		Sink:   &sessionSink{a: a, sid: sid},
+		Sink:   &sessionSink{a: a, sid: sid, attachID: connID},
 		Since:  req.Since,
 		Cols:   req.Cols,
 		Rows:   req.Rows,
@@ -340,10 +369,11 @@ func (a *Agent) onSessionAttach(env *protocol.Envelope) {
 	// 如果先回响应再重放，前端会先收到 "attached" 然后才开始收字节 ——
 	// 期间它可能已经按"没有历史"渲染了一帧，造成闪烁。
 	a.reply(env, protocol.TypeSessionAttached, protocol.SessionAttachedPayload{
-		Session: sess.Summary(),
-		SeqFrom: res.SeqFrom,
-		SeqTo:   res.SeqTo,
-		Role:    string(res.Role),
+		AttachID: connID,
+		Session:  sess.Summary(),
+		SeqFrom:  res.SeqFrom,
+		SeqTo:    res.SeqTo,
+		Role:     string(res.Role),
 	})
 }
 
@@ -433,7 +463,7 @@ func (a *Agent) onSessionResize(env *protocol.Envelope) {
 	// 用当前主控客户端的身份调用。Session 会拒绝非主控的 resize
 	// （多客户端下两个设备的分辨率差好几倍，都能 resize 会让 TUI
 	//  在 40 列和 120 列之间反复横跳，§7.6）。
-	if err := sess.Resize(sess.ControllerID(), req.Cols, req.Rows); err != nil {
+	if err := sess.Resize(resizeConnID(a, sess, req), req.Cols, req.Rows); err != nil {
 		a.replyError(env, err)
 		return
 	}
@@ -678,4 +708,33 @@ func (a *Agent) forgetViews(sid uuid.UUID) {
 	a.viewMu.Lock()
 	defer a.viewMu.Unlock()
 	delete(a.views, sid)
+}
+
+func resizeConnID(a *Agent, sess *session.Session, req protocol.SessionResizePayload) string {
+	if a.terminalViews.Load() {
+		return req.AttachID
+	}
+	return sess.ControllerID()
+}
+func (a *Agent) onClaimControl(env *protocol.Envelope) {
+	req, err := protocol.DecodePayload[protocol.SessionResizePayload](env)
+	if err != nil {
+		a.replyError(env, err)
+		return
+	}
+	sid, err := uuid.Parse(req.SessionID)
+	if err != nil {
+		a.replyError(env, err)
+		return
+	}
+	sess, err := a.mgr.MustGet(sid)
+	if err != nil {
+		a.replyError(env, err)
+		return
+	}
+	if _, err = sess.ClaimControl(req.AttachID); err != nil {
+		a.replyError(env, err)
+		return
+	}
+	a.reply(env, protocol.TypeSessionInfo, protocol.SessionCreatedPayload{Session: sess.Summary()})
 }

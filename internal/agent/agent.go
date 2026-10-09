@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ var Version = "dev"
 // 生命周期上它比任何一条 WebSocket 连接都长 —— 连接断了重连，
 // 会话不受影响（这是不变量 I1/I2 在 Agent 侧的体现）。
 type Agent struct {
+	terminalViews atomic.Bool
 	cfg           Config
 	id            *Identity
 	ws            *Workspace
@@ -330,7 +332,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 		Arch:         arch,
 		AgentVersion: Version,
 		Caps: protocol.AgentCaps{
-			QuotaRead: true, ConversationRecovery: true, DSHWebApproval: true,
+			TerminalViews: true, QuotaRead: true, ConversationRecovery: true, DSHWebApproval: true,
 			MaxSessions:        a.cfg.MaxSessions,
 			RepositoryScan:     true,
 			GitReview:          true,
@@ -388,6 +390,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 	}
 
 	ready, err := protocol.DecodePayload[protocol.AgentReadyPayload](resp)
+	a.terminalViews.Store(ready.TerminalViews)
 	if err != nil {
 		return zero, err
 	}
@@ -591,19 +594,27 @@ func (a *Agent) sendControl(env *protocol.Envelope) error {
 // 所以这里调用 Conn.SendBinary（队列满立即返回 false），
 // 由 Session 记账并在后续帧上打 FlagDropped。
 type sessionSink struct {
-	a   *Agent
-	sid uuid.UUID
+	pendingState []byte // guarded by Session fanout mutex
+	attachID     string
+	a            *Agent
+	sid          uuid.UUID
 }
 
 func (s *sessionSink) SendOutput(p []byte, dropped bool) bool {
+	if !s.flushState() {
+		return false
+	}
 	var flags uint16
 	if dropped {
 		flags |= protocol.FlagDropped
 	}
-	return s.a.sendTerminalFrame(s.sid, protocol.FrameStdout, flags, p)
+	return s.a.sendTerminalFrame(s.streamID(), protocol.FrameStdout, flags, p)
 }
 
 func (s *sessionSink) SendBuffer(p []byte, end bool) bool {
+	if !s.flushState() {
+		return false
+	}
 	// Large snapshots must be split: one huge WebSocket message can exceed
 	// intermediary limits, and losing a middle chunk must fail the attach.
 	const chunkSize = 16 << 10
@@ -619,7 +630,7 @@ func (s *sessionSink) SendBuffer(p []byte, end bool) bool {
 		if end && n == len(p) {
 			flags = protocol.FlagBufferEnd
 		}
-		if !s.a.sendTerminalFrame(s.sid, protocol.FrameBuffer, flags, p[:n]) {
+		if !s.a.sendTerminalFrame(s.streamID(), protocol.FrameBuffer, flags, p[:n]) {
 			return false
 		}
 		p = p[n:]
@@ -664,4 +675,37 @@ func (a *Agent) deviceUUID() uuid.UUID {
 		return uuid.Nil
 	}
 	return u
+}
+
+func (s *sessionSink) streamID() uuid.UUID {
+	if s.a.terminalViews.Load() && s.attachID != "" {
+		return protocol.TerminalViewID(s.attachID)
+	}
+	return s.sid
+}
+func (s *sessionSink) SendState(role session.Role, cols, rows uint16) {
+	if !s.a.terminalViews.Load() {
+		return
+	}
+	env, err := protocol.NewRequest("", protocol.TypeSessionRoleChanged, s.sid.String(), protocol.SessionRoleChangedPayload{SessionID: s.sid.String(), AttachID: s.attachID, Role: string(role), Cols: cols, Rows: rows})
+	if err == nil {
+		s.pendingState, _ = protocol.Encode(env)
+		s.flushState()
+	}
+}
+
+// State and bytes share one ordered queue. Never block the session fanout lock.
+func (s *sessionSink) flushState() bool {
+	if len(s.pendingState) == 0 {
+		return true
+	}
+	conn := s.a.currentConn()
+	if conn == nil {
+		return false
+	}
+	if conn.enqueue(outbound{data: s.pendingState}, 0) != nil {
+		return false
+	}
+	s.pendingState = nil
+	return true
 }

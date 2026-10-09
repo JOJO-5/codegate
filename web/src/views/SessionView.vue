@@ -107,6 +107,22 @@ async function refreshIdentity(): Promise<void> {
 }
 
 const role = ref<'controller' | 'viewer'>('viewer')
+const remoteCols = ref(80)
+const remoteRows = ref(24)
+const claiming = ref(false)
+function applyTerminalSize(): void {
+ if (!term || !fit) return
+ if (role.value === 'viewer' || !attachmentReady.value) term.resize(remoteCols.value, remoteRows.value)
+ else fit.fit()
+}
+async function claimControl(): Promise<void> {
+ if (claiming.value || !attachmentReady.value || !conn.isOpen) return
+ claiming.value = true
+ try {
+  await conn.request(MessageType.SessionClaimControl, { session_id: sessionId.value }, sessionId.value)
+ } catch (e) { errorText.value = humanizeError(e) }
+ finally { claiming.value = false }
+}
 const terminalReady = ref(false)
 const attachmentReady = ref(false)
 const attaching = ref(false)
@@ -255,6 +271,7 @@ function onTerminalPointerDown(e: PointerEvent): void {
 }
 function onTerminalTouchStart(e: TouchEvent): void {
   cancelTerminalTouch()
+  if (role.value === 'viewer') { e.stopPropagation(); return }
   if (e.touches.length !== 1 || !term || (e.target as Element).closest('.term__overlay')) return
   suppressTerminalClickUntil = 0
   const touch = e.touches[0]!
@@ -394,7 +411,7 @@ function scheduleFit(): void {
   resizeTimer = setTimeout(() => {
     resizeTimer = null
     if (!term || !fit) return
-    try { fit.fit() } catch { return }
+    try { applyTerminalSize() } catch { return }
     sendResize()
   }, RESIZE_DEBOUNCE_MS)
 }
@@ -501,10 +518,25 @@ function onControl(env: Envelope): void {
       sessions.patch(sessionId.value, { status: 'detached' })
       break
     case MessageType.SessionRoleChanged: {
-      const c = p?.['controller']
-      // 角色变化时 controller 字段是连接 ID，我们拿不到自己的连接 ID，
-      // 所以只能保守处理：不声称自己是 controller。
-      void c
+      const nextRole = p?.['role']
+      const cols = p?.['cols'], rows = p?.['rows']
+      if (nextRole === 'controller' || nextRole === 'viewer') {
+        const changed = role.value !== nextRole
+        role.value = nextRole
+        if (typeof cols === 'number' && cols > 0) remoteCols.value = cols
+        if (typeof rows === 'number' && rows > 0) remoteRows.value = rows
+        if (changed) { sentCols = 0; sentRows = 0 }
+        const epoch = attachmentEpoch
+        // Drain earlier bytes before changing their coordinate grid; later writes
+        // stay behind this callback in xterm's parser queue.
+        term?.write(new Uint8Array(), () => {
+          if (epoch !== attachmentEpoch || !term) return
+          try {
+            if (nextRole === 'viewer' || !attachmentReady.value) term.resize(typeof cols === 'number' && cols > 0 ? cols : remoteCols.value, typeof rows === 'number' && rows > 0 ? rows : remoteRows.value)
+            else { fit?.fit(); sendResize() }
+          } catch { /* renderer was disposed during reconnect */ }
+        })
+      }
       break
     }
     default:
@@ -552,13 +584,19 @@ async function attach(since: number, queueFullReplay = false): Promise<void> {
     if (draft && !mobileDraft.value) mobileDraft.value = draft
     void refreshIdentity()
     role.value = p.role
+    remoteCols.value = p.session.cols || 80
+    remoteRows.value = p.session.rows || 24
+    lastSeq = p.seq_to
+    // xterm parses writes asynchronously. Flush replay at the native grid before fitting.
+    await new Promise<void>(resolve => { if (term) term.write(new Uint8Array(), resolve); else resolve() })
+    if (epoch !== attachmentEpoch || !terminalReady.value || !conn.isOpen) return
     attachmentReady.value = true
+    applyTerminalSize()
     void sessions.load(p.session.device_id.replace(/-/g, ''))
 
     // 落后太多、中间有丢帧：必须清屏后按 seq_from 重放，否则屏幕上会
     // 拼出错误的画面（新旧内容交错，光标位置也不对）。
     // 清屏本身由 Agent 的六步重放里的 reset/clear 完成，这里只需要记账。
-    lastSeq = p.seq_to
     replayWarning.value = p.seq_from > since && since > 0
     // Reconcile the fitted terminal size on every successful attachment.
     sentCols = 0
@@ -852,7 +890,7 @@ onUnmounted(() => {
       <span v-if="summary !== null" class="badge" :class="`badge--${statusKind(summary.status)}`">
         {{ statusLabel(summary.status) }}
       </span>
-      <span v-if="attachmentReady && role === 'viewer'" class="badge badge--idle">只读</span>
+      <button v-if="attachmentReady && role === 'viewer'" class="btn btn--sm" type="button" :disabled="claiming || !conn.isOpen" @click="claimControl">{{ claiming ? '接管中…' : '只读 · 接管' }}</button>
       <span v-if="!conn.isOpen" class="badge badge--warn">连接中断 · 会话保留</span>
     </div>
 
@@ -891,7 +929,7 @@ onUnmounted(() => {
         </div>
         <QuotaPanel v-if="summary" :session-id="sessionId" />
       </aside>
-      <div ref="hostEl" class="term__host" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="cancelTerminalTouch" @click.capture="onTerminalClick" @contextmenu.capture="onTerminalContextMenu">
+      <div ref="hostEl" class="term__host" :class="{ 'term__host--viewer': role === 'viewer' }" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="cancelTerminalTouch" @click.capture="onTerminalClick" @contextmenu.capture="onTerminalContextMenu">
       <div v-if="attaching" class="term__overlay" role="status">
         <span class="spinner" />
         <span class="small dim">正在接回原会话…</span>

@@ -554,6 +554,21 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 		return s.handleHeartbeat(env)
 	case protocol.TypeSessionSync:
 		return s.handleSessionSync(env)
+	case protocol.TypeSessionRoleChanged:
+		state, err := protocol.DecodePayload[protocol.SessionRoleChangedPayload](env)
+		if err != nil {
+			return err
+		}
+		target, ok := s.srv.reg.terminalView(protocol.TerminalViewID(state.AttachID).String())
+		if !ok || target.deviceID != s.ac.DeviceID || target.client.UserID != s.ac.UserID || target.sessionID != state.SessionID || !s.ac.HasSession(state.SessionID) {
+			return nil
+		}
+		s.srv.reg.setTerminalRole(protocol.TerminalViewID(state.AttachID).String(), state.Role)
+		data, err := protocol.Encode(env)
+		if err == nil {
+			_ = target.client.TrySendText(data)
+		}
+		return err
 	case protocol.TypeConversationBound:
 		return s.handleConversationBound(env)
 	case protocol.TypeQuotaResult, protocol.TypeConversationListed:
@@ -665,7 +680,12 @@ func (s *agentSession) applyResponseSideEffects(p *pendingReq, env *protocol.Env
 		s.srv.reg.Subscribe(sid, p.client)
 		s.srv.reg.SetSessionOwner(sid, s.ac.DeviceID)
 		p.client.Attach(sid)
-		p.client.SetAttachID(sid, p.requestID)
+		attachID := p.requestID
+		if payload, err := protocol.DecodePayload[protocol.SessionAttachedPayload](env); err == nil && payload.AttachID != "" {
+			attachID = payload.AttachID
+			s.srv.reg.setTerminalRole(protocol.TerminalViewID(attachID).String(), payload.Role)
+		}
+		p.client.SetAttachID(sid, attachID)
 		s.ac.AddSession(sid)
 
 	case protocol.TypeSessionDetached:
@@ -979,6 +999,7 @@ func (s *agentSession) sendError(req *protocol.Envelope, err error) {
 func (s *agentSession) sendReady(req *protocol.Envelope) error {
 	cfg := s.srv.cfg
 	return s.send(protocol.TypeAgentReady, protocol.AgentReadyPayload{
+		TerminalViews:     true,
 		Protocol:          protocol.Current(),
 		ServerTime:        s.srv.now().UnixMilli(),
 		HeartbeatInterval: int(cfg.HeartbeatInterval.Seconds()),
