@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"github.com/jojo/codegate/internal/processutil"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jojo/codegate/internal/processutil"
 	"github.com/jojo/codegate/internal/protocol"
 )
 
@@ -63,18 +63,17 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 			a.reply(req, protocol.TypeWebStarted, protocol.WebStartedPayload{Cookie: a.webCookie})
 			return
 		}
-		if a.webProcess != nil {
-			_ = a.webProcess.Process.Kill()
-			a.webProcess = nil
-			a.webCookie = ""
+		if err := a.stopWebProcessLocked(); err != nil {
+			a.replyError(req, errors.New("previous DSH Web process tree could not be stopped"))
+			return
 		}
+		a.closeWebStreams()
 		binary, err := exec.LookPath("dsh")
 		if err != nil {
 			a.replyError(req, errors.New("dsh is not installed for the Agent service account"))
 			return
 		}
-		cmd := exec.Command(binary, "web", "--no-open", "--trusted-host", p.Host)
-		processutil.Background(cmd)
+		cmd := dshWebCommand(binary, p.Host)
 		cmd.Env = BuildEnv(a.cfg, 80, 24)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -82,18 +81,23 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 			return
 		}
 		cmd.Stderr = io.Discard // DSH may print credentials; never copy them into Agent logs.
-		if err := cmd.Start(); err != nil {
+		tree, err := processutil.StartTree(cmd)
+		if err != nil {
 			a.replyError(req, err)
 			return
 		}
 		exited := make(chan struct{})
+		a.webProcess, a.webTree, a.webDone = cmd, tree, exited
 		go func() {
 			_ = cmd.Wait()
+			cleanupErr := tree.Stop()
 			close(exited)
 			a.webMu.Lock()
 			if a.webProcess == cmd {
-				a.webProcess = nil
 				a.webCookie = ""
+				if cleanupErr == nil {
+					a.webProcess, a.webTree, a.webDone = nil, nil, nil
+				}
 			}
 			a.webMu.Unlock()
 		}()
@@ -121,11 +125,21 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 		}
 		cookie, err := bootstrapDSH(launchURL, p.Host)
 		if err != nil {
-			_ = cmd.Process.Kill()
+			if stopErr := a.stopWebProcessLocked(); stopErr != nil {
+				a.replyError(req, errors.New("DSH Web startup failed and process tree cleanup failed"))
+				return
+			}
 			a.replyError(req, errors.New("DSH Web did not start or browser authentication failed"))
 			return
 		}
-		a.webProcess, a.webHost, a.webCookie = cmd, p.Host, cookie
+		select {
+		case <-exited:
+			a.replyError(req, errors.New("DSH Web exited during browser authentication"))
+			return
+		default:
+		}
+		a.webProcess, a.webTree, a.webDone = cmd, tree, exited
+		a.webHost, a.webCookie = p.Host, cookie
 		a.reply(req, protocol.TypeWebStarted, protocol.WebStartedPayload{Cookie: cookie})
 	}()
 }
@@ -161,15 +175,27 @@ func bootstrapDSH(rawURL, host string) (string, error) {
 	return "", errors.New("DSH browser cookie missing")
 }
 
-func (a *Agent) stopWeb() {
+// Caller holds webMu. Waiters close webDone before acquiring that mutex.
+func (a *Agent) stopWebProcessLocked() error {
+	if a.webTree != nil {
+		if err := a.webTree.Stop(); err != nil {
+			return err
+		}
+	}
+	if a.webDone != nil {
+		<-a.webDone
+	}
+	a.webProcess, a.webTree, a.webDone = nil, nil, nil
+	a.webCookie, a.webHost = "", ""
+	return nil
+}
+
+func (a *Agent) stopWeb() error {
 	a.webMu.Lock()
 	defer a.webMu.Unlock()
-	if a.webProcess != nil {
-		_ = a.webProcess.Process.Kill()
-	}
-	a.webProcess = nil
-	a.webCookie = ""
+	err := a.stopWebProcessLocked()
 	a.closeWebStreams()
+	return err
 }
 
 func (a *Agent) webActive() bool {

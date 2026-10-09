@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'internal/processutil/**'
       - 'internal/terminal/**'
       - 'internal/agent/**'
       - 'internal/session/**'

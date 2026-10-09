@@ -201,7 +201,7 @@ Agent 在电脑上启动 `dsh web --no-open`，通过现有出站连接把本机
 
 简化入口一次服务一台设备，切换电脑前在设备页停止 DSH Web，以免多个页面混用设备。需要多设备同时使用时，可保留独立通配域名模式：设置 `CODEGATE_DSH_PROXY_DOMAIN=dsh.example.com`，为 `*.dsh.example.com` 配置 DNS 和通配证书，将证书/私钥放到 `secrets/dsh-tls/fullchain.pem`、`privkey.pem`，使用 `docker compose -f compose.yaml -f deploy/compose.dsh.yaml --profile public up -d`。`auto` 会让已有通配域名配置优先；显式 URL 与域名配置不能同时启用。
 
-内建浏览器授权有效一小时，过期或 Agent 重连后从设备页重新打开。DSH Web 运行时会阻止 Agent 自动更新；点击“停止”后恢复空闲更新检查。外部 `web_url` 仍可独立使用。
+内建浏览器授权有效一小时，过期或 Agent 重连后从设备页重新打开。DSH Web 运行时会阻止 Agent 自动更新；点击“停止”后恢复空闲更新检查。Agent v0.1.18 起，停止、重启和启动失败都会清理本次启动的 DSH 进程树，包括 Windows npm `.cmd` 启动器下的 Node 子进程；其他独立启动的 Node/DSH 不会被清理。升级前已经残留的进程不属于新版 Agent 的管理范围，需先手动关闭那个旧实例。外部 `web_url` 仍可独立使用。
 
 ### 结束终端后恢复原对话
 
