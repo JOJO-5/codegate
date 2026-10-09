@@ -35,6 +35,8 @@
 
 import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
+import QuotaPanel from '../components/QuotaPanel.vue'
+import FilesView from './FilesView.vue'
 import SessionAttachments from '../components/SessionAttachments.vue'
 import TerminalTextReader from '../components/TerminalTextReader.vue'
 import { terminalTextSnapshot, type TerminalTextSnapshot } from '../lib/terminalText'
@@ -81,6 +83,11 @@ const summary = ref<SessionSummary | null>(null)
 const workspaceBranch = ref('')
 const workspaceError = ref('')
 const workspaceOpen = ref(false)
+const filesOpen = ref(false)
+function openFiles(): void {
+ if (window.matchMedia('(min-width: 769px)').matches) filesOpen.value = !filesOpen.value
+ else void router.push({ name: 'session-files', params: { id: sessionId.value } })
+}
 const sessionTool = computed(() => {
   const s = summary.value
   if (!s) return '终端'
@@ -835,7 +842,7 @@ onUnmounted(() => {
     <div class="term__bar">
       <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 会话</button>
       <button class="btn btn--ghost btn--sm term__panel-button" type="button" @click="showSessionPanel = !showSessionPanel">☰ 切换</button>
-      <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">文件</button>
+      <button class="btn btn--sm" type="button" @click="openFiles">文件</button>
 
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-git', params: { id: sessionId } })">Git</button>
       <span class="term__title" :title="summary?.name ?? sessionId">
@@ -874,12 +881,15 @@ onUnmounted(() => {
       <aside class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区">
         <div class="term__sidebar-heading">工作区</div>
         <button class="btn btn--primary" type="button" @click="goBack">＋ 新会话</button>
+        <div class="term__recent">
         <div class="term__sidebar-heading">最近会话</div>
         <button v-for="item in siblingSessions" :key="item.session_id" class="term__session-link" :class="{ 'term__session-link--active': item.session_id === sessionId }" type="button" @click="router.push({ name: 'session', params: { id: item.session_id } })">
           <span>{{ item.name || item.command || '会话' }}</span>
           <small>{{ statusLabel(item.status) }}</small>
         </button>
-        <button class="term__session-link" type="button" @click="router.push({ name: 'session-files', params: { id: sessionId } })">▣ 工作区文件</button>
+        <button class="term__session-link" type="button" @click="openFiles">▣ 工作区文件</button>
+        </div>
+        <QuotaPanel v-if="summary" :session-id="sessionId" />
       </aside>
       <div ref="hostEl" class="term__host" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="cancelTerminalTouch" @click.capture="onTerminalClick" @contextmenu.capture="onTerminalContextMenu">
       <div v-if="attaching" class="term__overlay" role="status">
@@ -913,6 +923,10 @@ onUnmounted(() => {
         <button class="btn btn--sm" type="button" @click="goBack">返回设备</button>
       </div>
       </div>
+      <aside v-if="filesOpen" class="term__files" aria-label="工作区文件面板">
+        <button class="btn btn--sm term__files-close" type="button" @click="filesOpen = false">关闭文件面板</button>
+        <FilesView :id="sessionId" embedded />
+      </aside>
     </div>
 
     <!-- ---- 底部工具条 ---- -->

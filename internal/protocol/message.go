@@ -141,6 +141,7 @@ type AgentHelloPayload struct {
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
 	DSHWebApproval       bool `json:"dsh_web_approval,omitempty"`
+	QuotaRead            bool `json:"quota_read,omitempty"`
 	ConversationRecovery bool `json:"conversation_recovery,omitempty"`
 	WorktreeManagement   bool `json:"worktree_management,omitempty"`
 	GitActions           bool `json:"git_actions,omitempty"`
@@ -643,4 +644,22 @@ type NativeConversation struct {
 }
 type ConversationListed struct {
 	Conversations []NativeConversation `json:"conversations"`
+}
+
+// Quota results contain only public usage figures, never native credentials.
+type QuotaWindow struct {
+	Label       string  `json:"label"`
+	UsedPercent float64 `json:"used_percent"`
+	ResetsAt    int64   `json:"resets_at,omitempty"`
+}
+type ProviderQuota struct {
+	Provider  string        `json:"provider"`
+	Source    string        `json:"source"`
+	Status    string        `json:"status"`
+	Message   string        `json:"message,omitempty"`
+	CheckedAt int64         `json:"checked_at"`
+	Windows   []QuotaWindow `json:"windows"`
+}
+type QuotaResult struct {
+	Providers []ProviderQuota `json:"providers"`
 }

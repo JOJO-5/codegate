@@ -32,6 +32,9 @@ type Agent struct {
 	ws            *Workspace
 	mgr           *session.Manager
 	log           *slog.Logger
+	quotaMu       sync.Mutex
+	quotaCache    protocol.QuotaResult
+	quotaChecked  time.Time
 	toolMu        sync.RWMutex
 	approvedTools map[string]bool
 
@@ -327,7 +330,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 		Arch:         arch,
 		AgentVersion: Version,
 		Caps: protocol.AgentCaps{
-			ConversationRecovery: true, DSHWebApproval: true,
+			QuotaRead: true, ConversationRecovery: true, DSHWebApproval: true,
 			MaxSessions:        a.cfg.MaxSessions,
 			RepositoryScan:     true,
 			GitReview:          true,
