@@ -19,7 +19,9 @@ const (
 	TypeAgentPairCompleted Type = "agent.pair.completed"
 
 	// ---- 设备信息 ----
-	TypeDeviceInfo Type = "device.info"
+	TypeDeviceInfo  Type = "device.info"
+	TypeQuotaRead   Type = "quota.read"
+	TypeQuotaResult Type = "quota.result"
 
 	// ---- 会话 ----
 	TypeConversationList    Type = "conversation.list"
@@ -137,6 +139,7 @@ func (s Side) Local() Sender { return SentByServer }
 // 而不是忽略后继续。理由：浏览器若能发 `session.exit` 或 `agent.ready`，
 // 就能伪造 Agent 事件，欺骗 UI 和 Server 的状态机。
 var allowedSenders = map[Type]Sender{
+	TypeQuotaRead: SentByClient, TypeQuotaResult: SentByAgent,
 	TypeConversationList:    SentByClient,
 	TypeConversationRestore: SentByClient,
 	TypeConversationListed:  SentByAgent,

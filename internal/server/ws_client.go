@@ -147,7 +147,7 @@ func (s *clientSession) onText(data []byte) error {
 	case protocol.TypePong:
 		return nil
 
-	case protocol.TypeConversationList, protocol.TypeConversationRestore, protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
+	case protocol.TypeQuotaRead, protocol.TypeConversationList, protocol.TypeConversationRestore, protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
 		protocol.TypeSessionAttach, protocol.TypeSessionDetach, protocol.TypeSessionClose,
 		protocol.TypeSessionResize, protocol.TypeSessionSignal,
 		protocol.TypeSessionClaimControl,
@@ -240,6 +240,10 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		return
 	}
 
+	if env.Type == protocol.TypeQuotaRead && !agent.Caps().QuotaRead {
+		sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "查看额度需要 Agent v0.1.15，请更新 Agent"))
+		return
+	}
 	if env.Type == protocol.TypeConversationList || env.Type == protocol.TypeConversationRestore {
 		if !agent.Caps().ConversationRecovery {
 			sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "请更新 Agent 至 v0.1.14 后恢复原对话"))

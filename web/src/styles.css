@@ -898,3 +898,15 @@ a.item:hover {
 .git-delivery .btn { white-space: normal; }
 
 .table-scroll { max-width: 100%; overflow-x: auto; }
+
+/* File browsing stays in the desktop terminal route, preserving the attachment. */
+.term__files { flex: 0 0 clamp(300px, 30vw, 520px); min-width: 0; overflow: auto; background: var(--bg-elev); border-left: 1px solid var(--border); }
+.term__files-close { margin: 10px; }
+.files-view--embedded { width: auto; max-width: none; padding: 10px; }
+.files-view--embedded h1 { font-size: 16px; }
+.files-view--embedded .file-entry { flex-wrap: wrap; }
+.files-view--embedded .file-entry > button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 768px) { .term__files { display: none; } }
+
+.term__recent { flex: 1; min-height: 0; overflow-y: auto; }
+.term__recent .term__session-link { display: flex; width: 100%; }

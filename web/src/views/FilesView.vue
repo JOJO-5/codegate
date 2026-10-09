@@ -10,7 +10,7 @@ interface Entry { name: string; path: string; is_dir: boolean; size: number; mod
 interface Listed { path: string; entries: Entry[] }
 interface Stat { path: string; size: number; is_dir: boolean; is_binary: boolean; encoding: string }
 interface Chunk { path: string; size: number; offset: number; data: string }
-const props = defineProps<{ id: string }>()
+const props = defineProps<{ id: string; embedded?: boolean }>()
 const conn = useConnStore()
 const router = useRouter()
 const cwd = ref('')
@@ -157,10 +157,10 @@ onUnmounted(clearPreview)
 </script>
 
 <template>
-  <main class="page files-view">
+  <main class="page files-view" :class="{ 'files-view--embedded': embedded }">
     <div class="row row--between" style="margin-bottom: 16px">
       <div class="row">
-        <button class="btn btn--sm" type="button" @click="router.push({ name: 'session', params: { id } })">‹ 返回终端</button>
+        <button v-if="!embedded" class="btn btn--sm" type="button" @click="router.push({ name: 'session', params: { id } })">‹ 返回终端</button>
         <h1 style="margin: 0">工作区文件</h1>
       </div>
       <button class="btn btn--sm" type="button" :disabled="busy" @click="list()">刷新</button>
