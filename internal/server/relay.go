@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"sync/atomic"
 
@@ -109,6 +110,18 @@ func (r *Relay) RouteFrameToAgent(c *ClientConn, frame []byte) error {
 		return protocol.NewError(protocol.CodeForbidden, "无权访问该会话")
 	}
 
+	if agent.Caps().TerminalViews {
+		target, ok := r.reg.terminalView(protocol.TerminalViewID(c.AttachID(sessionID)).String())
+		if !ok || target.client != c || target.role != "controller" {
+			return protocol.NewError(protocol.CodeForbidden, "当前是只读视图，请先接管控制")
+		}
+		if typ == protocol.FrameStdin {
+			id := protocol.TerminalViewID(c.AttachID(sessionID))
+			data := append([]byte(nil), frame...)
+			copy(data[4:20], id[:])
+			frame = data
+		}
+	}
 	// 7. 投递。
 	if err := agent.TrySendBinary(frame); err != nil {
 		// 队列满是**客户端发太快**或 Agent 侧卡住了。
@@ -139,9 +152,30 @@ func (r *Relay) RouteFrameToClients(agent *AgentConn, frame []byte) error {
 	}
 
 	sessionID := streamID.String()
-
+	if target, ok := r.reg.terminalView(sessionID); ok {
+		if target.deviceID != agent.DeviceID || target.client.UserID != agent.UserID || !agent.HasSession(target.sessionID) {
+			return protocol.NewError(protocol.CodeForbidden, "终端视图不属于该设备")
+		}
+		sid, err := uuid.Parse(target.sessionID)
+		if err != nil {
+			return err
+		}
+		data := append([]byte(nil), frame...)
+		copy(data[4:20], sid[:])
+		if target.client.TrySendBinary(data) != nil {
+			r.droppedFrames.Add(1)
+		} else {
+			r.routedFrames.Add(1)
+		}
+		return nil
+	}
 	// 这个会话确实是这条 Agent 连接持有的吗 —— 防止 Agent 伪造其他会话的输出。
 	if !agent.HasSession(sessionID) {
+		// Detach can race already queued per-view output. Unknown view IDs are
+		// discarded, never broadcast; known cross-device targets are rejected above.
+		if agent.Caps().TerminalViews && (typ == protocol.FrameStdout || typ == protocol.FrameBuffer) {
+			return nil
+		}
 		r.log.Warn("Agent 发来不属于它的会话的数据",
 			"device_id", agent.DeviceID, "session_id", sessionID)
 		return protocol.NewError(protocol.CodeForbidden, "会话不属于该设备")

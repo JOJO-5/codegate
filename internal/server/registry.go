@@ -57,16 +57,16 @@ type AgentConn struct {
 	sessMu   sync.RWMutex
 	sessions map[string]struct{}
 
-	lastSeen  atomic.Int64 // Unix 毫秒
-	caps      protocol.AgentCaps
-	updateMu sync.RWMutex
-	updateStatus *protocol.AgentUpdateStatus
-	commands []protocol.CommandAvailability
-	roots []string
+	lastSeen      atomic.Int64 // Unix 毫秒
+	caps          protocol.AgentCaps
+	updateMu      sync.RWMutex
+	updateStatus  *protocol.AgentUpdateStatus
+	commands      []protocol.CommandAvailability
+	roots         []string
 	dshWebEnabled *bool
-	agentVer  string
-	platform  string
-	connected time.Time
+	agentVer      string
+	platform      string
+	connected     time.Time
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -158,7 +158,9 @@ func (c *AgentConn) AgentVersion() string { return c.agentVer }
 func (c *AgentConn) UpdateStatus() *protocol.AgentUpdateStatus {
 	c.updateMu.RLock()
 	defer c.updateMu.RUnlock()
-	if c.updateStatus == nil { return nil }
+	if c.updateStatus == nil {
+		return nil
+	}
 	copy := *c.updateStatus
 	return &copy
 }
@@ -184,7 +186,9 @@ func (c *AgentConn) SetDSHWebEnabled(enabled *bool) {
 func (c *AgentConn) DSHWebEnabled() *bool {
 	c.updateMu.RLock()
 	defer c.updateMu.RUnlock()
-	if c.dshWebEnabled == nil { return nil }
+	if c.dshWebEnabled == nil {
+		return nil
+	}
 	value := *c.dshWebEnabled
 	return &value
 }
@@ -265,8 +269,8 @@ type ClientConn struct {
 
 	// attached 是该连接当前 attach 的会话集合。
 	// 一个客户端同时只看一个终端，但保留集合是为了将来支持分屏。
-	attMu    sync.RWMutex
-	attached map[string]struct{}
+	attMu     sync.RWMutex
+	attached  map[string]struct{}
 	attachIDs map[string]string
 
 	lastSeen  atomic.Int64
@@ -402,8 +406,9 @@ type Registry struct {
 	agents  map[string]*AgentConn
 	clients map[string]*ClientConn
 
-	sessionSubs  map[string]map[string]*ClientConn
-	sessionOwner map[string]string
+	sessionSubs   map[string]map[string]*ClientConn
+	sessionOwner  map[string]string
+	terminalViews map[string]terminalViewTarget
 
 	queueSize int
 }
@@ -414,11 +419,12 @@ func NewRegistry(queueSize int) *Registry {
 		queueSize = defaultSendQueueSize
 	}
 	return &Registry{
-		agents:       make(map[string]*AgentConn),
-		clients:      make(map[string]*ClientConn),
-		sessionSubs:  make(map[string]map[string]*ClientConn),
-		sessionOwner: make(map[string]string),
-		queueSize:    queueSize,
+		agents:        make(map[string]*AgentConn),
+		clients:       make(map[string]*ClientConn),
+		sessionSubs:   make(map[string]map[string]*ClientConn),
+		sessionOwner:  make(map[string]string),
+		terminalViews: make(map[string]terminalViewTarget),
+		queueSize:     queueSize,
 	}
 }
 
@@ -509,6 +515,11 @@ func (r *Registry) RemoveClient(c *ClientConn) {
 	defer r.mu.Unlock()
 
 	delete(r.clients, c.ID)
+	for id, v := range r.terminalViews {
+		if v.client == c {
+			delete(r.terminalViews, id)
+		}
+	}
 	for sid, subs := range r.sessionSubs {
 		delete(subs, c.ID)
 		if len(subs) == 0 {
@@ -538,7 +549,6 @@ func (r *Registry) ClientCount() int {
 func (r *Registry) Subscribe(sessionID string, c *ClientConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
 	subs, ok := r.sessionSubs[sessionID]
 	if !ok {
 		subs = make(map[string]*ClientConn)
@@ -551,6 +561,12 @@ func (r *Registry) Subscribe(sessionID string, c *ClientConn) {
 func (r *Registry) Unsubscribe(sessionID string, c *ClientConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	for id, v := range r.terminalViews {
+		if v.client == c && v.sessionID == sessionID {
+			delete(r.terminalViews, id)
+		}
+	}
 
 	subs, ok := r.sessionSubs[sessionID]
 	if !ok {
@@ -606,9 +622,46 @@ func (r *Registry) SessionOwner(sessionID string) (string, bool) {
 func (r *Registry) ForgetSession(sessionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for id, v := range r.terminalViews {
+		if v.sessionID == sessionID {
+			delete(r.terminalViews, id)
+		}
+	}
 	delete(r.sessionOwner, sessionID)
 	delete(r.sessionSubs, sessionID)
 }
 
 // QueueSize 返回配置的发送队列深度（供诊断接口展示）。
 func (r *Registry) QueueSize() int { return r.queueSize }
+
+type terminalViewTarget struct {
+	client              *ClientConn
+	sessionID, deviceID string
+	role                string
+}
+
+func (r *Registry) setTerminalView(id, sid, device string, c *ClientConn) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, v := range r.terminalViews {
+		if v.client == c && v.sessionID == sid {
+			delete(r.terminalViews, key)
+		}
+	}
+	r.terminalViews[protocol.TerminalViewID(id).String()] = terminalViewTarget{client: c, sessionID: sid, deviceID: device, role: "viewer"}
+}
+func (r *Registry) terminalView(id string) (terminalViewTarget, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	v, ok := r.terminalViews[id]
+	return v, ok
+}
+func (r *Registry) setTerminalRole(id, role string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v, ok := r.terminalViews[id]
+	if ok {
+		v.role = role
+		r.terminalViews[id] = v
+	}
+}

@@ -279,6 +279,36 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		}
 	}
 
+	if env.Type == protocol.TypeSessionClaimControl || env.Type == protocol.TypeSessionResize {
+		req, err := protocol.DecodePayload[protocol.SessionResizePayload](env)
+		if err != nil {
+			sendErrorEnvelope(s.c.TrySendText, env, err)
+			return
+		}
+		req.AttachID = s.c.AttachID(sessionID)
+		if agent.Caps().TerminalViews && req.AttachID == "" {
+			sendErrorEnvelope(s.c.TrySendText, env, errNoAccess())
+			return
+		}
+		if env.Type == protocol.TypeSessionClaimControl && !agent.Caps().TerminalViews {
+			sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "请更新 Agent 至 v0.1.16 后接管控制"))
+			return
+		}
+		env.Payload, _ = json.Marshal(req)
+	}
+	if env.Type == protocol.TypeSessionAttach && agent.Caps().TerminalViews {
+		req, err := protocol.DecodePayload[protocol.SessionAttachPayload](env)
+		if err != nil {
+			sendErrorEnvelope(s.c.TrySendText, env, err)
+			return
+		}
+		req.AttachID = s.c.AttachID(sessionID)
+		if req.AttachID == "" {
+			req.AttachID = uuid.NewString()
+		}
+		env.Payload, _ = json.Marshal(req)
+		s.srv.reg.setTerminalView(req.AttachID, sessionID, deviceID, s.c)
+	}
 	// Replay frames precede session.attached on the Agent connection. Subscribe
 	// before forwarding attach so the initial screen is not silently dropped.
 	var release func()

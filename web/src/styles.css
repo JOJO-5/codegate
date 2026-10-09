@@ -910,3 +910,8 @@ a.item:hover {
 
 .term__recent { flex: 1; min-height: 0; overflow-y: auto; }
 .term__recent .term__session-link { display: flex; width: 100%; }
+
+/* Read-only viewers preserve the PTY grid; scroll rather than reflow its TUI. */
+.term__host--viewer { overflow: auto; touch-action: pan-x pan-y pinch-zoom; }
+.term__host--viewer .xterm { min-width: max-content; touch-action: pan-x pan-y pinch-zoom; }
+.term__host--viewer .xterm-viewport { touch-action: pan-x pan-y pinch-zoom; }

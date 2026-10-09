@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 )
 
 // MaxControlMessageSize 是单条控制消息（JSON）的大小上限。
@@ -141,6 +142,7 @@ type AgentHelloPayload struct {
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
 	DSHWebApproval       bool `json:"dsh_web_approval,omitempty"`
+	TerminalViews        bool `json:"terminal_views,omitempty"`
 	QuotaRead            bool `json:"quota_read,omitempty"`
 	ConversationRecovery bool `json:"conversation_recovery,omitempty"`
 	WorktreeManagement   bool `json:"worktree_management,omitempty"`
@@ -169,6 +171,7 @@ type AgentAuthPayload struct {
 
 // AgentReadyPayload 是 Server 下发的运行参数。
 type AgentReadyPayload struct {
+	TerminalViews     bool        `json:"terminal_views,omitempty"`
 	Protocol          VersionInfo `json:"protocol"`
 	ServerTime        int64       `json:"server_time"`
 	HeartbeatInterval int         `json:"heartbeat_interval"` // 秒
@@ -338,6 +341,7 @@ type SessionListedPayload struct {
 //	lastSeq      → 客户端已有到 lastSeq 的输出，只要它之后的
 //	< BufferFrom → 落后太多，Agent 只给能给的，并在响应里如实告知
 type SessionAttachPayload struct {
+	AttachID  string `json:"attach_id,omitempty"`
 	SessionID string `json:"session_id"`
 	Since     uint64 `json:"since"`
 	Cols      uint16 `json:"cols"`
@@ -346,7 +350,8 @@ type SessionAttachPayload struct {
 
 // SessionAttachedPayload 是 attach 成功的结果。
 type SessionAttachedPayload struct {
-	Session SessionSummary `json:"session"`
+	AttachID string         `json:"attach_id,omitempty"`
+	Session  SessionSummary `json:"session"`
 	// SeqFrom/SeqTo 是本次重放覆盖的区间。若 SeqFrom > 请求的 Since，
 	// 说明客户端落后太多、中间有丢帧，前端应清屏后按 SeqFrom 重放。
 	SeqFrom uint64 `json:"seq_from"`
@@ -383,6 +388,7 @@ type SessionClosedPayload struct {
 
 // SessionResizePayload 是调整终端尺寸。
 type SessionResizePayload struct {
+	AttachID  string `json:"attach_id,omitempty"`
 	SessionID string `json:"session_id"`
 	Cols      uint16 `json:"cols"`
 	Rows      uint16 `json:"rows"`
@@ -405,6 +411,10 @@ type SessionExitPayload struct {
 
 // SessionRoleChangedPayload 通知 controller 变更（§7.6）。
 type SessionRoleChangedPayload struct {
+	AttachID   string `json:"attach_id,omitempty"`
+	Role       string `json:"role,omitempty"`
+	Cols       uint16 `json:"cols,omitempty"`
+	Rows       uint16 `json:"rows,omitempty"`
 	SessionID  string `json:"session_id"`
 	Controller string `json:"controller"` // 新的主控客户端 connID
 }
@@ -662,4 +672,10 @@ type ProviderQuota struct {
 }
 type QuotaResult struct {
 	Providers []ProviderQuota `json:"providers"`
+}
+
+// TerminalViewID identifies a single authenticated attach on the Agent link.
+// Server rewrites its stream ID back to the session ID only for that browser.
+func TerminalViewID(attachID string) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("codegate-terminal-view:"+attachID))
 }

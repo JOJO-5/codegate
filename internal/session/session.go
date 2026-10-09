@@ -341,11 +341,16 @@ func (s *Session) Attach(req AttachRequest) (AttachResult, error) {
 	}
 
 	role := RoleViewer
+	if s.controller == req.ConnID {
+		role = RoleController
+	}
 	if s.controller == "" {
 		role = RoleController
-		s.controller = req.ConnID
 	}
 
+	if sink, ok := req.Sink.(interface{ SendState(Role, uint16, uint16) }); ok {
+		sink.SendState(role, s.cols, s.rows)
+	}
 	seqTo := s.ring.Total()
 	data, truncated := s.ring.Since(req.Since)
 	seqFrom := seqTo - uint64(len(data))
@@ -383,6 +388,9 @@ func (s *Session) Attach(req AttachRequest) (AttachResult, error) {
 	}
 
 	// ---- 6. 登记 ----
+	if role == RoleController {
+		s.controller = req.ConnID
+	}
 	s.views[req.ConnID] = &View{
 		ConnID:  req.ConnID,
 		Role:    role,
@@ -430,11 +438,18 @@ func (s *Session) removeViewLocked(connID string) {
 	// controller 走了就顺位给最早 attach 的那个（§7.6）
 	if s.controller == connID {
 		s.controller = ""
+		s.lastResizeAt = time.Time{}
+		if s.resizeTimer != nil {
+			s.resizeTimer.Stop()
+			s.resizeTimer = nil
+			s.pendingResize = [2]uint16{}
+		}
 		if len(s.order) > 0 {
 			next := s.order[0]
 			s.controller = next
 			if v, ok := s.views[next]; ok {
 				v.Role = RoleController
+				s.notifyViewsLocked()
 			}
 		}
 	}
@@ -461,6 +476,13 @@ func (s *Session) ClaimControl(connID string) (previous string, err error) {
 	}
 	s.controller = connID
 	v.Role = RoleController
+	s.lastResizeAt = time.Time{}
+	if s.resizeTimer != nil {
+		s.resizeTimer.Stop()
+		s.resizeTimer = nil
+		s.pendingResize = [2]uint16{}
+	}
+	s.notifyViewsLocked()
 	return previous, nil
 }
 
@@ -572,8 +594,11 @@ func (s *Session) Resize(connID string, cols, rows uint16) error {
 	now := time.Now()
 	if s.lastResizeAt.IsZero() || now.Sub(s.lastResizeAt) >= resizeThrottle {
 		s.lastResizeAt = now
+		s.cols, s.rows = cols, rows
+		s.notifyViewsLocked()
+		err := s.pty.Resize(cols, rows)
 		s.mu.Unlock()
-		return s.pty.Resize(cols, rows)
+		return err
 	}
 
 	// 距上次太近：只记下最后一次，稍后统一发。
@@ -594,11 +619,12 @@ func (s *Session) flushResize() {
 	s.resizeTimer = nil
 	s.lastResizeAt = time.Now()
 	alive := s.proc.Alive()
-	s.mu.Unlock()
-
 	if has && alive {
+		s.cols, s.rows = pending[0], pending[1]
+		s.notifyViewsLocked()
 		_ = s.pty.Resize(pending[0], pending[1])
 	}
+	s.mu.Unlock()
 }
 
 // ---------------------------------------------------------------------------
@@ -729,4 +755,13 @@ func (s *Session) BindConversationIdentity(id, root string) bool {
 	next.NativeRoot = root
 	s.Recovery = &next
 	return true
+}
+
+// State notifications precede replay/resize output under the same fanout lock.
+func (s *Session) notifyViewsLocked() {
+	for _, v := range s.views {
+		if sink, ok := v.sink.(interface{ SendState(Role, uint16, uint16) }); ok {
+			sink.SendState(v.Role, s.cols, s.rows)
+		}
+	}
 }
