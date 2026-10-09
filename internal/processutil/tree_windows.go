@@ -18,13 +18,28 @@ type Tree struct {
 	job windows.Handle
 }
 
-// StartTree assigns a suspended process before allowing it to spawn children.
-func StartTree(cmd *exec.Cmd) (*Tree, error) {
+// AdoptSuspended owns a newly created process before its primary thread runs.
+// The caller owns process/thread handles and must terminate on adoption failure.
+func AdoptSuspended(process, thread windows.Handle) (*Tree, error) {
+	tree, err := newWindowsTree()
+	if err != nil {
+		return nil, err
+	}
+	if err = windows.AssignProcessToJobObject(tree.job, process); err == nil {
+		_, err = windows.ResumeThread(thread)
+	}
+	if err != nil {
+		_ = windows.CloseHandle(tree.job)
+		return nil, err
+	}
+	return tree, nil
+}
+
+func newWindowsTree() (*Tree, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	tree := &Tree{job: job}
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	_, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)))
@@ -32,6 +47,16 @@ func StartTree(cmd *exec.Cmd) (*Tree, error) {
 		windows.CloseHandle(job)
 		return nil, err
 	}
+	return &Tree{job: job}, nil
+}
+
+// StartTree assigns a suspended process before allowing it to spawn children.
+func StartTree(cmd *exec.Cmd) (*Tree, error) {
+	tree, err := newWindowsTree()
+	if err != nil {
+		return nil, err
+	}
+	job := tree.job
 	Background(cmd)
 	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
 	if err = cmd.Start(); err != nil {
@@ -102,7 +127,7 @@ func (t *Tree) Stop() error {
 			break
 		}
 		if time.Now().After(deadline) {
-			return errors.New("DSH process tree did not stop in time")
+			return errors.New("process tree did not stop in time")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

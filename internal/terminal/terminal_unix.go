@@ -6,12 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/creack/pty"
 )
@@ -22,13 +22,15 @@ type unixPTY struct {
 	stateMu sync.Mutex
 	ioMu    sync.RWMutex
 
-	master   *os.File
-	cmd      *exec.Cmd
-	started  bool
-	closed   bool
-	done     chan struct{}
-	waitDone chan struct{}
-	exit     ExitResult
+	master              *os.File
+	fd                  int
+	wakeRead, wakeWrite *os.File
+	cmd                 *exec.Cmd
+	started             bool
+	closed              bool
+	done                chan struct{}
+	waitDone            chan struct{}
+	exit                ExitResult
 }
 
 func Available() error {
@@ -75,7 +77,8 @@ func (p *unixPTY) Start(ctx context.Context, cfg StartConfig) error {
 	if err != nil {
 		return fmt.Errorf("terminal: 启动 PTY 失败: %w", err)
 	}
-	if err := syscall.SetNonblock(int(master.Fd()), true); err != nil {
+	fd := int(master.Fd())
+	if err := syscall.SetNonblock(fd, true); err != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = master.Close()
 		_ = cmd.Wait()
@@ -87,6 +90,14 @@ func (p *unixPTY) Start(ctx context.Context, cfg StartConfig) error {
 		_ = cmd.Wait()
 		return err
 	}
+	wakeRead, wakeWrite, err := os.Pipe()
+	if err != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = master.Close()
+		_ = cmd.Wait()
+		return err
+	}
+	p.fd, p.wakeRead, p.wakeWrite = fd, wakeRead, wakeWrite
 	p.master, p.cmd, p.started = master, cmd, true
 	go p.reap(cmd)
 	return nil
@@ -133,11 +144,17 @@ func (p *unixPTY) Read(buf []byte) (int, error) {
 		default:
 		}
 		p.ioMu.RLock()
+		select {
+		case <-p.done:
+			p.ioMu.RUnlock()
+			return 0, io.EOF
+		default:
+		}
 		if p.master == nil {
 			p.ioMu.RUnlock()
 			return 0, ErrNotStarted
 		}
-		n, err := syscall.Read(int(p.master.Fd()), buf)
+		n, err := syscall.Read(p.fd, buf)
 		p.ioMu.RUnlock()
 		if n > 0 {
 			return n, nil
@@ -148,7 +165,7 @@ func (p *unixPTY) Read(buf []byte) (int, error) {
 		if !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EINTR) {
 			return 0, err
 		}
-		if !p.waitForIO() {
+		if !p.waitForIO(unix.POLLIN) {
 			return 0, io.EOF
 		}
 	}
@@ -163,11 +180,17 @@ func (p *unixPTY) Write(buf []byte) (int, error) {
 		default:
 		}
 		p.ioMu.RLock()
+		select {
+		case <-p.done:
+			p.ioMu.RUnlock()
+			return written, ErrClosed
+		default:
+		}
 		if p.master == nil {
 			p.ioMu.RUnlock()
 			return written, ErrNotStarted
 		}
-		n, err := syscall.Write(int(p.master.Fd()), buf[written:])
+		n, err := syscall.Write(p.fd, buf[written:])
 		p.ioMu.RUnlock()
 		written += n
 		if err == nil {
@@ -176,21 +199,31 @@ func (p *unixPTY) Write(buf []byte) (int, error) {
 		if !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EINTR) {
 			return written, err
 		}
-		if !p.waitForIO() {
+		if !p.waitForIO(unix.POLLOUT) {
 			return written, ErrClosed
 		}
 	}
 	return written, nil
 }
 
-func (p *unixPTY) waitForIO() bool {
-	timer := time.NewTimer(20 * time.Millisecond)
-	defer timer.Stop()
+func (p *unixPTY) waitForIO(events int16) bool {
+	p.ioMu.RLock()
+	defer p.ioMu.RUnlock()
 	select {
 	case <-p.done:
 		return false
-	case <-timer.C:
-		return true
+	default:
+	}
+	fds := []unix.PollFd{
+		{Fd: int32(p.fd), Events: events},
+		{Fd: int32(p.wakeRead.Fd()), Events: unix.POLLIN},
+	}
+	for {
+		_, err := unix.Poll(fds, -1)
+		if err == unix.EINTR {
+			continue
+		}
+		return err == nil && fds[1].Revents == 0
 	}
 }
 
@@ -208,7 +241,7 @@ func (p *unixPTY) Resize(cols, rows uint16) error {
 		return ErrClosed
 	default:
 	}
-	return pty.Setsize(p.master, &pty.Winsize{Cols: cols, Rows: rows})
+	return unix.IoctlSetWinsize(p.fd, unix.TIOCSWINSZ, &unix.Winsize{Col: cols, Row: rows})
 }
 
 func (p *unixPTY) Signal(sig Signal) error {
@@ -268,18 +301,21 @@ func (p *unixPTY) Close() error {
 	p.closed = true
 	close(p.done)
 	cmd := p.cmd
+	wake := p.wakeWrite
 	started := p.started
 	p.stateMu.Unlock()
 	if !started {
 		return nil
 	}
-	select {
-	case <-p.waitDone:
-	default:
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	// A launcher can exit before its descendants; always clean the private group.
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if wake != nil {
+		_, _ = wake.Write([]byte{1})
 	}
 	p.ioMu.Lock()
 	err := p.master.Close()
+	_ = p.wakeRead.Close()
+	_ = p.wakeWrite.Close()
 	p.ioMu.Unlock()
 	return err
 }

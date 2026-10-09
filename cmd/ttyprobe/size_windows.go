@@ -97,8 +97,9 @@ func consoleSize() (int, int, error) {
 // 直接后果：快速连续 resize 时中间尺寸可能被整个跳过。
 // 这不是 bug，是轮询语义 —— Phase 6 前端做 resize 防抖时必须知道这一点，
 // 否则会把「防抖窗口小于轮询周期导致的丢帧」误判成后端 resize 链路断了。
-func watchSize(stop <-chan struct{}, onChange func(cols, rows int)) {
+func watchSize(stop <-chan struct{}, ready chan<- struct{}, onChange func(cols, rows int)) {
 	lastC, lastR, err := consoleSize()
+	close(ready)
 	if err != nil {
 		return
 	}
