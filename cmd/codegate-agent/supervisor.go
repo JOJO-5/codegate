@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/jojo/codegate/internal/processutil"
 	"io"
 	"os"
 	"os/exec"
@@ -384,6 +385,7 @@ func launchManaged(ctx context.Context, binary, configPath, stateDir string) (*m
 	file.Close()
 	os.Remove(marker)
 	cmd := exec.Command(binary, "run", "-config", configPath)
+	processutil.Background(cmd)
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "CODEGATE_AGENT_READY_FILE=") && !strings.HasPrefix(e, "CODEGATE_AGENT_HEALTH_FILE=") && !strings.HasPrefix(e, "CODEGATE_AGENT_SUPERVISED=") {
 			cmd.Env = append(cmd.Env, e)
@@ -469,6 +471,7 @@ func checkCandidate(ctx context.Context, req pendingAgent) error {
 	c, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(c, req.Path, "version")
+	processutil.Background(cmd)
 	cmd.WaitDelay = time.Second
 	output := &probeOutput{}
 	cmd.Stdout = output

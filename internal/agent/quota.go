@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jojo/codegate/internal/processutil"
 	"io"
 	"math"
 	"net/http"
@@ -133,6 +134,7 @@ func codexQuota(ctx context.Context, c ResolvedCommand, env []string) ([]protoco
 		cmdArgs = append(append([]string{}, c.Args[:2]...), cmdArgs...)
 	}
 	cmd := exec.Command(c.Command, cmdArgs...)
+	processutil.Background(cmd)
 	configureQuotaProcess(cmd)
 	cmd.Env = env
 	input, err := cmd.StdinPipe()

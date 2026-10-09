@@ -29,6 +29,7 @@ switch ($Action) {
         $info = Get-ScheduledTaskInfo -InputObject $task
         Write-Host "任务状态: $($task.State)"
         Write-Host "运行账号: $($task.Principal.UserId)"
+        Write-Host "登录方式: $($task.Principal.LogonType)（Password 为非交互后台运行）"
         Write-Host "上次运行: $($info.LastRunTime)"
         Write-Host "上次结果: $($info.LastTaskResult)"
         exit 0
@@ -101,7 +102,15 @@ try {
     $scheduledAction = New-ScheduledTaskAction -Execute $installedAgent -Argument "supervise -config `"$config`"" -WorkingDirectory $installDir
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $scheduledAction -Trigger $trigger -Settings $settings -User $currentUser -Password $plainPassword -RunLevel Limited -Description 'CodeGate Agent (starts before desktop sign-in)' -Force | Out-Null
+    # Password logon is non-interactive. 'Hidden' only hides a task in the UI
+    # and does not prevent console windows, so never rely on that setting.
+    $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Password -RunLevel Limited
+    $definition = New-ScheduledTask -Action $scheduledAction -Trigger $trigger -Settings $settings -Principal $principal -Description 'CodeGate Agent (non-interactive background startup)'
+    Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -InputObject $definition -User $currentUser -Password $plainPassword -Force | Out-Null
+    $registered = Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath
+    if ($registered.Principal.LogonType -ne 'Password') {
+        throw '任务未以非交互后台方式注册，未启动 Agent。请检查计划任务登录方式。'
+    }
 }
 finally {
     $plainPassword = $null

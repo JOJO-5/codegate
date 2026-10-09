@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jojo/codegate/internal/processutil"
 	"io"
 	"os"
 	"os/exec"
@@ -37,6 +38,7 @@ func (b *gitOutput) Write(p []byte) (int, error) {
 
 func runGit(ctx context.Context, cwd string, args ...string) (string, bool, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-pager", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", cwd}, args...)...)
+	processutil.Background(cmd)
 	// Repository selection must never be overridden by the Agent's environment.
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "GIT_") {

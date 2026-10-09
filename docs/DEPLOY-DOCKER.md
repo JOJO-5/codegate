@@ -159,6 +159,8 @@ Windows 的服务脚本保存于 `%LOCALAPPDATA%\\CodeGate\\agent-autostart.ps1`
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\CodeGate\\agent-autostart.ps1" install -AgentPath "$env:LOCALAPPDATA\\CodeGate\\bin\\codegate-agent.exe"
 ```
 
+Windows 计划任务使用当前账户的 Password 登录方式，启动时不进入交互桌面；安装时需要账户密码，不能使用 PIN。v0.1.17 同时禁止守护进程及后台 Git、额度查询等辅助命令创建控制台窗口，网页内的 ConPTY 终端仍正常运行。已有安装需要下载新版 Agent 和服务脚本，再执行一次上述 install 命令，替换旧任务和旧守护进程；仅自动更新子 Agent 不会替换正在运行的守护进程。手动执行 `run` 或 `supervise` 仍保留当前终端的输出。可执行脚本的 `status` 命令检查登录方式，应为 Password。
+
 将 `"update_enabled": true` 写入 Agent 配置后，服务运行的 `supervise` 命令会在无会话时安全切换。已有采用 `run` 启动的服务需要先手动关闭所有会话，再重新执行新版服务脚本安装一次以切换到 `supervise`；仅前台手动运行的 Agent 会暂存包而不会自行替换。服务器故障时，更新可能在健康检查阶段退回旧版并于下次检查重新尝试。
 
 ## 终端与 DSH
