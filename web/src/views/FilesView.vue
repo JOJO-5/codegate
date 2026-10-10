@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { TransferChunkSizer } from '../lib/transferPacing'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConnStore } from '../stores/conn'
@@ -66,10 +67,13 @@ async function stat(path: string): Promise<Stat> {
 async function read(path: string, size: number, track = false): Promise<Blob> {
   if (size > 100 * 1024 * 1024) throw new Error('浏览器单次下载上限为 100 MB')
   const chunks: BlobPart[] = []
+  const pacing = new TransferChunkSizer()
   for (let offset = 0; offset < size;) {
+    const started = performance.now()
     const env = await conn.request<Chunk>(MessageType.FileRead, {
-      session_id: props.id, path, offset, length: Math.min(192 * 1024, size - offset),
+      session_id: props.id, path, offset, length: Math.min(pacing.size, size - offset),
     }, props.id)
+    pacing.observe(performance.now() - started)
     const p = env.payload
     if (!p || p.offset !== offset || p.size !== size) throw new Error('文件在传输期间发生变化，请重试')
     const raw = atob(p.data)

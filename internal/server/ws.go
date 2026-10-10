@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/jojo/codegate/internal/protocol"
+	"github.com/jojo/codegate/internal/transport"
 )
 
 // WebSocket 层的公共参数。
@@ -116,17 +117,22 @@ func (s *Server) upgrade(w http.ResponseWriter, r *http.Request) (*websocket.Con
 // 退出条件有三个：发送队列被关闭、写失败、连接已关闭。
 // ★ 刻意**不**在这里关连接：关连接由读循环的退出路径统一负责，
 // 两条路径都能关的话，「谁先关的、为什么关」就再也说不清了。
-func (s *Server) writePump(ws *websocket.Conn, send <-chan outbound, done <-chan struct{}, label string) {
+func (s *Server) writePump(ws *websocket.Conn, send, bulk <-chan outbound, done <-chan struct{}, stats *transport.Stats, label string) {
 	protocol.ConfigureCompression(ws)
 	ticker := time.NewTicker(wsPingPeriod)
 	defer ticker.Stop()
 
+	burst := 0
 	for {
-		select {
-		case o, ok := <-send:
-			if !ok {
+		o, event := transport.Next(send, bulk, done, ticker.C, &burst)
+		switch event {
+		case transport.Closed:
+			return
+		case transport.Tick:
+			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteWait)); err != nil {
 				return
 			}
+		case transport.Message:
 			mt := websocket.TextMessage
 			if o.binary {
 				mt = websocket.BinaryMessage
@@ -134,23 +140,17 @@ func (s *Server) writePump(ws *websocket.Conn, send <-chan outbound, done <-chan
 			if err := ws.SetWriteDeadline(time.Now().Add(wsWriteWait)); err != nil {
 				return
 			}
+			stats.ObserveWait(o.enqueued, protocol.BulkTraffic(o.binary, o.data))
+			started := time.Now()
 			ws.EnableWriteCompression(protocol.CompressWSMessage(o.binary, o.data))
 			if err := ws.WriteMessage(mt, o.data); err != nil {
-				s.log.Debug("WebSocket 写失败，连接将关闭", "conn", label, "err", err)
+				s.log.Debug("WebSocket 写失败", "conn", label, "err", err)
 				return
 			}
-
-		case <-ticker.C:
-			if err := ws.WriteControl(websocket.PingMessage, nil,
-				time.Now().Add(wsWriteWait)); err != nil {
-				s.log.Debug("发送 Ping 失败，连接将关闭", "conn", label, "err", err)
-				return
-			}
-
-		case <-done:
-			return
+			stats.ObserveWrite(started)
 		}
 	}
+
 }
 
 // sendErrorEnvelope 给对端回一条 error 控制消息。

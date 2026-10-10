@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -104,7 +105,7 @@ func (s *Server) handleWSAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ac := newAgentConn(ws, s.cfg.SendQueueSize)
-	go s.writePump(ws, ac.Send(), ac.Done(), "agent/"+ip)
+	go s.writePump(ws, ac.Send(), ac.Bulk(), ac.Done(), &ac.stats, "agent/"+ip)
 
 	sess := &agentSession{srv: s, ac: ac, ip: ip}
 	code, reason := sess.run()
@@ -599,7 +600,10 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 		return s.handleSessionEnded(env)
 	case protocol.TypePing:
 		return s.send(protocol.TypePong, nil, env)
-	case protocol.TypePong, protocol.TypeAgentHello, protocol.TypeAgentAuth,
+	case protocol.TypePong:
+		s.routeToClient(env)
+		return nil
+	case protocol.TypeAgentHello, protocol.TypeAgentAuth,
 		protocol.TypeAgentPairBegin:
 		// 重复的握手消息：不致命，但说明对端状态机有问题，记一句。
 		s.srv.log.Debug("认证后收到握手阶段消息", "type", env.Type, "device_id", s.ac.DeviceID)
@@ -627,7 +631,7 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 // 「这条消息到底是响应还是自发推送」—— 见 onAuthenticated 里
 // session.closed 的分支。
 func (s *agentSession) routeToClient(env *protocol.Envelope) bool {
-	p, ok := s.srv.pending.Take(env.ReplyTo)
+	p, ok := s.srv.pending.TakeFromAgent(env.ReplyTo, s.ac.DeviceID, s.ac.UserID)
 	if !ok {
 		// 找不到对应请求：可能已被超时清理，也可能是 Agent 主动推送。
 		// 都不是错误 —— 记 Debug 就够，否则 Agent 一次异常推送
@@ -645,6 +649,16 @@ func (s *agentSession) routeToClient(env *protocol.Envelope) bool {
 	// 「终端一连上就输不进字」，而且只在时序巧合时出现。
 	if env.Type == protocol.TypeError && p.release != nil {
 		p.release()
+	}
+	if p.kind == protocol.TypePing && env.Type == protocol.TypePong {
+		result, _ := protocol.DecodePayload[protocol.NetworkProbeResult](env)
+		result.Version = 1
+		elapsed := float64(time.Since(p.probeStarted)) / float64(time.Millisecond)
+		result.ServerAgentMS = &elapsed
+		clientStats, agentStats := p.client.QueueStats(), s.ac.QueueStats()
+		result.ClientQueue = &clientStats
+		result.ServerAgentQueue = &agentStats
+		env.Payload, _ = json.Marshal(result)
 	}
 	s.applyResponseSideEffects(p, env)
 

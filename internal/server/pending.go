@@ -37,7 +37,8 @@ type pendingReq struct {
 	// release undoes a provisional attach subscription if no success arrives.
 	release func()
 
-	expiresAt time.Time
+	probeStarted time.Time
+	expiresAt    time.Time
 }
 
 // pendingRegistry 保存待回请求。
@@ -66,7 +67,9 @@ func (p *pendingRegistry) Add(reqID string, r *pendingReq, now time.Time) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if old := p.m[reqID]; old != nil && old.release != nil { old.release() }
+	if old := p.m[reqID]; old != nil && old.release != nil {
+		old.release()
+	}
 	p.m[reqID] = r
 }
 
@@ -101,7 +104,9 @@ func (p *pendingRegistry) DropClient(c *ClientConn) int {
 	for k, r := range p.m {
 		if r.client == c {
 			delete(p.m, k)
-			if r.release != nil { r.release() }
+			if r.release != nil {
+				r.release()
+			}
 			n++
 		}
 	}
@@ -117,7 +122,9 @@ func (p *pendingRegistry) DropDevice(deviceID string) int {
 	for k, r := range p.m {
 		if r.deviceID == deviceID {
 			delete(p.m, k)
-			if r.release != nil { r.release() }
+			if r.release != nil {
+				r.release()
+			}
 			n++
 		}
 	}
@@ -142,7 +149,9 @@ func (p *pendingRegistry) sweep(now time.Time) {
 	p.mu.Unlock()
 
 	for _, r := range expired {
-		if r.release != nil { r.release() }
+		if r.release != nil {
+			r.release()
+		}
 		sendErrorEnvelope(r.client.TrySendText, nil,
 			protocol.NewRetryableError(protocol.CodeInternal, "请求超时，请重试"))
 	}
@@ -153,4 +162,17 @@ func (p *pendingRegistry) Len() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.m)
+}
+
+// TakeFromAgent checks ownership before consuming a reply, so a response from
+// another device cannot erase a pending request or substitute its timing data.
+func (p *pendingRegistry) TakeFromAgent(reqID, deviceID, userID string) (*pendingReq, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r, ok := p.m[reqID]
+	if !ok || r.deviceID != deviceID || r.userID != userID {
+		return nil, false
+	}
+	delete(p.m, reqID)
+	return r, true
 }

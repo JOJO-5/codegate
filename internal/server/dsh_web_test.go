@@ -62,13 +62,14 @@ func TestDSHProxyRejectsOtherOrigin(t *testing.T) {
 
 func TestWebTunnelCarriesBytesWithoutBrowserFrames(t *testing.T) {
 	s := &Server{web: newWebGateway()}
-	ac := &AgentConn{DeviceID: strings.Repeat("a", 32), send: make(chan outbound, 16), closed: make(chan struct{})}
+	ac := newAgentConn(nil, 16)
+	ac.DeviceID = strings.Repeat("a", 32)
 	conn, err := s.openWebStream(context.Background(), ac)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	open := <-ac.send
+	open := <-ac.bulk
 	env, err := protocol.Decode(open.data)
 	if err != nil || env.Type != protocol.TypeWebOpen {
 		t.Fatalf("unexpected open frame: %v %v", env, err)
@@ -82,7 +83,7 @@ func TestWebTunnelCarriesBytesWithoutBrowserFrames(t *testing.T) {
 		_, err := conn.Write([]byte("HTTP request"))
 		done <- err
 	}()
-	data := <-ac.send
+	data := <-ac.bulk
 	f, err := protocol.DecodeFrame(data.data)
 	if err != nil || f.Type != protocol.FrameWebToAgent || string(f.Payload) != "HTTP request" {
 		t.Fatalf("tunnel lost request bytes: %v %v", f, err)

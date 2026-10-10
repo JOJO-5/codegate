@@ -1,8 +1,8 @@
 import type { useConnStore } from '../stores/conn'
 import { MessageType } from './protocol'
+import { TransferChunkSizer } from './transferPacing'
 
 export const MAX_UPLOAD_SIZE = 100 * 1024 * 1024
-const CHUNK_SIZE = 192 * 1024
 type Connection = Pick<ReturnType<typeof useConnStore>, 'isOpen' | 'request'>
 export interface UploadedAttachment { name: string; path: string; size: number }
 
@@ -14,17 +14,19 @@ export async function uploadFile(conn: Connection, sessionId: string, file: File
 } = {}): Promise<void> {
   if (file.size > MAX_UPLOAD_SIZE) throw new Error('单个文件上传上限为 100 MB')
   const uploadId = crypto.randomUUID()
+  const chunks = new TransferChunkSizer()
   try {
     let offset = 0
     do {
       options.signal?.throwIfAborted()
       if (!conn.isOpen) throw new Error('连接已断开，请重试上传')
-      const bytes = new Uint8Array(await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer())
+      const bytes = new Uint8Array(await file.slice(offset, offset + chunks.size).arrayBuffer())
       options.signal?.throwIfAborted()
       let binary = ''
       for (const byte of bytes) binary += String.fromCharCode(byte)
       const next = offset + bytes.length
       const final = next === file.size
+      const started = performance.now()
       const env = await conn.request<{ path: string; size?: number }>(MessageType.FileWrite, {
         session_id: sessionId, upload_id: uploadId, path, size: file.size,
         offset, data: btoa(binary), final, overwrite: options.overwrite ?? false,
@@ -33,6 +35,7 @@ export async function uploadFile(conn: Connection, sessionId: string, file: File
         || env.payload?.path !== path || (final && env.payload.size !== file.size)) {
         throw new Error('上传确认不匹配，请刷新工作区文件后重试')
       }
+      chunks.observe(performance.now() - started)
       offset = next
       options.progress?.(file.size === 0 ? 100 : Math.round(offset / file.size * 100))
       if (final) return

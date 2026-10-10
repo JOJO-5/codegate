@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/jojo/codegate/internal/protocol"
+	"github.com/jojo/codegate/internal/transport"
 )
 
 // ErrSendQueueFull 表示目标连接的发送队列已满（慢消费者）。
@@ -37,8 +38,9 @@ const defaultSendQueueSize = 256
 // 如果这里不记录，writePump 就只能瞎猜 —— 而猜错的后果是
 // 「终端输出被当成 JSON 解析」这类完全无法从日志里看出来的故障。
 type outbound struct {
-	binary bool
-	data   []byte
+	binary   bool
+	data     []byte
+	enqueued time.Time
 }
 
 // AgentConn 是一条已通过 Ed25519 认证的 Agent 长连接。
@@ -48,9 +50,11 @@ type AgentConn struct {
 
 	conn *websocket.Conn
 
-	// send 是**唯一**允许向这条 WS 写入的通道。
+	// send 和 bulk 只由唯一的 writePump 消费。
 	// gorilla/websocket 不支持并发写，所有写入必须经由单个 writePump。
-	send chan outbound
+	send  chan outbound
+	bulk  chan outbound
+	stats transport.Stats
 
 	// sessions 是 Agent 自报的当前会话集合，用于快速鉴权。
 	// 由心跳与 session.sync 刷新。
@@ -79,6 +83,7 @@ func newAgentConn(ws *websocket.Conn, queueSize int) *AgentConn {
 	c := &AgentConn{
 		conn:      ws,
 		send:      make(chan outbound, queueSize),
+		bulk:      make(chan outbound, transport.BulkQueueSize(queueSize)),
 		sessions:  make(map[string]struct{}),
 		connected: time.Now(),
 		closed:    make(chan struct{}),
@@ -105,12 +110,16 @@ func (c *AgentConn) TrySendBinary(data []byte) error {
 }
 
 func (c *AgentConn) SendWeb(data []byte) error {
+	queue := c.bulk
+	if queue == nil {
+		queue = c.send
+	}
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	select {
 	case <-c.closed:
 		return errors.New("agent disconnected")
-	case c.send <- outbound{binary: true, data: data}:
+	case queue <- outbound{binary: true, data: data, enqueued: time.Now()}:
 		return nil
 	case <-timer.C:
 		return ErrSendQueueFull
@@ -118,8 +127,13 @@ func (c *AgentConn) SendWeb(data []byte) error {
 }
 
 func (c *AgentConn) trySend(o outbound) error {
+	o.enqueued = time.Now()
+	queue := c.send
+	if protocol.BulkTraffic(o.binary, o.data) && c.bulk != nil {
+		queue = c.bulk
+	}
 	select {
-	case c.send <- o:
+	case queue <- o:
 		return nil
 	default:
 		return ErrSendQueueFull
@@ -264,8 +278,10 @@ type ClientConn struct {
 	ID     string // 连接 ID（UUID），用于日志与角色标识
 	UserID string
 
-	conn *websocket.Conn
-	send chan outbound
+	conn  *websocket.Conn
+	send  chan outbound
+	bulk  chan outbound
+	stats transport.Stats
 
 	// attached 是该连接当前 attach 的会话集合。
 	// 一个客户端同时只看一个终端，但保留集合是为了将来支持分屏。
@@ -288,6 +304,7 @@ func newClientConn(id string, ws *websocket.Conn, queueSize int) *ClientConn {
 		ID:        id,
 		conn:      ws,
 		send:      make(chan outbound, queueSize),
+		bulk:      make(chan outbound, transport.BulkQueueSize(queueSize)),
 		attached:  make(map[string]struct{}),
 		attachIDs: make(map[string]string),
 		connected: time.Now(),
@@ -312,8 +329,13 @@ func (c *ClientConn) TrySendBinary(data []byte) error {
 }
 
 func (c *ClientConn) trySend(o outbound) error {
+	o.enqueued = time.Now()
+	queue := c.send
+	if protocol.BulkTraffic(o.binary, o.data) && c.bulk != nil {
+		queue = c.bulk
+	}
 	select {
-	case c.send <- o:
+	case queue <- o:
 		return nil
 	default:
 		return ErrSendQueueFull
@@ -664,4 +686,13 @@ func (r *Registry) setTerminalRole(id, role string) {
 		v.role = role
 		r.terminalViews[id] = v
 	}
+}
+
+func (c *AgentConn) Bulk() <-chan outbound  { return c.bulk }
+func (c *ClientConn) Bulk() <-chan outbound { return c.bulk }
+func (c *AgentConn) QueueStats() transport.Snapshot {
+	return c.stats.Snapshot(len(c.send), len(c.bulk))
+}
+func (c *ClientConn) QueueStats() transport.Snapshot {
+	return c.stats.Snapshot(len(c.send), len(c.bulk))
 }

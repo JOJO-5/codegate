@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jojo/codegate/internal/protocol"
+	"github.com/jojo/codegate/internal/transport"
 )
 
 // 连接层的时间参数（§3.3）。
@@ -86,8 +87,9 @@ func IsFatalClose(err error) bool {
 
 // outbound 是一条待发送的帧。
 type outbound struct {
-	binary bool
-	data   []byte
+	binary   bool
+	data     []byte
+	enqueued time.Time
 }
 
 // Conn 是一条到 Server 的 WebSocket 连接。
@@ -99,9 +101,11 @@ type outbound struct {
 // 多个 goroutine 直接 WriteMessage 会导致帧交错。而帧交错在终端场景下的
 // 表现是「屏幕上随机出现半行乱码」—— 没人会把它归因到并发问题上。
 type Conn struct {
-	ws   *websocket.Conn
-	log  *slog.Logger
-	send chan outbound
+	ws    *websocket.Conn
+	log   *slog.Logger
+	send  chan outbound
+	bulk  chan outbound
+	stats transport.Stats
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -161,6 +165,7 @@ func Dial(ctx context.Context, opts DialOptions) (*Conn, error) {
 		ws:       ws,
 		log:      log,
 		send:     make(chan outbound, sendQueueSize),
+		bulk:     make(chan outbound, transport.BulkQueueSize(sendQueueSize)),
 		closed:   make(chan struct{}),
 		onText:   opts.OnText,
 		onBinary: opts.OnBinary,
@@ -205,10 +210,15 @@ func (c *Conn) SendBinaryReliable(data []byte) error {
 
 // enqueue 把帧放进发送队列。timeout 为 0 表示非阻塞。
 func (c *Conn) enqueue(out outbound, timeout time.Duration) error {
+	out.enqueued = time.Now()
+	queue := c.send
+	if protocol.BulkTraffic(out.binary, out.data) && c.bulk != nil {
+		queue = c.bulk
+	}
 	select {
 	case <-c.closed:
 		return ErrConnClosed
-	case c.send <- out:
+	case queue <- out:
 		return nil
 	default:
 	}
@@ -222,7 +232,7 @@ func (c *Conn) enqueue(out outbound, timeout time.Duration) error {
 	select {
 	case <-c.closed:
 		return ErrConnClosed
-	case c.send <- out:
+	case queue <- out:
 		return nil
 	case <-timer.C:
 		return fmt.Errorf("%w: 等待 %s 仍无法入队", ErrSendQueueFull, timeout)
@@ -245,28 +255,30 @@ func (c *Conn) writePump() {
 	defer c.pumpDone.Done()
 	protocol.ConfigureCompression(c.ws)
 
+	burst := 0
 	for {
-		select {
-		case <-c.closed:
+		out, event := transport.Next(c.send, c.bulk, c.closed, nil, &burst)
+		if event == transport.Closed {
 			return
-		case out := <-c.send:
-			mt := websocket.TextMessage
-			if out.binary {
-				mt = websocket.BinaryMessage
-			}
-			// 写超时保护：对端卡死时不能让这个 goroutine 无限阻塞，
-			// 否则队列很快填满，整个 Agent 都发不出东西。
-			if err := c.ws.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-				c.fail(err)
-				return
-			}
-			c.ws.EnableWriteCompression(protocol.CompressWSMessage(out.binary, out.data))
-			if err := c.ws.WriteMessage(mt, out.data); err != nil {
-				c.fail(err)
-				return
-			}
 		}
+		mt := websocket.TextMessage
+		if out.binary {
+			mt = websocket.BinaryMessage
+		}
+		if err := c.ws.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+			c.fail(err)
+			return
+		}
+		c.stats.ObserveWait(out.enqueued, protocol.BulkTraffic(out.binary, out.data))
+		started := time.Now()
+		c.ws.EnableWriteCompression(protocol.CompressWSMessage(out.binary, out.data))
+		if err := c.ws.WriteMessage(mt, out.data); err != nil {
+			c.fail(err)
+			return
+		}
+		c.stats.ObserveWrite(started)
 	}
+
 }
 
 func (c *Conn) readPump() {
@@ -360,3 +372,5 @@ var (
 	// ErrSendQueueFull 表示发送队列已满。
 	ErrSendQueueFull = errors.New("agent: 发送队列已满")
 )
+
+func (c *Conn) QueueStats() transport.Snapshot { return c.stats.Snapshot(len(c.send), len(c.bulk)) }
