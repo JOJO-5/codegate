@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -68,7 +69,7 @@ func (s *Server) handleWSClient(w http.ResponseWriter, r *http.Request) {
 	c := newClientConn(uuid.NewString(), ws, s.cfg.SendQueueSize)
 	c.UserID = userID
 	s.reg.AddClient(c)
-	go s.writePump(ws, c.Send(), c.Done(), "client/"+c.ID)
+	go s.writePump(ws, c.Send(), c.Bulk(), c.Done(), &c.stats, "client/"+c.ID)
 
 	s.log.Info("浏览器连接建立", "conn_id", c.ID, "user_id", userID, "ip", ip)
 
@@ -141,7 +142,15 @@ func (s *clientSession) onText(data []byte) error {
 
 	switch env.Type {
 	case protocol.TypePing:
-		s.sendEnvelope(protocol.TypePong, nil, env)
+		probe, _ := protocol.DecodePayload[protocol.NetworkProbe](env)
+		if probe.Enabled && (probe.SessionID != "" || env.SessionID != "") {
+			s.routeRequest(env)
+		} else if probe.Enabled {
+			stats := s.c.QueueStats()
+			s.sendEnvelope(protocol.TypePong, protocol.NetworkProbeResult{Version: 1, ClientQueue: &stats}, env)
+		} else {
+			s.sendEnvelope(protocol.TypePong, nil, env)
+		}
 		return nil
 
 	case protocol.TypePong:
@@ -317,13 +326,14 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		release = func() { s.srv.reg.Unsubscribe(sessionID, s.c) }
 	}
 	s.srv.pending.Add(env.RequestID, &pendingReq{
-		client:    s.c,
-		userID:    s.c.UserID,
-		deviceID:  deviceID,
-		sessionID: sessionID,
-		kind:      env.Type,
-		requestID: env.RequestID,
-		release:   release,
+		client:       s.c,
+		userID:       s.c.UserID,
+		deviceID:     deviceID,
+		sessionID:    sessionID,
+		kind:         env.Type,
+		requestID:    env.RequestID,
+		probeStarted: time.Now(),
+		release:      release,
 	}, s.srv.now())
 
 	if env.Type == protocol.TypeSessionDetach {

@@ -414,6 +414,58 @@ function redraw(): void {
   sendText('\x0c') // Most interactive CLIs repaint on Ctrl+L.
 }
 
+// Manual, content-free connection probe; never inserts bytes into the CLI.
+interface QueueSample {
+  interactive_depth: number
+  bulk_depth: number
+  last_interactive_wait_ms?: number
+  sample_age_ms?: number
+  last_write_ms: number
+}
+interface ProbeSample {
+  probe_version: number
+  server_agent_ms?: number
+  client_queue?: QueueSample
+  server_agent_queue?: QueueSample
+  agent_queue?: QueueSample
+}
+const networkBusy = ref(false)
+const networkError = ref('')
+const networkResult = ref<{ browser: number; agent: number; total: number; sample: ProbeSample } | null>(null)
+const milliseconds = (value: number): string => `${Math.round(value)} ms`
+async function measureNetwork(): Promise<void> {
+  if (networkBusy.value || !conn.isOpen) return
+  networkBusy.value = true
+  networkError.value = ''
+  networkResult.value = null
+  const id = sessionId.value
+  const epoch = attachmentEpoch
+  try {
+    const browser: number[] = [], agent: number[] = [], total: number[] = []
+    let sample: ProbeSample | undefined
+    for (let i = 0; i < 3; i++) {
+      const started = performance.now()
+      const local = await conn.request<ProbeSample>(MessageType.Ping, { network_probe: true })
+      if (id !== sessionId.value || epoch !== attachmentEpoch) return
+      if (local.payload?.probe_version !== 1) throw new Error('连接测量需要新版 Server，请更新后重试')
+      browser.push(performance.now() - started)
+      const remoteStarted = performance.now()
+      const remote = await conn.request<ProbeSample>(MessageType.Ping, { network_probe: true, session_id: id }, id)
+      if (id !== sessionId.value || epoch !== attachmentEpoch) return
+      sample = remote.payload
+      if (!sample || !Number.isFinite(sample.server_agent_ms)) throw new Error('电脑链路未返回测量结果')
+      total.push(performance.now() - remoteStarted)
+      agent.push(sample.server_agent_ms!)
+    }
+    const median = (values: number[]): number => values.sort((a, b) => a - b)[1]!
+    networkResult.value = { browser: median(browser), agent: median(agent), total: median(total), sample: sample! }
+  } catch (error) {
+    if (id === sessionId.value && epoch === attachmentEpoch) networkError.value = error instanceof Error ? error.message : '连接测量失败'
+  } finally { networkBusy.value = false }
+}
+watch(sessionId, () => { networkResult.value = null; networkError.value = '' })
+watch(() => conn.isOpen, open => { if (!open) networkResult.value = null })
+
 // ---- 搜索（Ctrl+Shift+F，规格 §5.3 要求拦这个组合键）----
 const searchOpen = ref(false)
 const searchTerm = ref('')
@@ -960,7 +1012,18 @@ onUnmounted(() => {
         </dl>
         <div class="row">
           <button class="btn btn--ghost btn--sm" type="button" @click="refreshIdentity">刷新分支</button>
+          <button class="btn btn--ghost btn--sm" type="button" :disabled="networkBusy || !conn.isOpen || !isLive" @click="measureNetwork">{{ networkBusy ? '测量中…' : '测连接' }}</button>
           <RouterLink v-if="summary" class="btn btn--ghost btn--sm" :to="{ name: 'workspaces', params: { id: sessionDevice }, query: { path: summary.cwd } }">管理独立工作区</RouterLink>
+        </div>
+        <p v-if="networkError" class="small dim">{{ networkError }}</p>
+        <div v-if="networkResult" class="small" aria-label="连接测量结果">
+          <p>浏览器 ↔ 中转：{{ milliseconds(networkResult.browser) }} · 中转 ↔ 电脑：{{ milliseconds(networkResult.agent) }}</p>
+          <p>完整请求：{{ milliseconds(networkResult.total) }}（3 次中位数，含排队和处理，不是 CLI 回显）</p>
+          <p v-if="networkResult.sample.server_agent_queue?.last_interactive_wait_ms !== undefined">
+            最近样本发送等待：中转 {{ milliseconds(networkResult.sample.server_agent_queue.last_interactive_wait_ms) }}
+            <span v-if="networkResult.sample.agent_queue?.last_interactive_wait_ms !== undefined"> · Agent {{ milliseconds(networkResult.sample.agent_queue.last_interactive_wait_ms) }}</span>
+          </p>
+          <p class="dim">样本距今 {{ milliseconds(networkResult.sample.server_agent_queue?.sample_age_ms ?? 0) }}；文件传输优先让出交互，当前传输块仍会占用链路。</p>
         </div>
         <p v-if="workspaceError" class="small dim">{{ workspaceError }}</p>
       </div>

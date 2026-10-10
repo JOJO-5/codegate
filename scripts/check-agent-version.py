@@ -18,7 +18,7 @@ def check(base):
     new_text = pathlib.Path("VERSION").read_text().strip()
     old, new = version(old_text), version(new_text)
     changed = subprocess.check_output(["git", "diff", "--name-only", base, "--"], text=True).splitlines()
-    prefixes = ("cmd/codegate-agent/", "internal/agent/", "internal/terminal/", "internal/session/", "internal/protocol/", "internal/buffer/")
+    prefixes = ("cmd/codegate-agent/", "internal/agent/", "internal/terminal/", "internal/session/", "internal/protocol/", "internal/buffer/", "internal/transport/")
     runtime_changed = any(
         path in {"go.mod", "go.sum"}
         or (path.startswith(prefixes) and path.endswith(".go") and not path.endswith("_test.go"))

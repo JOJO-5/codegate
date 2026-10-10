@@ -14,14 +14,15 @@ import (
 
 func TestDSHTunnelDrainsLargeResponseBeforeEOF(t *testing.T) {
 	s := &Server{web: newWebGateway()}
-	ac := &AgentConn{DeviceID: strings.Repeat("a", 32), send: make(chan outbound, 16), closed: make(chan struct{})}
+	ac := newAgentConn(nil, 16)
+	ac.DeviceID = strings.Repeat("a", 32)
 	conn, err := s.openWebStream(context.Background(), ac)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-	open := <-ac.send
+	open := <-ac.bulk
 	env, err := protocol.Decode(open.data)
 	if err != nil {
 		t.Fatal(err)

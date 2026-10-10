@@ -9,7 +9,8 @@
     "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
     "build-only": "vite build",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:transfer": "node tests/transfer.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

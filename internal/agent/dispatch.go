@@ -61,7 +61,20 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 	case protocol.TypeFileCancel:
 		a.onFileCancel(env)
 	case protocol.TypePing:
-		a.reply(env, protocol.TypePong, nil)
+		probe, _ := protocol.DecodePayload[protocol.NetworkProbe](env)
+		if probe.Enabled {
+			var result protocol.NetworkProbeResult
+			result.Version = 1
+			a.connMu.RLock()
+			if a.conn != nil {
+				stats := a.conn.QueueStats()
+				result.AgentQueue = &stats
+			}
+			a.connMu.RUnlock()
+			a.reply(env, protocol.TypePong, result)
+		} else {
+			a.reply(env, protocol.TypePong, nil)
+		}
 	case protocol.TypeWebStart:
 		a.onWebStart(env)
 	case protocol.TypeGitRequest:
