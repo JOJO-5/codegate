@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/jojo/codegate/internal/processutil"
 	"io"
@@ -21,50 +22,101 @@ import (
 
 // Refresh is read-only. No prompts, credential refresh, login or browser cookies.
 // Concurrent requests share a short cache, including failures, to bound native work.
+type quotaCacheEntry struct {
+	result  protocol.ProviderQuota
+	checked time.Time
+}
+
+// Identify the launched executable, not a provider supplied by the browser.
+func quotaProvider(command string, args []string) string {
+	base := func(value string) string {
+		name := strings.ToLower(filepath.Base(strings.ReplaceAll(value, `\`, "/")))
+		for _, suffix := range []string{".exe", ".cmd", ".bat"} {
+			name = strings.TrimSuffix(name, suffix)
+		}
+		return name
+	}
+	name := base(command)
+	if name == "cmd" {
+		name = ""
+		for i, arg := range args {
+			if strings.EqualFold(arg, "/c") && i+1 < len(args) {
+				name = base(args[i+1])
+				break
+			}
+		}
+	}
+	switch name {
+	case "codex", "claude", "opencode":
+		return name
+	}
+	return ""
+}
+
 func (a *Agent) onQuotaRead(req *protocol.Envelope) {
+	payload, _ := protocol.DecodePayload[struct {
+		SessionID string `json:"session_id"`
+	}](req)
+	id := req.SessionID
+	if id == "" {
+		id = payload.SessionID
+	}
+	sess, ok := a.mgr.Get(parseUUID(id))
+	if !ok {
+		a.replyError(req, errors.New("quota session not found"))
+		return
+	}
+	summary := sess.Summary()
+	provider := quotaProvider(summary.Command, summary.Args)
+	result := protocol.QuotaResult{Providers: []protocol.ProviderQuota{}}
+	if provider == "" {
+		a.reply(req, protocol.TypeQuotaResult, result)
+		return
+	}
 	a.quotaMu.Lock()
 	defer a.quotaMu.Unlock()
-	if time.Since(a.quotaChecked) >= 15*time.Second {
+	cached, exists := a.quotaCache[provider]
+	if !exists || time.Since(cached.checked) >= 15*time.Second {
 		cfg := a.commandConfig()
 		env := BuildEnv(cfg, 80, 24)
-		result := protocol.QuotaResult{Providers: []protocol.ProviderQuota{}}
-		for _, provider := range []string{"codex", "claude", "opencode"} {
-			q := protocol.ProviderQuota{Provider: provider, Status: "unavailable", Windows: []protocol.QuotaWindow{}}
-			var command *ResolvedCommand
-			for _, spec := range cfg.AllowedCommands {
-				c, err := cfg.ResolveCommand(spec.ID, "", nil, false)
-				if err == nil && nativeTool(c) == provider {
-					command = &c
-					break
-				}
+		q := protocol.ProviderQuota{Provider: provider, Status: "unavailable", Windows: []protocol.QuotaWindow{}}
+		var command *ResolvedCommand
+		for _, spec := range cfg.AllowedCommands {
+			c, err := cfg.ResolveCommand(spec.ID, "", nil, false)
+			if err == nil && quotaProvider(c.Command, c.Args) == provider {
+				command = &c
+				break
 			}
-			if command == nil {
-				q.Message = "此设备未授权这个 CLI"
-			} else {
-				ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-				switch provider {
-				case "codex":
-					q.Source = "Codex 本机账号 · 官方 app-server"
-					q.Windows, q.Message = codexQuota(ctx, *command, env)
-				case "claude":
-					q.Source = "Claude 本机 OAuth · 非公开用量接口"
-					q.Windows, q.Message = claudeQuota(ctx, env, quotaHTTPClient())
-				case "opencode":
-					q.Source = "OpenCode Go 本机账号"
-					q.Windows, q.Message = openCodeQuota(ctx, env, quotaHTTPClient())
-				}
-				cancel()
-			}
-			q.CheckedAt = time.Now().Unix()
-			if q.Message == "" && len(q.Windows) > 0 {
-				q.Status = "ok"
-			}
-			result.Providers = append(result.Providers, q)
 		}
-		a.quotaCache = result
-		a.quotaChecked = time.Now()
+		if command == nil {
+			q.Message = "此设备未授权这个 CLI"
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			switch provider {
+			case "codex":
+				q.Source = "Codex 本机账号 · 官方 app-server"
+				q.Windows, q.Message = codexQuota(ctx, *command, env)
+			case "claude":
+				q.Source = "Claude 本机 OAuth · 非公开用量接口"
+				q.Windows, q.Message = claudeQuota(ctx, env, quotaHTTPClient())
+			case "opencode":
+				q.Source = "OpenCode Go 本机账号"
+				q.Windows, q.Message = openCodeQuota(ctx, env, quotaHTTPClient())
+			}
+			cancel()
+		}
+		q.CheckedAt = time.Now().Unix()
+		if q.Message == "" && len(q.Windows) > 0 {
+			q.Status = "ok"
+		}
+		cached = quotaCacheEntry{result: q, checked: time.Now()}
+		if a.quotaCache == nil {
+			a.quotaCache = make(map[string]quotaCacheEntry)
+		}
+		a.quotaCache[provider] = cached
 	}
-	a.reply(req, protocol.TypeQuotaResult, a.quotaCache)
+	result.Providers = append(result.Providers, cached.result)
+	a.reply(req, protocol.TypeQuotaResult, result)
 }
 
 func quotaHTTPClient() *http.Client {

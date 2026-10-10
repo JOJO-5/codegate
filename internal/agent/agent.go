@@ -36,8 +36,7 @@ type Agent struct {
 	mgr           *session.Manager
 	log           *slog.Logger
 	quotaMu       sync.Mutex
-	quotaCache    protocol.QuotaResult
-	quotaChecked  time.Time
+	quotaCache    map[string]quotaCacheEntry
 	toolMu        sync.RWMutex
 	approvedTools map[string]bool
 

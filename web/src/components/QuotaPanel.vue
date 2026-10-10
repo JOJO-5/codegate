@@ -5,7 +5,7 @@ import { MessageType } from '../lib/protocol'
 import { humanizeError } from '../lib/format'
 interface Window { label: string; used_percent: number; resets_at?: number }
 interface Provider { provider: string; source: string; status: string; message?: string; checked_at: number; windows: Window[] }
-const props = defineProps<{ sessionId: string }>()
+const props = defineProps<{ sessionId: string; provider: string }>()
 const conn = useConnStore()
 const providers = ref<Provider[]>([])
 const busy = ref(false)
@@ -19,15 +19,15 @@ async function refresh(): Promise<void> {
   const id = props.sessionId
   try {
     const env = await conn.request<{ providers: Provider[] }>(MessageType.QuotaRead, { session_id: id }, id)
-    if (id === props.sessionId) providers.value = env.payload?.providers ?? []
+    if (id === props.sessionId) providers.value = (env.payload?.providers ?? []).filter(p => p.provider === props.provider)
   } catch (e) { error.value = humanizeError(e) }
   finally { busy.value = false }
 }
-watch(() => [props.sessionId, conn.isOpen], () => { if (conn.isOpen) void refresh() }, { immediate: true })
+watch(() => [props.sessionId, props.provider, conn.isOpen], () => { if (conn.isOpen) void refresh() }, { immediate: true })
 </script>
 <template>
   <section class="quota" aria-label="账号额度">
-    <div class="quota__heading"><strong>账号额度</strong><button class="btn btn--ghost btn--sm" :disabled="busy || !conn.isOpen" @click="refresh">{{ busy ? '刷新中…' : '刷新' }}</button></div>
+    <div class="quota__heading"><strong>{{ names[props.provider] || props.provider }} 额度</strong><button class="btn btn--ghost btn--sm" :disabled="busy || !conn.isOpen" @click="refresh">{{ busy ? '刷新中…' : '刷新' }}</button></div>
     <p class="small dim">设备本机登录账号，与终端当前模型可能不同。</p>
     <p v-if="error" class="small" role="alert">{{ error }}{{ providers.length ? '（下方为上次结果）' : '' }}</p>
     <article v-for="p in providers" :key="p.provider" class="quota__provider">

@@ -3,7 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
+	"github.com/jojo/codegate/internal/protocol"
+	"github.com/jojo/codegate/internal/session"
+	"github.com/jojo/codegate/internal/terminal"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -127,5 +132,60 @@ func TestQuotaRealCodexLoggedOut(t *testing.T) {
 	windows, message := codexQuota(ctx, ResolvedCommand{Command: binary}, append(BuildEnv(Config{}, 80, 24), "CODEX_HOME="+t.TempDir()))
 	if len(windows) != 0 || !strings.Contains(message, "登录") {
 		t.Fatalf("logged out native CLI: %+v %s", windows, message)
+	}
+}
+
+func TestSessionQuotaProvider(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		args    []string
+		want    string
+	}{
+		{"/usr/bin/codex", nil, "codex"}, {`C:\tools\codex.exe`, nil, "codex"},
+		{`C:\Windows\cmd.exe`, []string{"/d", "/c", `C:\npm\claude.cmd`}, "claude"},
+		{"opencode", nil, "opencode"}, {"bash", []string{"codex"}, ""}, {"dsh", nil, ""},
+	} {
+		if got := quotaProvider(tc.command, tc.args); got != tc.want {
+			t.Fatalf("%s: got %s want %s", tc.command, got, tc.want)
+		}
+	}
+}
+
+func TestQuotaReadOnlyReturnsSessionCLIAndKeepsIndependentCaches(t *testing.T) {
+	mgr := session.NewManager(func(context.Context, terminal.StartConfig) (terminal.Terminal, error) {
+		return &filesTestTerminal{done: make(chan struct{})}, nil
+	}, session.Config{})
+	defer mgr.CloseAll("test")
+	conn := &Conn{send: make(chan outbound, 4), closed: make(chan struct{})}
+	a := &Agent{mgr: mgr, log: slog.Default(), quotaCache: map[string]quotaCacheEntry{}}
+	a.setConn(conn)
+	for _, provider := range []string{"codex", "claude", "opencode"} {
+		a.quotaCache[provider] = quotaCacheEntry{result: protocol.ProviderQuota{Provider: provider, CheckedAt: 123}, checked: time.Now()}
+	}
+	for _, command := range []string{"codex", "claude", "opencode", "bash"} {
+		sess, err := mgr.Create(context.Background(), session.CreateRequest{DeviceID: uuid.New(), UserID: uuid.New(), Cwd: t.TempDir(), Command: command, Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, _ := protocol.NewRequest(uuid.NewString(), protocol.TypeQuotaRead, sess.ID.String(), map[string]string{"session_id": sess.ID.String(), "provider": "other"})
+		a.onQuotaRead(req)
+		env, err := protocol.Decode((<-conn.send).data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := protocol.DecodePayload[protocol.QuotaResult](env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if command == "bash" {
+			if len(result.Providers) != 0 {
+				t.Fatal("shell received quotas")
+			}
+		} else if len(result.Providers) != 1 || result.Providers[0].Provider != command || result.Providers[0].CheckedAt != 123 {
+			t.Fatalf("wrong provider/cache for %s: %+v", command, result)
+		}
+	}
+	if len(a.quotaCache) != 3 {
+		t.Fatal("cross-provider cache changed")
 	}
 }

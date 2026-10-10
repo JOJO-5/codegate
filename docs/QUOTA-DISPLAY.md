@@ -35,3 +35,5 @@ Desktop file browsing opens a right-hand panel in the existing terminal route.
 Text/image previews and uploads/downloads retain the terminal attachment. Mobile
 continues to use the dedicated file page. Preview/transfer limits and Agent
 workspace authorization are unchanged.
+
+Agent v0.1.21 queries only the CLI launched in the requested session. Codex, Claude and OpenCode use independent 15-second caches; other terminals do not show quota. The browser also filters older Agent responses, so previously cached providers never appear in another CLI session. Windows executable paths and npm shims are recognized.

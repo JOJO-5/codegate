@@ -191,7 +191,7 @@ dsh --profile tui
 
 ### 内建 DSH Web 转发（可选）
 
-Agent 在电脑上启动 `dsh web --no-open`，通过现有出站连接把本机 `127.0.0.1:3080` 的 HTTP 和 WebSocket 转发到 Server。电脑不需要配置域名、证书或开放端口。DSH 的登录令牌和原生 Cookie 只留在 Agent/Server 内存中。
+Agent 在电脑上启动 `dsh web --no-open`，通过现有出站连接把本机 `localhost:3080` 的 HTTP 和 WebSocket 转发到 Server。电脑不需要配置域名、证书或开放端口。DSH 的登录令牌和原生 Cookie 只留在 Agent/Server 内存中。
 
 **简化方式：同域名、独立 HTTPS 端口。** Compose 的 `public` 配置自动将 DSH 入口设为 `https://你的现有域名:8443`，复用 Caddy 已有证书，不需要另配子域名或通配证书。更新 `compose.yaml` 和 `deploy/Caddyfile`，保持 `CODEGATE_BASE_URL=https://你的域名`，开放服务器/云防火墙的 TCP 8443，再启动 `docker compose --profile public up -d`。`CODEGATE_DSH_PROXY_URL=auto` 是 Compose 默认值；本地 HTTP 部署不会启用公网代理。
 

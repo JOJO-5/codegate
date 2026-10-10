@@ -20,7 +20,7 @@ import (
 	"github.com/jojo/codegate/internal/protocol"
 )
 
-const dshLoopback = "127.0.0.1:3080"
+const dshLoopback = "localhost:3080"
 
 var webAuthority = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9](?::[0-9]{1,5})?$`)
 
@@ -147,13 +147,13 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 // bootstrapDSH exchanges DSH's process token locally. The returned signed
 // cookie stays on the Server-Agent channel and is never sent to the browser.
 func bootstrapDSH(rawURL, host string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil || u == nil || u.Host != dshLoopback || u.Scheme != "http" || u.Query().Get("token") == "" {
-		return "", errors.New("DSH startup URL is missing a loopback token")
+	u, err := dshBootstrapURL(rawURL)
+	if err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -173,6 +173,17 @@ func bootstrapDSH(rawURL, host string) (string, error) {
 		}
 	}
 	return "", errors.New("DSH browser cookie missing")
+}
+
+// Normalize announced URLs before contacting DSH. Older releases print the
+// IPv4 literal; only the fixed localhost port may be dialed for authentication.
+func dshBootstrapURL(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u == nil || u.User != nil || (u.Host != dshLoopback && u.Host != "127.0.0.1:3080") || u.Scheme != "http" || u.Query().Get("token") == "" {
+		return nil, errors.New("DSH startup URL is missing a loopback token")
+	}
+	u.Host = dshLoopback
+	return u, nil
 }
 
 // Caller holds webMu. Waiters close webDone before acquiring that mutex.
