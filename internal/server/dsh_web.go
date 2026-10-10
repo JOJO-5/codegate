@@ -21,7 +21,7 @@ import (
 const webCookieName = "cg_dsh"
 const webTicketTTL = 60 * time.Second
 const webSessionTTL = 60 * time.Minute
-const webLoopback = "127.0.0.1:3080"
+const webLoopback = "localhost:3080"
 
 type webGrant struct {
 	userID, deviceID string
@@ -455,8 +455,8 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 		},
 		ModifyResponse: func(res *http.Response) error {
 			res.Header.Del("Set-Cookie") // DSH's credential stays server-side.
-			if location := res.Header.Get("Location"); strings.HasPrefix(location, "http://"+webLoopback) {
-				res.Header.Set("Location", "https://"+s.dshDeviceHost(deviceID)+strings.TrimPrefix(location, "http://"+webLoopback))
+			if location := res.Header.Get("Location"); location != "" {
+				res.Header.Set("Location", rewriteDSHLocation(location, s.dshDeviceHost(deviceID)))
 			}
 			return nil
 		},
@@ -466,4 +466,14 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 		FlushInterval: -1,
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// Match the complete authority; a prefix match also accepts localhost:3080.evil.
+func rewriteDSHLocation(location, publicHost string) string {
+	u, err := url.Parse(location)
+	if err != nil || u.Scheme != "http" || u.User != nil || (u.Host != webLoopback && u.Host != "127.0.0.1:3080") {
+		return location
+	}
+	u.Scheme, u.Host = "https", publicHost
+	return u.String()
 }

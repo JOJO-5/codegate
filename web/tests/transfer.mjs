@@ -15,6 +15,12 @@ async function load(name) {
   modules.set(name, url)
   return url
 }
+const { sessionQuotaProvider } = await import(await load('sessionQuota'))
+for (const [command, args, expected] of [
+  ['/usr/bin/codex', [], 'codex'], ['C:\\cli\\codex.exe', [], 'codex'],
+  ['C:\\Windows\\cmd.exe', ['/d', '/c', 'C:\\npm\\claude.cmd'], 'claude'],
+  ['opencode', [], 'opencode'], ['bash', ['codex'], ''], ['dsh', [], ''],
+]) assert.equal(sessionQuotaProvider(command, args), expected)
 const { uploadFile } = await import(await load('uploads'))
 const { MessageType } = await import(await load('protocol'))
 const originalPerformance = globalThis.performance

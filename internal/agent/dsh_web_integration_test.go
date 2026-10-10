@@ -48,7 +48,7 @@ func testRealDSHBrowserTokenExchange(t *testing.T) {
 		_ = cmd.Wait()
 		deadline := time.Now().Add(5 * time.Second)
 		for {
-			ln, err := net.Listen("tcp", dshLoopback)
+			ln, err := net.Listen("tcp4", "127.0.0.1:3080")
 			if err == nil {
 				ln.Close()
 				return

@@ -36,6 +36,7 @@
 import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
 import QuotaPanel from '../components/QuotaPanel.vue'
+import { sessionQuotaProvider } from '../lib/sessionQuota'
 import FilesView from './FilesView.vue'
 import SessionAttachments from '../components/SessionAttachments.vue'
 import TerminalTextReader from '../components/TerminalTextReader.vue'
@@ -465,6 +466,8 @@ async function measureNetwork(): Promise<void> {
 }
 watch(sessionId, () => { networkResult.value = null; networkError.value = '' })
 watch(() => conn.isOpen, open => { if (!open) networkResult.value = null })
+
+const currentQuotaProvider = computed(() => summary.value ? sessionQuotaProvider(summary.value.command, summary.value.args) : '')
 
 // ---- 搜索（Ctrl+Shift+F，规格 §5.3 要求拦这个组合键）----
 const searchOpen = ref(false)
@@ -1041,7 +1044,7 @@ onUnmounted(() => {
         </button>
         <button class="term__session-link" type="button" @click="openFiles">▣ 工作区文件</button>
         </div>
-        <QuotaPanel v-if="summary" :session-id="sessionId" />
+        <QuotaPanel v-if="currentQuotaProvider" :key="sessionId + currentQuotaProvider" :session-id="sessionId" :provider="currentQuotaProvider" />
       </aside>
       <div ref="hostEl" class="term__host" :class="{ 'term__host--viewer': role === 'viewer' }" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="cancelTerminalTouch" @click.capture="onTerminalClick" @contextmenu.capture="onTerminalContextMenu">
       <div v-if="attaching" class="term__overlay" role="status">
