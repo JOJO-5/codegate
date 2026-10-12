@@ -20,13 +20,13 @@ import (
 const installTicketTTL = 10 * time.Minute
 
 type installTicket struct {
-	userID string
+	userID   string
 	platform string
-	expires time.Time
+	expires  time.Time
 }
 
 type installTicketStore struct {
-	mu sync.Mutex
+	mu    sync.Mutex
 	items map[string]installTicket
 }
 
@@ -36,10 +36,12 @@ func newInstallTicketStore() *installTicketStore {
 
 func (t *installTicketStore) issue(userID, platform string, now time.Time) (string, error) {
 	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil { return "", err }
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
 	key := base64.RawURLEncoding.EncodeToString(buf)
 	t.mu.Lock()
-	t.items[key] = installTicket{userID:userID, platform:platform, expires:now.Add(installTicketTTL)}
+	t.items[key] = installTicket{userID: userID, platform: platform, expires: now.Add(installTicketTTL)}
 	t.mu.Unlock()
 	return key, nil
 }
@@ -48,10 +50,19 @@ func (t *installTicketStore) get(key, platform string, now time.Time, consume bo
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	value, ok := t.items[key]
-	if !ok { return false }
-	if !now.Before(value.expires) { delete(t.items, key); return false }
-	if value.platform != platform { return false }
-	if consume { delete(t.items, key) }
+	if !ok {
+		return false
+	}
+	if !now.Before(value.expires) {
+		delete(t.items, key)
+		return false
+	}
+	if value.platform != platform {
+		return false
+	}
+	if consume {
+		delete(t.items, key)
+	}
 	return true
 }
 
@@ -59,14 +70,21 @@ func (t *installTicketStore) sweep(now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for key, value := range t.items {
-		if !now.Before(value.expires) { delete(t.items, key) }
+		if !now.Before(value.expires) {
+			delete(t.items, key)
+		}
 	}
 }
 
 func (s *Server) handleInstallTicket(w http.ResponseWriter, r *http.Request) {
 	userID, ok := userIDFromContext(r.Context())
-	if !ok { writeError(w, http.StatusUnauthorized, "unauthenticated", "未登录"); return }
-	var body struct { OS string `json:"os"` }
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated", "未登录")
+		return
+	}
+	var body struct {
+		OS string `json:"os"`
+	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_payload", "系统参数无效")
 		return
@@ -82,7 +100,10 @@ func (s *Server) handleInstallTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, err := s.installTickets.issue(userID, body.OS, s.now())
-	if err != nil { writeError(w, http.StatusInternalServerError, "internal", "无法生成安装票据"); return }
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "无法生成安装票据")
+		return
+	}
 	link := strings.TrimRight(base, "/") + "/api/v1/agent-install/" + body.OS + "/script?ticket=" + key
 	var command string
 	if body.OS == "windows" {
@@ -90,7 +111,7 @@ func (s *Server) handleInstallTicket(w http.ResponseWriter, r *http.Request) {
 	} else {
 		command = "bash -o pipefail -c \"curl -fsSL '" + link + "' | sh\""
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"command":command, "expires_in":int(installTicketTTL.Seconds())})
+	writeJSON(w, http.StatusOK, map[string]any{"command": command, "expires_in": int(installTicketTTL.Seconds())})
 }
 
 func (s *Server) installHashes(r *http.Request, platform string) (map[string]string, error) {
@@ -100,11 +121,15 @@ func (s *Server) installHashes(r *http.Request, platform string) (map[string]str
 		copyReq.SetPathValue("os", platform)
 		copyReq.SetPathValue("arch", arch)
 		f, _, _, err := s.updateArtifact(copyReq)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		h := sha256.New()
 		_, err = io.Copy(h, f)
 		f.Close()
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		hashes[arch] = hex.EncodeToString(h.Sum(nil))
 	}
 	return hashes, nil
@@ -117,7 +142,10 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hashes, err := s.installHashes(r, platform)
-	if err != nil { writeError(w, http.StatusNotFound, "not_found", "该系统的 Agent 包未发布"); return }
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "该系统的 Agent 包未发布")
+		return
+	}
 	base := "https://" + r.Host + "/api/v1/agent-install/" + platform
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -130,10 +158,28 @@ if ($arch -eq 'arm64') { $arch = 'arm64' }
 if ($arch -notin @('amd64','arm64')) { throw "不支持的 CPU: $arch" }
 $expected = if ($arch -eq 'amd64') { '%s' } else { '%s' }
 $dest = Join-Path $env:LOCALAPPDATA 'CodeGate\bin\codegate-agent.exe'
-if (Test-Path -LiteralPath $dest) { throw 'Agent 已安装；请先完成配对，再使用空闲更新' }
 New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
 $service = Join-Path $env:LOCALAPPDATA 'CodeGate\agent-autostart.ps1'
 Invoke-WebRequest -Uri ('%s/service?ticket=%s') -UseBasicParsing -OutFile $service
+$launcherSource = Join-Path $env:LOCALAPPDATA 'CodeGate\agent-background-launcher.cs'
+Invoke-WebRequest -Uri ('%s/service?component=launcher&ticket=%s') -UseBasicParsing -OutFile $launcherSource
+if (Test-Path -LiteralPath $dest) {
+  # Stage a fresh supervisor without replacing the running executable.
+  $bootstrap = Join-Path (Split-Path $dest) ('codegate-agent-supervisor-' + $expected + '.exe')
+  $tmpBootstrap = [IO.Path]::GetTempFileName()
+  try {
+    if (-not (Test-Path -LiteralPath $bootstrap)) {
+      Invoke-WebRequest -Uri ('%s/' + $arch + '/binary') -Headers @{ 'X-CodeGate-Install-Ticket' = '%s' } -UseBasicParsing -OutFile $tmpBootstrap
+      if ((Get-FileHash -LiteralPath $tmpBootstrap -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw '守护进程 SHA-256 校验失败' }
+      Move-Item -LiteralPath $tmpBootstrap -Destination $bootstrap
+    }
+    if ((Get-FileHash -LiteralPath $bootstrap -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw '已暂存守护进程校验失败' }
+    @{ path=$bootstrap; sha256=$expected } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path (Split-Path $dest) 'background-bootstrap.json') -Encoding UTF8
+  } finally { Remove-Item -LiteralPath $tmpBootstrap -ErrorAction SilentlyContinue }
+  Write-Host '服务脚本及新版守护进程已暂存，已有配置、设备身份及运行进程保留。'
+  Write-Host ('切换旧计划任务为无窗口入口：powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $service + '" repair')
+  return
+}
 $tmp = [IO.Path]::GetTempFileName()
 try {
   Invoke-WebRequest -Uri ('%s/' + $arch + '/binary') -Headers @{ 'X-CodeGate-Install-Ticket' = '%s' } -UseBasicParsing -OutFile $tmp
@@ -142,7 +188,7 @@ try {
 } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
 Write-Host "Agent 已安装: $dest"
 Write-Host '下一步：配置 %%APPDATA%%\CodeGate\agent.json，再运行 codegate-agent.exe doctor 和 pair。'
-`, hashes["amd64"], hashes["arm64"], base, ticket, base, ticket)
+`, hashes["amd64"], hashes["arm64"], base, ticket, base, ticket, base, ticket, base, ticket)
 		return
 	}
 	fmt.Fprintf(w, `#!/bin/sh
@@ -186,10 +232,23 @@ func (s *Server) handleInstallServiceScript(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "unauthorized", "安装票据无效或已过期")
 		return
 	}
-	name := map[string]string{"linux":"agent-autostart-linux.sh", "darwin":"agent-autostart-macos.sh", "windows":"agent-autostart.ps1"}[platform]
-	if name == "" { http.NotFound(w,r); return }
+	name := map[string]string{"linux": "agent-autostart-linux.sh", "darwin": "agent-autostart-macos.sh", "windows": "agent-autostart.ps1"}[platform]
+	if name == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if component := r.URL.Query().Get("component"); component != "" {
+		if platform != "windows" || component != "launcher" {
+			http.NotFound(w, r)
+			return
+		}
+		name = "agent-background-launcher.cs"
+	}
 	data, err := os.ReadFile(filepath.Join("/opt/codegate/agent-install", name))
-	if err != nil { writeError(w, http.StatusNotFound, "not_found", "服务脚本不可用"); return }
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "服务脚本不可用")
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write(data)
@@ -203,7 +262,10 @@ func (s *Server) handleInstallBinary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, info, _, err := s.updateArtifact(r)
-	if err != nil { writeError(w, http.StatusNotFound, "not_found", "Agent 包不可用"); return }
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Agent 包不可用")
+		return
+	}
 	defer f.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")

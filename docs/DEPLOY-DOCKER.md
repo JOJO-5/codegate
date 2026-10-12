@@ -212,3 +212,18 @@ Agent 在电脑上启动 `dsh web --no-open`，通过现有出站连接把本机
 支持的 Agent/浏览器与 Server 协商 WebSocket `permessage-deflate`。512 字节以上的终端输出/回放和文件读写使用轻量压缩，小按键、登录控制消息和已压缩的 DSH 隧道不会重复压缩。发送端压缩、接收端解压，Server 作为两段连接的中继也会处理；并非所有工作都在手机端。旧客户端可继续无压缩连接。解压后的消息仍有长度上限。
 
 内嵌网页资源缓存 gzip 结果；Caddy 可协商 zstd/gzip。压缩率取决于数据，重复终端文本收益较大，图片本身通常已压缩。算法使用低压缩级别降低 CPU 和交互延迟。
+
+
+### Windows 旧计划任务仍显示黑窗口（v0.1.26）
+
+新版服务入口是 `codegate-agent-background.exe`，其 PE 子系统为 Windows GUI，创建守护进程时同时使用 `CREATE_NO_WINDOW` 和挂起启动。先将进程纳入私有 Job 再恢复执行；计划任务停止或入口异常退出时，整个任务进程树都停止。普通 CLI 的 `doctor`、`pair` 和手动 `run` 仍可在终端使用。
+
+旧任务和旧守护进程不会因子 Agent 自动更新而替换。更新 Server 镜像后，在设置页重新生成并运行 Windows 安装命令：已有安装刷新服务脚本及启动器源码，并校验、暂存新版守护进程；此时不覆盖配置、设备密钥或正在运行的 Agent。然后在没有正在工作的远端会话时执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\CodeGate\agent-autostart.ps1" repair
+```
+
+`repair` 只修复当前账户拥有的标准 CodeGate 任务，沿用原任务的配置路径、账户、登录方式、凭据和触发条件，无需再次提供密码。它会停止任务、替换已校验的守护进程并重启，因此先结束正在工作的 CLI。初次安装仍用 `install`；如需改为未登录桌面也运行，使用 `install` 设置 Password 登录方式。
+
+启动器使用 Windows 自带 .NET Framework 编译器生成，最外层及更新校验回退路径都不创建控制台。后台诊断写入 `%LOCALAPPDATA%\CodeGate\logs\agent-background.log`，单文件约1MiB并保留一份轮转日志。隐藏窗口不改变更新 SHA-256 校验，日志中的校验失败仍需按具体更新状态排查。
