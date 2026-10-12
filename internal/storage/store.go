@@ -170,6 +170,14 @@ type AuditLog struct {
 //
 // 方法按域分组，顺序与 migrations/0001_init.sql 一致，便于对照。
 type Store interface {
+	ActiveContinuationCount(context.Context, string, string) (int, error)
+	InsertContinuation(context.Context, *protocol.ContinuationTask, string) error
+	ContinuationByID(context.Context, string) (*protocol.ContinuationTask, error)
+	ContinuationByNonce(context.Context, string, string) (*protocol.ContinuationTask, error)
+	Continuations(context.Context, string, string) ([]*protocol.ContinuationTask, error)
+	ReadyContinuations(context.Context, int64) ([]*protocol.ContinuationTask, error)
+	UpdateContinuation(context.Context, *protocol.ContinuationTask, string) (bool, error)
+
 	Preferences(ctx context.Context, userID string) (map[string]string, error)
 	SetPreference(ctx context.Context, userID, key, value string) error
 	DeletePreference(ctx context.Context, userID, key string) error

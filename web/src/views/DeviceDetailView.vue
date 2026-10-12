@@ -8,6 +8,7 @@
  * 否则他会对着一个显示"运行中"的会话点进去，然后发现连不上。
  */
 
+import ContinuationPanel from '../components/ContinuationPanel.vue'
 import ConversationRecovery from '../components/ConversationRecovery.vue'
 import NewProjectDialog from '../components/NewProjectDialog.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -62,6 +63,7 @@ async function importLegacyPreferences(): Promise<void> {
 }
 const router = useRouter()
 const route = useRoute()
+const continuingSession = ref<SessionSummary | null>(null)
 const newProjectOpen = ref(false)
 const pendingFile = ref('')
 async function projectReady(result: { path: string; filePath?: string; commandId: string; warning?: string; createdProject: boolean }): Promise<void> {
@@ -450,6 +452,7 @@ function canOpen(s: SessionSummary): boolean {
 <template>
   <ConversationRecovery v-if="recoveringSession" :source="recoveringSession" @close="recoveringSession = null" />
   <main class="page device-page">
+<ContinuationPanel :key="id" :device-id="id" :source="continuingSession" @close="continuingSession = null" />
     <div class="device-heading">
       <div class="row row--between">
       <div class="row">
@@ -640,6 +643,7 @@ function canOpen(s: SessionSummary): boolean {
             <button class="btn btn--ghost btn--sm" type="button" :aria-label="pinnedIds.includes(s.session_id) ? '取消置顶会话' : '置顶会话'" :aria-pressed="pinnedIds.includes(s.session_id)" @click="togglePin(s.session_id)">{{ pinnedIds.includes(s.session_id) ? '★ 已置顶' : '☆ 置顶' }}</button>
             <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : '设备离线，重新上线后可接回'" @click="openSession(s)">{{ canOpen(s) ? '接回' : '离线，暂不可接回' }}</button>
             <button v-if="!isLiveStatus(s.status) && (s.recovery || /(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.command) || (s.command.endsWith('cmd.exe') && /^(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.args?.[1] ?? '')))" class="btn btn--primary btn--sm" type="button" :disabled="!device?.online || !conn.isOpen" @click="recoveringSession = s">恢复原对话</button>
+<button v-if="!isLiveStatus(s.status) && s.recovery && ['codex','claude','opencode'].includes(nativeCLI(s.command, s.args) ?? '')" class="btn btn--sm" type="button" @click="continuingSession = s">安排继续</button>
             <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
             <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
               {{ deletingSession === s.session_id ? '确认删除该对话记录' : '删除记录' }}

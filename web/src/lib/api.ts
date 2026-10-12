@@ -35,6 +35,7 @@ export interface WorktreeInfo { path: string; branch: string; head: string; chan
 export interface GitCommit { hash: string; subject: string; committed_at: number }
 export interface GitResult { upstream?: string; ahead?: number; behind?: number; sync_known?: boolean; repository_url?: string; commits?: GitCommit[]; worktrees?: WorktreeInfo[]; head: string; message?: string; root: string; branch: string; files: GitFile[]; diff?: string; truncated: boolean }
 
+export interface ContinuationTask { id:string;device_id:string;session_id:string;source:SessionSummary;prompt:string;mode:string;due_at:number;state:string;attempt:number;detail?:string;output?:string }
 const BASE = '/api/v1'
 
 /**
@@ -465,6 +466,9 @@ export const api = {
     await request<void>('DELETE', `/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}`)
   },
 
+  continuations(id:string):Promise<{tasks:ContinuationTask[]}> {return request('GET',`/devices/${encodeURIComponent(id)}/continuations`)},
+  createContinuation(id:string,body:{session_id:string;native_id:string;prompt:string;mode:string;due_at:number;max_run_minutes:number;nonce:string}):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations`,body)},
+  cancelContinuation(id:string,task:string):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}/cancel`)},
   // ---- 配对（两阶段）----
 
   /** 第一步：提交配对码，拿回待确认设备的信息。这一步**不**产生绑定。 */

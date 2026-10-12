@@ -28,6 +28,12 @@ import (
 // 「Agent 到底认哪些指令」，而这个集合应该是**可枚举且短**的。
 func (a *Agent) handleMessage(env *protocol.Envelope) {
 	switch env.Type {
+	case protocol.TypeTaskRun:
+		go a.onTaskRun(env)
+	case protocol.TypeTaskInspect:
+		a.onTaskInspect(env, false)
+	case protocol.TypeTaskCancel:
+		a.onTaskInspect(env, true)
 	case protocol.TypeProjectCreate:
 		go a.onProjectCreate(env)
 	case protocol.TypeQuotaRead:

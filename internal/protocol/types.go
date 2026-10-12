@@ -20,6 +20,10 @@ const (
 
 	// ---- 设备信息 ----
 	TypeDeviceInfo     Type = "device.info"
+	TypeTaskRun        Type = "task.run"
+	TypeTaskInspect    Type = "task.inspect"
+	TypeTaskCancel     Type = "task.cancel"
+	TypeTaskState      Type = "task.state"
 	TypeProjectCreate  Type = "project.create"
 	TypeProjectCreated Type = "project.created"
 	TypeQuotaRead      Type = "quota.read"
@@ -141,6 +145,7 @@ func (s Side) Local() Sender { return SentByServer }
 // 而不是忽略后继续。理由：浏览器若能发 `session.exit` 或 `agent.ready`，
 // 就能伪造 Agent 事件，欺骗 UI 和 Server 的状态机。
 var allowedSenders = map[Type]Sender{
+	TypeTaskRun: SentByServer, TypeTaskInspect: SentByServer, TypeTaskCancel: SentByServer, TypeTaskState: SentByAgent,
 	TypeProjectCreate: SentByClient, TypeProjectCreated: SentByAgent,
 	TypeQuotaRead: SentByClient, TypeQuotaResult: SentByAgent,
 	TypeConversationList:    SentByClient,

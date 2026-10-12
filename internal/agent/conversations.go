@@ -174,6 +174,12 @@ func (a *Agent) onConversationRequest(env *protocol.Envelope) {
 		return
 	}
 	binding.NativeID = target
+	source := req.Source
+	source.Recovery = &binding
+	if a.nativeTaskBusy(source) {
+		a.replyError(env, protocol.NewError(protocol.CodeInvalidPayload, "该原生对话正在后台续跑，请等待执行结束或先取消任务"))
+		return
+	}
 	for _, sum := range a.mgr.Snapshot() {
 		if isRecoverableLive(sum) && sum.Cwd == cwd && sum.Recovery != nil && sum.Recovery.CommandID == id && sum.Recovery.NativeID == target && sum.Recovery.StoreKey == binding.StoreKey && sum.Recovery.NativeRoot == binding.NativeRoot {
 			copyBinding := *sum.Recovery
