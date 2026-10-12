@@ -37,3 +37,7 @@ continues to use the dedicated file page. Preview/transfer limits and Agent
 workspace authorization are unchanged.
 
 Agent v0.1.21 queries only the CLI launched in the requested session. Codex, Claude and OpenCode use independent 15-second caches; other terminals do not show quota. The browser also filters older Agent responses, so previously cached providers never appear in another CLI session. Windows executable paths and npm shims are recognized.
+
+Agent v0.1.23 separates the 15-second provider cache from browser polling. A visible quota panel in a foreground page refreshes every 30 seconds; manual refresh remains available. Cache replies explicitly include their next eligible refresh time. Queries show elapsed waiting time, use a 15-second browser deadline, retain the previous result on failure, and discard replies from an older connection/view. Hidden panels and background tabs do not poll.
+
+Agent queries coalesce per provider without holding the global cache lock during I/O. Waiting callers have a 12-second limit; native/HTTP requests have a 6-second context. Codex app-server runs in a private process tree, with pipes closed before termination, including stalled helpers and Windows npm children. Query processes block idle auto-update while active and are cancelled/joined on Agent shutdown. A timeout never clears a previously displayed quota or starts a model conversation.

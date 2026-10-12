@@ -671,7 +671,9 @@ type ProviderQuota struct {
 	Windows   []QuotaWindow `json:"windows"`
 }
 type QuotaResult struct {
-	Providers []ProviderQuota `json:"providers"`
+	Cached        bool            `json:"cached,omitempty"`
+	NextRefreshAt int64           `json:"next_refresh_at,omitempty"`
+	Providers     []ProviderQuota `json:"providers"`
 }
 
 // TerminalViewID identifies a single authenticated attach on the Agent link.

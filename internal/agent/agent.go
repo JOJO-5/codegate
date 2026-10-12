@@ -37,6 +37,10 @@ type Agent struct {
 	log           *slog.Logger
 	quotaMu       sync.Mutex
 	quotaCache    map[string]quotaCacheEntry
+	quotaFlights  map[string]*quotaFlight
+	quotaCtx      context.Context
+	quotaClosing  bool
+	quotaWG       sync.WaitGroup
 	toolMu        sync.RWMutex
 	approvedTools map[string]bool
 
@@ -170,6 +174,18 @@ func (a *Agent) Manager() *session.Manager { return a.mgr }
 // 区分这两种情况很重要：前者重连只会把日志刷满并掩盖真正的问题，
 // 后者不重连就等于"网络抖一下就要人工介入"。
 func (a *Agent) Run(ctx context.Context) error {
+	quotaCtx, quotaCancel := context.WithCancel(ctx)
+	a.quotaMu.Lock()
+	a.quotaCtx, a.quotaClosing = quotaCtx, false
+	a.quotaMu.Unlock()
+	defer func() {
+		a.quotaMu.Lock()
+		a.quotaClosing = true
+		quotaCancel()
+		a.quotaMu.Unlock()
+		a.quotaWG.Wait()
+	}()
+
 	bo := newBackoff(a.cfg.ReconnectMin.Std(), a.cfg.ReconnectMax.Std())
 
 	// 退出前把所有会话收干净：ConPTY 句柄随进程消失，

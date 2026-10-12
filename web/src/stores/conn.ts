@@ -130,8 +130,9 @@ export const useConnStore = defineStore('conn', () => {
     type: MessageType,
     payload: unknown,
     sessionId?: string,
+    timeoutMS?: number,
   ): Promise<Envelope<T>> {
-    return ensure().request<T>(type, payload, sessionId)
+    return ensure().request<T>(type, payload, sessionId, timeoutMS)
   }
 
   function notify(type: MessageType, payload: unknown, sessionId?: string): void {

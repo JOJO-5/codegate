@@ -318,7 +318,7 @@ export class WSClient {
    * @param payload   payload 对象
    * @param sessionId 会话相关消息应当带上
    */
-  request<T = unknown>(type: MessageType, payload: unknown, sessionId?: string): Promise<Envelope<T>> {
+  request<T = unknown>(type: MessageType, payload: unknown, sessionId?: string, timeoutMS = REQUEST_TIMEOUT_MS): Promise<Envelope<T>> {
     return new Promise<Envelope<T>>((resolve, reject) => {
       if (!this.isOpen()) {
         reject(new WSError('unavailable', '连接未就绪，请稍候重试', true))
@@ -328,7 +328,7 @@ export class WSClient {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new WSError('timeout', '请求超时，请重试', true))
-      }, REQUEST_TIMEOUT_MS)
+      }, timeoutMS)
 
       this.pending.set(id, {
         resolve: resolve as (env: Envelope) => void,
