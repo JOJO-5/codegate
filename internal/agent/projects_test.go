@@ -9,7 +9,10 @@ import (
 )
 
 func TestProjectCreateAndFileBeforeCLI(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := &Agent{ws: NewWorkspace([]string{root})}
 	result, err := a.createProject(context.Background(), protocol.ProjectCreatePayload{Parent: root, Name: "my-project", FileName: "README.md", Content: "你好\n", InitGit: true})
 	if err != nil {
