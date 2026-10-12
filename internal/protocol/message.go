@@ -141,6 +141,7 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
+	ProjectCreate        bool `json:"project_create,omitempty"`
 	DSHWebApproval       bool `json:"dsh_web_approval,omitempty"`
 	TerminalViews        bool `json:"terminal_views,omitempty"`
 	QuotaRead            bool `json:"quota_read,omitempty"`
@@ -680,4 +681,21 @@ type QuotaResult struct {
 // Server rewrites its stream ID back to the session ID only for that browser.
 func TerminalViewID(attachID string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("codegate-terminal-view:"+attachID))
+}
+
+// Project paths are revalidated against Agent roots; creating never overwrites.
+type ProjectCreatePayload struct {
+	Kind     string `json:"kind,omitempty"`
+	DeviceID string `json:"device_id"`
+	Parent   string `json:"parent"`
+	Name     string `json:"name"`
+	FileName string `json:"file_name,omitempty"`
+	Content  string `json:"content,omitempty"`
+	InitGit  bool   `json:"init_git"`
+}
+type ProjectCreatedPayload struct {
+	Path           string `json:"path"`
+	FilePath       string `json:"file_path,omitempty"`
+	GitInitialized bool   `json:"git_initialized"`
+	Warning        string `json:"warning,omitempty"`
 }

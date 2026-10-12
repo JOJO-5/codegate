@@ -572,7 +572,7 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 		return err
 	case protocol.TypeConversationBound:
 		return s.handleConversationBound(env)
-	case protocol.TypeQuotaResult, protocol.TypeConversationListed:
+	case protocol.TypeProjectCreated, protocol.TypeQuotaResult, protocol.TypeConversationListed:
 		s.routeToClient(env)
 		return nil
 	case protocol.TypeSessionCreated:

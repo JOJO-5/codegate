@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -136,7 +137,7 @@ func (e *testEnv) seedPairedDevice(t *testing.T, userID string) (string, ed25519
 }
 
 // agentHandshake 跑完 hello → challenge → auth → ready，返回连接。
-func (e *testEnv) agentHandshake(t *testing.T, deviceID string, priv ed25519.PrivateKey) *websocket.Conn {
+func (e *testEnv) agentHandshake(t *testing.T, deviceID string, priv ed25519.PrivateKey, caps ...protocol.AgentCaps) *websocket.Conn {
 	t.Helper()
 
 	ws, _ := e.wsDial(t, "/api/v1/ws/agent", nil)
@@ -145,7 +146,13 @@ func (e *testEnv) agentHandshake(t *testing.T, deviceID string, priv ed25519.Pri
 	}
 	t.Cleanup(func() { _ = ws.Close() })
 
-	sendJSON(t, ws, helloEnvelope(deviceID))
+	hello := helloEnvelope(deviceID)
+	if len(caps) > 0 {
+		p, _ := protocol.DecodePayload[protocol.AgentHelloPayload](hello)
+		p.Caps = caps[0]
+		hello.Payload, _ = json.Marshal(p)
+	}
+	sendJSON(t, ws, hello)
 
 	challenge := recvEnvelope(t, ws)
 	if challenge.Type != protocol.TypeAgentChallenge {

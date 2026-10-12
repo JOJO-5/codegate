@@ -9,8 +9,9 @@
  */
 
 import ConversationRecovery from '../components/ConversationRecovery.vue'
+import NewProjectDialog from '../components/NewProjectDialog.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { useAuthStore } from '../stores/auth'
 import { useSessionsStore } from '../stores/sessions'
@@ -22,6 +23,7 @@ import { humanizeError, platformLabel, absoluteTime, relativeTime, statusKind, s
 import { PRESETS, type CommandPreset } from '../lib/commands'
 import { estimateTerminalSize } from '../lib/viewport'
 import { MessageType, isLiveStatus, type SessionSummary } from '../lib/protocol'
+import { nativeCLI } from '../lib/sessionQuota'
 
 const props = defineProps<{ id: string }>()
 
@@ -59,6 +61,21 @@ async function importLegacyPreferences(): Promise<void> {
   finally { importingPreferences.value = false }
 }
 const router = useRouter()
+const route = useRoute()
+const newProjectOpen = ref(false)
+const pendingFile = ref('')
+async function projectReady(result: { path: string; filePath?: string; commandId: string; warning?: string; createdProject: boolean }): Promise<void> {
+ newProjectOpen.value = false
+ cwd.value = result.path
+ worktree.value = false
+ pendingFile.value = result.filePath ?? ''
+ preferenceNotice.value = result.warning ?? `已创建：${result.filePath || result.path}`
+ localStorage.setItem(cwdKey.value,result.path)
+ if (result.createdProject && (result.commandId || presetId.value)) {
+  try { await preferences.saveProject({label:result.path.split(/[\\/]/).pop() || '新项目',device_id:props.id,command_id:result.commandId || presetId.value,cwd:result.path,name:result.path.split(/[\\/]/).pop() || '新项目'}) } catch { /* File creation remains successful even if preference sync fails. */ }
+ }
+ if (result.commandId) {presetId.value=result.commandId;await createSession()}
+}
 
 const device = computed(() => devices.byId(props.id))
 const list = computed(() => sessions.forDevice(props.id))
@@ -288,6 +305,8 @@ onMounted(async () => {
   }
   const saved = localStorage.getItem(cwdKey.value)
   if (saved !== null && saved !== '') cwd.value = saved
+  if (typeof route.query.cwd === 'string') cwd.value = route.query.cwd
+  if (typeof route.query.file === 'string') pendingFile.value = route.query.file
 
   await sessions.load(props.id)
   hasLegacyPreferences.value = !!(localStorage.getItem(`codegate.pins.${props.id}`) || localStorage.getItem(`codegate.shortcuts.${props.id}`))
@@ -379,6 +398,10 @@ async function createSession(): Promise<void> {
 
     localStorage.setItem(cwdKey.value, cwd.value.trim())
     sessionName.value = ''
+    if (pendingFile.value && nativeCLI(s.command, s.args)) {
+      sessions.setDraft(s.session_id, `请查看这个文件，并等待我的具体要求：${JSON.stringify(pendingFile.value)}`)
+      pendingFile.value = ''
+    }
     await router.push({ name: 'session', params: { id: s.session_id } })
   } catch (e) {
     createError.value = humanizeError(e)
@@ -448,7 +471,7 @@ function canOpen(s: SessionSummary): boolean {
     <!-- ---- 新建会话 ---- -->
     <div class="card device-create">
       <div class="card__title">
-        <h2>新建会话</h2>
+        <h2>新建会话</h2><button class="btn btn--sm" type="button" :disabled="!conn.isOpen || !device?.online || !allowedRoots.length" @click="newProjectOpen = true">新建项目 / 文件</button>
         <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
       </div>
 
@@ -570,6 +593,7 @@ function canOpen(s: SessionSummary): boolean {
     </div>
 
     <!-- ---- 会话列表 ---- -->
+    <NewProjectDialog v-if="newProjectOpen" :device-id="id" :roots="allowedRoots" :commands="selectableCommands" :default-command="presetId" :default-parent="cwd" @close="newProjectOpen = false" @ready="projectReady" />
     <div class="card device-sessions">
       <div class="card__title">
         <h2>会话</h2>

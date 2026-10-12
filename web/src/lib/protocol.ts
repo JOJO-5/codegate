@@ -99,6 +99,8 @@ export interface DecodedFrame {
  *   要么是有人在伪造。两种都值得报错，不值得静默吞掉。
  */
 export const MessageType = {
+  ProjectCreate: 'project.create',
+  ProjectCreated: 'project.created',
  QuotaRead: 'quota.read',
  QuotaResult: 'quota.result',
   // ---- Agent 连接与鉴权（浏览器永远不该收到）----

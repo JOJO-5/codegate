@@ -8,6 +8,9 @@ const compile = async path => ts.transpileModule(await readFile(new URL(path, im
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText
 const cliURL = moduleURL(await compile('../src/lib/sessionQuota.ts'))
+const { validProjectName } = await import(moduleURL(await compile('../src/lib/projectNames.ts')))
+for (const name of ['main.py','你好.md','file with space.txt']) assert.ok(validProjectName(name))
+for (const name of ['..','../escape','a\\b','CON.txt','COM¹.txt','tail.','C:escape']) assert.equal(validProjectName(name),false)
 const helperURL = moduleURL((await compile('../src/lib/conversationSessions.ts')).replaceAll("from './sessionQuota'", `from '${cliURL}'`))
 const { groupConversationSessions: group, conversationRecords: members } = await import(helperURL)
 const row = (id, changes = {}) => ({ session_id: id, device_id: 'device-a', name: 'Codex', command: 'codex', cwd: '/work', status: 'terminated', created_at: 10, recovery: { command_id: 'codex', native_id: 'native-a' }, ...changes })

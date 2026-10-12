@@ -5,7 +5,8 @@ import { useRouter } from 'vue-router'
 import { useConnStore } from '../stores/conn'
 import { MessageType, type SessionCreatedPayload } from '../lib/protocol'
 import { humanizeError } from '../lib/format'
-import { uploadFile } from '../lib/uploads'
+import { uploadFile, workspaceFilePath } from '../lib/uploads'
+import { validProjectName } from '../lib/projectNames'
 
 interface Entry { name: string; path: string; is_dir: boolean; size: number; modified: number; symlink?: boolean }
 interface Listed { path: string; entries: Entry[] }
@@ -15,6 +16,28 @@ const props = defineProps<{ id: string; embedded?: boolean }>()
 const conn = useConnStore()
 const router = useRouter()
 const cwd = ref('')
+const deviceId = ref('')
+const newTextOpen = ref(false), textName = ref(''), textContent = ref('')
+async function createTextFile(): Promise<void> {
+ if (uploading.value) return
+ if (!validProjectName(textName.value)) {error.value='文件名称无效，请使用一个文件名，不要包含路径';return}
+ const file = new File([textContent.value],textName.value,{type:'text/plain;charset=utf-8'})
+ if(file.size>256*1024){error.value='新建文本文件上限为256 KB';return}
+ const path=[folder.value,textName.value].filter(Boolean).join('/')
+ uploading.value=true;error.value=''
+ try {
+  await uploadFile(conn,props.id,file,path,{overwrite:false})
+  transferDone.value=`已创建 ${textName.value}`
+  newTextOpen.value=false;textName.value='';textContent.value=''
+  await list()
+  const entry=entries.value.find(e=>e.path===path)
+  if(entry) await preview(entry)
+ } catch(e){error.value=humanizeError(e)} finally{uploading.value=false}
+}
+function handoff(entry: Entry): void {
+ const parent=entry.path.includes('/')?entry.path.slice(0,entry.path.lastIndexOf('/')):''
+ void router.push({name:'device',params:{id:deviceId.value},query:{cwd:parent?workspaceFilePath(cwd.value,parent):cwd.value,file:workspaceFilePath(cwd.value,entry.path)}})
+}
 const folder = ref('')
 const entries = ref<Entry[]>([])
 const busy = ref(false)
@@ -153,6 +176,7 @@ async function upload(): Promise<void> {
 onMounted(async () => {
   try {
     const env = await conn.request<SessionCreatedPayload>(MessageType.SessionGet, { session_id: props.id }, props.id)
+    deviceId.value = env.payload?.session.device_id.replace(/-/g, '') ?? ''
     cwd.value = env.payload?.session.cwd ?? ''
     await list('')
   } catch (e) { error.value = humanizeError(e) }
@@ -167,8 +191,15 @@ onUnmounted(clearPreview)
         <button v-if="!embedded" class="btn btn--sm" type="button" @click="router.push({ name: 'session', params: { id } })">‹ 返回终端</button>
         <h1 style="margin: 0">工作区文件</h1>
       </div>
-      <button class="btn btn--sm" type="button" :disabled="busy" @click="list()">刷新</button>
+      <div class="row"><button class="btn btn--sm" type="button" :disabled="busy || uploading || !conn.isOpen" @click="newTextOpen = !newTextOpen">新建文本文件</button><button class="btn btn--sm" type="button" :disabled="busy" @click="list()">刷新</button></div>
     </div>
+    <form v-if="newTextOpen" class="card" style="margin-bottom:14px" aria-label="新建文本文件" @submit.prevent="createTextFile">
+      <label class="field">文件名称<input v-model="textName" :disabled="uploading" placeholder="例如 main.py" required /></label>
+      <label class="field">文件内容<textarea v-model="textContent" :disabled="uploading" rows="6" style="width:100%;min-width:0" placeholder="可留空，保存为 UTF-8 文本" /></label>
+      <p class="small dim">创建在当前目录，已有同名文件不会覆盖。</p>
+      <button class="btn btn--primary" type="submit" :disabled="uploading || !conn.isOpen">{{ uploading ? '正在保存…' : '保存新文件' }}</button>
+      <button class="btn btn--sm" type="button" :disabled="uploading" @click="newTextOpen=false">取消</button>
+    </form>
     <div class="card">
       <div v-if="transferLabel" class="notice notice--info" role="status">{{ transferLabel }} · {{ transferPercent }}%<progress :value="transferPercent" max="100" style="display: block; width: 100%; margin-top: 6px" /></div>
       <div v-if="transferDone" class="notice notice--info" role="status">{{ transferDone }}</div>
@@ -186,6 +217,7 @@ onUnmounted(clearPreview)
         <div v-if="!entry.is_dir" class="row">
           <span class="faint small">{{ entry.size }} B</span>
           <button class="btn btn--sm" type="button" :disabled="busy" @click="download(entry)">下载</button>
+          <button class="btn btn--sm" type="button" :disabled="busy || !deviceId" @click="handoff(entry)">交给编程助手</button>
         </div>
       </div>
     </div>
