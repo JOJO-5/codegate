@@ -25,6 +25,7 @@ import type {
   SessionSummary,
 } from '../lib/protocol'
 import { humanizeError } from '../lib/format'
+import { groupConversationSessions, conversationRecords, liveSession } from '../lib/conversationSessions'
 import { useConnStore } from './conn'
 
 export const useSessionsStore = defineStore('sessions', () => {
@@ -46,7 +47,11 @@ export const useSessionsStore = defineStore('sessions', () => {
 
 
   function forDevice(deviceId: string): SessionSummary[] {
-    return byDevice.value[deviceId] ?? []
+    return groupConversationSessions(byDevice.value[deviceId] ?? [])
+  }
+
+  function recordsFor(deviceId: string, sessionId: string): SessionSummary[] {
+    return conversationRecords(byDevice.value[deviceId] ?? [], sessionId)
   }
 
   function setFor(deviceId: string, list: SessionSummary[]): void {
@@ -152,7 +157,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     }
 
     // 乐观插入列表，避免返回详情页时列表里还没有它
-    const cur = forDevice(deviceId)
+    const cur = byDevice.value[deviceId] ?? []
     if (!cur.some((x) => x.session_id === s.session_id)) {
       setFor(deviceId, [s, ...cur])
     }
@@ -167,13 +172,29 @@ export const useSessionsStore = defineStore('sessions', () => {
   }
 
   async function archive(deviceId: string, sessionId: string, archived: boolean): Promise<void> {
-    await api.archiveSession(deviceId, sessionId, archived)
-    patch(sessionId, { archived })
+    const current = generation
+    try {
+      for (const record of recordsFor(deviceId, sessionId)) {
+        if (current !== generation) return
+        await api.archiveSession(deviceId, record.session_id, archived)
+        if (current !== generation) return
+        patch(record.session_id, { archived })
+      }
+    } catch (e) { if (current === generation) await load(deviceId, true); throw e }
   }
 
   async function remove(deviceId: string, sessionId: string): Promise<void> {
-    await api.deleteSession(deviceId, sessionId)
-    removeFromList(sessionId)
+    const current = generation
+    const records = recordsFor(deviceId, sessionId)
+    if (records.some(liveSession)) throw new Error('请先结束该对话的所有远端进程，再删除记录')
+    try {
+      for (const record of records) {
+        if (current !== generation) return
+        await api.deleteSession(deviceId, record.session_id)
+        if (current !== generation) return
+        removeFromList(record.session_id)
+      }
+    } catch (e) { if (current === generation) await load(deviceId, true); throw e }
   }
 
   /** 用一条新快照替换列表里的某个会话（收到 session.exit / closed 时用）。 */
@@ -205,7 +226,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     loading,
     error,
     source, sources, setDraft, takeDraft,
-    forDevice,
+    forDevice, recordsFor,
     setFor,
     load,
     create,
