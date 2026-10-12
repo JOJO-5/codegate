@@ -29,6 +29,10 @@ var Version = "dev"
 // 生命周期上它比任何一条 WebSocket 连接都长 —— 连接断了重连，
 // 会话不受影响（这是不变量 I1/I2 在 Agent 侧的体现）。
 type Agent struct {
+	tasksMu       sync.Mutex
+	tasks         map[string]*backgroundRun
+	tasksWG       sync.WaitGroup
+	tasksClosing  bool
 	terminalViews atomic.Bool
 	cfg           Config
 	id            *Identity
@@ -184,6 +188,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		quotaCancel()
 		a.quotaMu.Unlock()
 		a.quotaWG.Wait()
+		a.stopBackgroundTasks()
 	}()
 
 	bo := newBackoff(a.cfg.ReconnectMin.Std(), a.cfg.ReconnectMax.Std())
@@ -350,7 +355,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 		Arch:         arch,
 		AgentVersion: Version,
 		Caps: protocol.AgentCaps{
-			ProjectCreate: true, TerminalViews: true, QuotaRead: true, ConversationRecovery: true, DSHWebApproval: true,
+			BackgroundContinue: true, ProjectCreate: true, TerminalViews: true, QuotaRead: true, ConversationRecovery: true, DSHWebApproval: true,
 			MaxSessions:        a.cfg.MaxSessions,
 			RepositoryScan:     true,
 			GitReview:          true,

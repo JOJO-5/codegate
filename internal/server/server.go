@@ -39,12 +39,15 @@ type Server struct {
 	devices *device.Service
 
 	// tickets 是浏览器 WS 连接用的一次性票据。
-	tickets *ticketStore
-	installTickets *installTicketStore
-	web *webGateway
- repositoryMu sync.Mutex
- repositoryPending map[string]repositoryWait
- gitPending map[string]repositoryWait
+	tickets           *ticketStore
+	installTickets    *installTicketStore
+	web               *webGateway
+	tasksMu           sync.Mutex
+	taskRPCMu         sync.Mutex
+	taskPending       map[string]repositoryWait
+	repositoryMu      sync.Mutex
+	repositoryPending map[string]repositoryWait
+	gitPending        map[string]repositoryWait
 
 	// pairs 保存「已发配对码、等浏览器确认」的 Agent 连接。
 	//
@@ -119,17 +122,17 @@ func New(o Options) (*Server, error) {
 	reg := NewRegistry(o.Config.SendQueueSize)
 
 	s := &Server{
-		cfg:     o.Config,
-		log:     log,
-		store:   o.Store,
-		reg:     reg,
-		relay:   NewRelay(reg, log),
-		tokens:  tokens,
-		tickets: newTicketStore(),
+		cfg:            o.Config,
+		log:            log,
+		store:          o.Store,
+		reg:            reg,
+		relay:          NewRelay(reg, log),
+		tokens:         tokens,
+		tickets:        newTicketStore(),
 		installTickets: newInstallTicketStore(),
-		web: newWebGateway(),
-		pairs:   newPairRegistry(),
-		pending: newPendingRegistry(),
+		web:            newWebGateway(),
+		pairs:          newPairRegistry(),
+		pending:        newPendingRegistry(),
 
 		// 阈值的选择依据：
 		//   login 5/分钟（按 email）—— 正常人手误不会超过 5 次，
@@ -192,6 +195,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 
 	s.startCleanupLoop()
+	s.startTaskLoop(ctx)
 
 	// 协议区分 http/https 由 listener 决定（TLS 时用 tls.NewListener）。
 	errCh := make(chan error, 1)
