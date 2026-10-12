@@ -234,7 +234,7 @@ func (a *Agent) onGitRequest(env *protocol.Envelope) {
 	var out protocol.GitResult
 	if req.Action == "worktrees" || req.Action == "worktree_remove" {
 		a.workspaceMu.Lock()
-		out, err = managedWorktrees(ctx, a.ws, req, a.mgr.Snapshot())
+		out, err = managedWorktrees(ctx, a.ws, req, append(a.mgr.Snapshot(), a.backgroundWorkspaceSessions()...))
 		a.workspaceMu.Unlock()
 		if err == nil && req.Action == "worktree_remove" {
 			select {

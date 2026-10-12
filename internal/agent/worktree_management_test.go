@@ -120,3 +120,25 @@ func TestManagedWorktreeRejectsForeignAndUnconfirmedTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestManagedWorktreeRefusesBackgroundContinuation(t *testing.T) {
+	ws, root := gitFixture(t)
+	ctx := context.Background()
+	path, _, err := createWorktree(ctx, ws, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.TrimSpace(testGit(t, path, "rev-parse", "HEAD"))
+	a := &Agent{tasks: map[string]*backgroundRun{"task": {receipt: taskReceipt{Source: protocol.SessionSummary{Cwd: path, Status: "terminated"}}}}}
+	req := protocol.GitPayload{Path: root, Action: "worktree_remove", Target: path, ExpectedHead: head, Confirm: true}
+	if _, err = managedWorktrees(ctx, ws, req, a.backgroundWorkspaceSessions()); err == nil {
+		t.Fatal("background worktree removed")
+	}
+	if _, err = os.Stat(path); err != nil {
+		t.Fatal("running directory lost", err)
+	}
+	delete(a.tasks, "task")
+	if _, err = managedWorktrees(ctx, ws, req, a.backgroundWorkspaceSessions()); err != nil {
+		t.Fatal("finished clean worktree not removable", err)
+	}
+}

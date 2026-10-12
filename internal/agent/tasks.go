@@ -464,3 +464,18 @@ func blockedUntil(q protocol.QuotaResult, now time.Time) int64 {
 	}
 	return until
 }
+
+// Managed worktree cleanup must see background processes as well as PTYs.
+// The caller holds workspaceMu, so a run cannot start between this snapshot
+// and Git deciding whether it is safe to remove the directory.
+func (a *Agent) backgroundWorkspaceSessions() []protocol.SessionSummary {
+	a.tasksMu.Lock()
+	defer a.tasksMu.Unlock()
+	out := make([]protocol.SessionSummary, 0, len(a.tasks))
+	for _, run := range a.tasks {
+		source := run.receipt.Source
+		source.Status = "running"
+		out = append(out, source)
+	}
+	return out
+}
