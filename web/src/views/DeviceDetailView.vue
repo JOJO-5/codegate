@@ -12,6 +12,7 @@ import ConversationRecovery from '../components/ConversationRecovery.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
+import { useAuthStore } from '../stores/auth'
 import { useSessionsStore } from '../stores/sessions'
 import { useConnStore } from '../stores/conn'
 import { useRepositoriesStore } from '../stores/repositories'
@@ -24,6 +25,7 @@ import { MessageType, isLiveStatus, type SessionSummary } from '../lib/protocol'
 
 const props = defineProps<{ id: string }>()
 
+const auth = useAuthStore()
 const devices = useDevicesStore()
 const sessions = useSessionsStore()
 const conn = useConnStore()
@@ -62,7 +64,7 @@ const device = computed(() => devices.byId(props.id))
 const list = computed(() => sessions.forDevice(props.id))
 const showArchived = ref(false)
 const sessionQuery = ref('')
-const pinnedIds = computed(() => list.value.filter(s => preferences.isPinned(s.session_id)).map(s => s.session_id))
+const pinnedIds = computed(() => list.value.filter(s => sessions.recordsFor(props.id, s.session_id).some(record => preferences.isPinned(record.session_id))).map(s => s.session_id))
 const visibleSessions = computed(() => {
   const query = sessionQuery.value.trim().toLocaleLowerCase()
   return list.value.filter(s => Boolean(s.archived) === showArchived.value &&
@@ -70,8 +72,16 @@ const visibleSessions = computed(() => {
     .sort((a, b) => Number(pinnedIds.value.includes(b.session_id)) - Number(pinnedIds.value.includes(a.session_id)) ||
       (toMs(b.created_at) ?? 0) - (toMs(a.created_at) ?? 0))
 })
-function togglePin(id: string): void {
-  void preferences.togglePin(id).catch(() => {})
+async function togglePin(id: string): Promise<void> {
+  const user = auth.user?.id
+  const records = sessions.recordsFor(props.id, id)
+  const pinned = records.some(record => preferences.isPinned(record.session_id))
+  try {
+    for (const record of records) {
+      if (auth.user?.id !== user) return
+      if (preferences.isPinned(record.session_id) === pinned) await preferences.togglePin(record.session_id)
+    }
+  } catch { /* preferences exposes the write error */ }
 }
 const archivedCount = computed(() => list.value.filter(s => s.archived).length)
 const recoveringSession = ref<SessionSummary | null>(null)
@@ -83,11 +93,16 @@ async function toggleArchive(s: SessionSummary): Promise<void> {
   catch (e) { sessionActionError.value = humanizeError(e) }
 }
 async function deleteRecord(s: SessionSummary): Promise<void> {
+  const user = auth.user?.id
   if (deletingSession.value !== s.session_id) { deletingSession.value = s.session_id; return }
   sessionActionError.value = null
   try {
+    const pinned = sessions.recordsFor(props.id, s.session_id).filter(record => preferences.isPinned(record.session_id))
     await sessions.remove(props.id, s.session_id)
-    if (pinnedIds.value.includes(s.session_id)) togglePin(s.session_id)
+    for (const record of pinned) {
+      if (auth.user?.id !== user) return
+      await preferences.togglePin(record.session_id)
+    }
     deletingSession.value = null
   }
   catch (e) { sessionActionError.value = humanizeError(e) }
@@ -603,7 +618,7 @@ function canOpen(s: SessionSummary): boolean {
             <button v-if="!isLiveStatus(s.status) && (s.recovery || /(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.command) || (s.command.endsWith('cmd.exe') && /^(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.args?.[1] ?? '')))" class="btn btn--primary btn--sm" type="button" :disabled="!device?.online || !conn.isOpen" @click="recoveringSession = s">恢复原对话</button>
             <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
             <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
-              {{ deletingSession === s.session_id ? '确认删除' : '删除记录' }}
+              {{ deletingSession === s.session_id ? '确认删除该对话记录' : '删除记录' }}
             </button>
           </span>
         </div>

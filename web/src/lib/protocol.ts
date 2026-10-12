@@ -273,7 +273,7 @@ export interface ErrorPayload {
  * 三处用同一个类型，前端就只需要一套解析逻辑。
  */
 export interface SessionSummary {
- recovery?: { command_id: string; native_id?: string; store_key?: string; source_id?: string }
+ recovery?: { command_id: string; native_id?: string; store_key?: string; native_root?: string; source_id?: string }
   session_id: string
   device_id: string
   name: string

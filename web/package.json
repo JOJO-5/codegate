@@ -10,7 +10,8 @@
     "build-only": "vite build",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "preview": "vite preview",
-    "test:transfer": "node tests/transfer.mjs"
+    "test:transfer": "node tests/transfer.mjs",
+    "test:conversations": "node tests/conversations.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

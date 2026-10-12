@@ -1,0 +1,9 @@
+# Native conversations and terminal records (v0.1.22)
+
+Restoring a saved CLI conversation creates a new CodeGate terminal process UUID. It keeps the original native conversation/session ID. Process records remain separate for lifecycle, ownership and audit purposes; a user-facing conversation list should show one entry for that native conversation.
+
+Device, project, recent and terminal-switcher lists now group records by device, CLI identity (recognized executable, or configured command ID as a fallback), native persistence namespace (`store_key` / `native_root`) and native conversation ID. The representative is a live terminal first, otherwise the latest attached/created record. Names, working directories and timestamps alone never merge records. Unknown/unbound native IDs remain separate. Existing duplicated records are grouped on loading; there is no data deletion or migration.
+
+Grouping retains raw records in the session store. A pin on an older record follows the conversation when a later terminal represents it. Archive/unarchive applies to all its known records; a group is archived only when all members are archived. Explicit deletion removes the group's ended terminal records, after checking none is live; each REST operation still enforces server ownership/runtime checks. The confirmation says “确认删除该对话记录”. CLI-native history is not deleted. On an interrupted or failed multi-record write the list is reloaded to show actual persisted state. Operations stop when the signed-in user changes.
+
+Tests cover identical native IDs across repeated process records, active-terminal precedence, newest-ended selection, independent devices/tools/namespaces, unbound records, archive/delete and partial-write reconciliation. Real CLI restoration must preserve native IDs while the list keeps one entry and connects to the newest live terminal.
