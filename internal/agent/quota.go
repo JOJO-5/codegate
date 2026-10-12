@@ -73,50 +73,108 @@ func (a *Agent) onQuotaRead(req *protocol.Envelope) {
 		a.reply(req, protocol.TypeQuotaResult, result)
 		return
 	}
-	a.quotaMu.Lock()
-	defer a.quotaMu.Unlock()
-	cached, exists := a.quotaCache[provider]
-	if !exists || time.Since(cached.checked) >= 15*time.Second {
-		cfg := a.commandConfig()
-		env := BuildEnv(cfg, 80, 24)
-		q := protocol.ProviderQuota{Provider: provider, Status: "unavailable", Windows: []protocol.QuotaWindow{}}
-		var command *ResolvedCommand
-		for _, spec := range cfg.AllowedCommands {
-			c, err := cfg.ResolveCommand(spec.ID, "", nil, false)
-			if err == nil && quotaProvider(c.Command, c.Args) == provider {
-				command = &c
-				break
-			}
-		}
-		if command == nil {
-			q.Message = "此设备未授权这个 CLI"
-		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			switch provider {
-			case "codex":
-				q.Source = "Codex 本机账号 · 官方 app-server"
-				q.Windows, q.Message = codexQuota(ctx, *command, env)
-			case "claude":
-				q.Source = "Claude 本机 OAuth · 非公开用量接口"
-				q.Windows, q.Message = claudeQuota(ctx, env, quotaHTTPClient())
-			case "opencode":
-				q.Source = "OpenCode Go 本机账号"
-				q.Windows, q.Message = openCodeQuota(ctx, env, quotaHTTPClient())
-			}
-			cancel()
-		}
-		q.CheckedAt = time.Now().Unix()
-		if q.Message == "" && len(q.Windows) > 0 {
-			q.Status = "ok"
-		}
-		cached = quotaCacheEntry{result: q, checked: time.Now()}
-		if a.quotaCache == nil {
-			a.quotaCache = make(map[string]quotaCacheEntry)
-		}
-		a.quotaCache[provider] = cached
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	result, err := a.readProviderQuota(ctx, provider)
+	if err != nil {
+		a.replyError(req, protocol.NewRetryableError(protocol.CodeInternal, "额度查询超时，请稍后重试"))
+		return
 	}
-	result.Providers = append(result.Providers, cached.result)
 	a.reply(req, protocol.TypeQuotaResult, result)
+}
+
+type quotaFlight struct {
+	done   chan struct{}
+	result protocol.ProviderQuota
+}
+
+// One in-flight query per provider, without holding a global lock during I/O.
+func (a *Agent) readProviderQuota(ctx context.Context, provider string) (protocol.QuotaResult, error) {
+	a.quotaMu.Lock()
+	if a.quotaClosing {
+		a.quotaMu.Unlock()
+		return protocol.QuotaResult{}, context.Canceled
+	}
+	cached, exists := a.quotaCache[provider]
+	if exists && time.Since(cached.checked) < 15*time.Second {
+		a.quotaMu.Unlock()
+		return protocol.QuotaResult{Providers: []protocol.ProviderQuota{cached.result}, Cached: true, NextRefreshAt: cached.checked.Add(15 * time.Second).Unix()}, nil
+	}
+	flight := a.quotaFlights[provider]
+	if flight == nil {
+		flight = &quotaFlight{done: make(chan struct{})}
+		if a.quotaFlights == nil {
+			a.quotaFlights = make(map[string]*quotaFlight)
+		}
+		a.quotaFlights[provider] = flight
+		parent := a.quotaCtx
+		if parent == nil {
+			parent = context.Background()
+		}
+		a.quotaWG.Add(1)
+		go func() {
+			defer a.quotaWG.Done()
+			q := a.fetchProviderQuota(parent, provider)
+			a.quotaMu.Lock()
+			if a.quotaCache == nil {
+				a.quotaCache = make(map[string]quotaCacheEntry)
+			}
+			a.quotaCache[provider] = quotaCacheEntry{result: q, checked: time.Now()}
+			flight.result = q
+			delete(a.quotaFlights, provider)
+			close(flight.done)
+			a.quotaMu.Unlock()
+		}()
+	}
+	a.quotaMu.Unlock()
+	select {
+	case <-ctx.Done():
+		return protocol.QuotaResult{}, ctx.Err()
+	case <-flight.done:
+		return protocol.QuotaResult{Providers: []protocol.ProviderQuota{flight.result}, NextRefreshAt: flight.result.CheckedAt + 15}, nil
+	}
+}
+func (a *Agent) fetchProviderQuota(parent context.Context, provider string) protocol.ProviderQuota {
+	cfg := a.commandConfig()
+	env := BuildEnv(cfg, 80, 24)
+	q := protocol.ProviderQuota{Provider: provider, Status: "unavailable", Windows: []protocol.QuotaWindow{}}
+	finish, err := a.beginActivity()
+	if err != nil {
+		q.Message = "Agent 正在更新，请稍后刷新"
+		q.CheckedAt = time.Now().Unix()
+		return q
+	}
+	defer finish()
+	var command *ResolvedCommand
+	for _, spec := range cfg.AllowedCommands {
+		c, err := cfg.ResolveCommand(spec.ID, "", nil, false)
+		if err == nil && quotaProvider(c.Command, c.Args) == provider {
+			command = &c
+			break
+		}
+	}
+	if command == nil {
+		q.Message = "此设备未授权这个 CLI"
+	} else {
+		ctx, cancel := context.WithTimeout(parent, 6*time.Second)
+		defer cancel()
+		switch provider {
+		case "codex":
+			q.Source = "Codex 本机账号 · 官方 app-server"
+			q.Windows, q.Message = codexQuota(ctx, *command, env)
+		case "claude":
+			q.Source = "Claude 本机 OAuth · 非公开用量接口"
+			q.Windows, q.Message = claudeQuota(ctx, env, quotaHTTPClient())
+		case "opencode":
+			q.Source = "OpenCode Go 本机账号"
+			q.Windows, q.Message = openCodeQuota(ctx, env, quotaHTTPClient())
+		}
+	}
+	q.CheckedAt = time.Now().Unix()
+	if q.Message == "" && len(q.Windows) > 0 {
+		q.Status = "ok"
+	}
+	return q
 }
 
 func quotaHTTPClient() *http.Client {
@@ -187,7 +245,6 @@ func codexQuota(ctx context.Context, c ResolvedCommand, env []string) ([]protoco
 	}
 	cmd := exec.Command(c.Command, cmdArgs...)
 	processutil.Background(cmd)
-	configureQuotaProcess(cmd)
 	cmd.Env = env
 	input, err := cmd.StdinPipe()
 	if err != nil {
@@ -195,13 +252,17 @@ func codexQuota(ctx context.Context, c ResolvedCommand, env []string) ([]protoco
 	}
 	output, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = input.Close()
 		return nil, "无法启动本机 Codex"
 	}
-	if cmd.Start() != nil {
+	tree, startErr := processutil.StartTree(cmd)
+	if startErr != nil {
+		_ = input.Close()
+		_ = output.Close()
 		return nil, "Codex 不可用，请安装或更新 CLI"
 	}
 	var stopOnce sync.Once
-	stop := func() { stopOnce.Do(func() { input.Close(); stopQuotaProcess(cmd); output.Close() }) }
+	stop := func() { stopOnce.Do(func() { input.Close(); output.Close(); _ = tree.Stop() }) }
 	done := make(chan struct{})
 	go func() {
 		select {

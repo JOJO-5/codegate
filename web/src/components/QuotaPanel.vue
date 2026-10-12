@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useConnStore } from '../stores/conn'
 import { MessageType } from '../lib/protocol'
 import { humanizeError } from '../lib/format'
@@ -10,24 +10,51 @@ const conn = useConnStore()
 const providers = ref<Provider[]>([])
 const busy = ref(false)
 const error = ref('')
+const panel = ref<HTMLElement | null>(null)
+const visible = ref(false)
+const cached = ref(false)
+const nextRefreshAt = ref<number | undefined>()
+const elapsed = ref(0)
+let started = 0, lastAttempt = 0, epoch = 0
+let timer: ReturnType<typeof setInterval> | undefined
+let observer: IntersectionObserver | undefined
+function autoRefresh(): void {
+  elapsed.value = busy.value ? Math.floor((Date.now() - started) / 1000) : 0
+  if (visible.value && document.visibilityState === 'visible' && conn.isOpen && !busy.value && Date.now() - lastAttempt >= 30_000) void refresh()
+}
+onMounted(() => {
+  observer = new IntersectionObserver(entries => { visible.value = entries.some(e => e.isIntersecting); autoRefresh() })
+  if (panel.value) observer.observe(panel.value)
+  timer = setInterval(autoRefresh, 1000)
+  document.addEventListener('visibilitychange', autoRefresh)
+})
+onBeforeUnmount(() => { epoch++; observer?.disconnect(); clearInterval(timer); document.removeEventListener('visibilitychange', autoRefresh) })
 const names: Record<string,string> = { codex: 'Codex', claude: 'Claude', opencode: 'OpenCode Go' }
 function date(value?: number): string { return value && value > 0 ? new Date(value * 1000).toLocaleString() : '未知' }
 async function refresh(): Promise<void> {
   if (busy.value || !conn.isOpen) return
   busy.value = true
+  started = lastAttempt = Date.now()
+  elapsed.value = 0
+  const current = ++epoch
   error.value = ''
   const id = props.sessionId
   try {
-    const env = await conn.request<{ providers: Provider[] }>(MessageType.QuotaRead, { session_id: id }, id)
-    if (id === props.sessionId) providers.value = (env.payload?.providers ?? []).filter(p => p.provider === props.provider)
-  } catch (e) { error.value = humanizeError(e) }
-  finally { busy.value = false }
+    const env = await conn.request<{ providers: Provider[]; cached?: boolean; next_refresh_at?: number }>(MessageType.QuotaRead, { session_id: id }, id, 15_000)
+    if (current !== epoch || id !== props.sessionId) return
+    const results = (env.payload?.providers ?? []).filter(p => p.provider === props.provider)
+    if (!results.length) throw new Error('未返回当前 CLI 的额度，请更新 Agent 后重试')
+    providers.value = results
+    cached.value = Boolean(env.payload?.cached)
+    nextRefreshAt.value = env.payload?.next_refresh_at
+  } catch (e) { if (current === epoch) error.value = humanizeError(e) }
+  finally { if (current === epoch) busy.value = false }
 }
-watch(() => [props.sessionId, props.provider, conn.isOpen], () => { if (conn.isOpen) void refresh() }, { immediate: true })
+watch(() => [props.sessionId, props.provider, conn.isOpen], () => { epoch++; busy.value = false; if (conn.isOpen) void refresh() }, { immediate: true })
 </script>
 <template>
-  <section class="quota" aria-label="账号额度">
-    <div class="quota__heading"><strong>{{ names[props.provider] || props.provider }} 额度</strong><button class="btn btn--ghost btn--sm" :disabled="busy || !conn.isOpen" @click="refresh">{{ busy ? '刷新中…' : '刷新' }}</button></div>
+  <section ref="panel" class="quota" aria-label="账号额度">
+    <div class="quota__heading"><strong>{{ names[props.provider] || props.provider }} 额度</strong><button class="btn btn--ghost btn--sm" :disabled="busy || !conn.isOpen" @click="refresh">{{ busy ? `查询中 ${elapsed}s…` : '刷新' }}</button></div>
     <p class="small dim">设备本机登录账号，与终端当前模型可能不同。</p>
     <p v-if="error" class="small" role="alert">{{ error }}{{ providers.length ? '（下方为上次结果）' : '' }}</p>
     <article v-for="p in providers" :key="p.provider" class="quota__provider">
@@ -43,7 +70,8 @@ watch(() => [props.sessionId, props.provider, conn.isOpen], () => { if (conn.isO
       <small class="dim">{{ p.source }}</small><br />
       <small class="dim">查询：{{ date(p.checked_at) }}</small>
     </article>
-    <p class="small dim">连续刷新间隔 15 秒；仅查询，不产生模型调用。</p>
+    <p v-if="cached" class="small dim">本次为缓存结果<span v-if="nextRefreshAt">，{{ date(nextRefreshAt) }} 后可重新查询</span>。</p>
+    <p class="small dim">页面可见时每 30 秒自动更新；Agent 缓存 15 秒。查询最多等待 15 秒；失败时保留上次结果。</p>
   </section>
 </template>
 <style scoped>

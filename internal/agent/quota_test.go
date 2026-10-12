@@ -189,3 +189,48 @@ func TestQuotaReadOnlyReturnsSessionCLIAndKeepsIndependentCaches(t *testing.T) {
 		t.Fatal("cross-provider cache changed")
 	}
 }
+
+func TestQuotaPendingProviderDoesNotBlockCachedOtherProvider(t *testing.T) {
+	pending := &quotaFlight{done: make(chan struct{})}
+	a := &Agent{quotaCache: map[string]quotaCacheEntry{"claude": {result: protocol.ProviderQuota{Provider: "claude", CheckedAt: 123}, checked: time.Now()}}, quotaFlights: map[string]*quotaFlight{"codex": pending}}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	result, err := a.readProviderQuota(ctx, "claude")
+	if err != nil || !result.Cached || len(result.Providers) != 1 || result.Providers[0].Provider != "claude" || result.NextRefreshAt == 0 {
+		t.Fatal("cached provider blocked", err, result)
+	}
+	if _, err := a.readProviderQuota(ctx, "codex"); err != context.DeadlineExceeded {
+		t.Fatal("pending query ignored deadline", err)
+	}
+	pending.result = protocol.ProviderQuota{Provider: "codex", CheckedAt: 456}
+	close(pending.done)
+	result, err = a.readProviderQuota(context.Background(), "codex")
+	if err != nil || result.Cached || result.Providers[0].CheckedAt != 456 {
+		t.Fatal("shared completion lost", err)
+	}
+}
+
+func TestQuotaStalledProcessHonorsDeadline(t *testing.T) {
+	if os.Getenv("CODEGATE_QUOTA_STALL") == "1" {
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	}
+	if os.PathSeparator == '\\' {
+		t.Skip("shell helper; Windows private Job cleanup covered by processutil tests")
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec '"+strings.ReplaceAll(binary, "'", "'\\''")+"' -test.run '^TestQuotaStalledProcessHonorsDeadline$'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	windows, message := codexQuota(ctx, ResolvedCommand{Command: script}, append(os.Environ(), "CODEGATE_QUOTA_STALL=1"))
+	if len(windows) != 0 || message == "" || time.Since(start) > 2*time.Second {
+		t.Fatal("stalled app-server did not stop", message, time.Since(start))
+	}
+}
