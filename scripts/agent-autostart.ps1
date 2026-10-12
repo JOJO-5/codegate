@@ -11,11 +11,13 @@ param(
     [ValidateSet('install', 'repair', 'status', 'uninstall')]
     [string]$Action = 'install',
 
-    [string]$AgentPath = (Join-Path $PSScriptRoot '..\bin\codegate-agent.exe'),
+    [string]$AgentPath,
     [string]$ConfigPath = (Join-Path $env:APPDATA 'CodeGate\agent.json')
 )
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 initializes PSScriptRoot after parameter defaults.
+if (-not $AgentPath) { $AgentPath = Join-Path $PSScriptRoot '..\bin\codegate-agent.exe' }
 $taskName = 'CodeGate Agent'
 $taskPath = '\'
 $task = Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue
