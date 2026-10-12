@@ -12,6 +12,7 @@ import ConversationRecovery from '../components/ConversationRecovery.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
+import { useAuthStore } from '../stores/auth'
 import { useSessionsStore } from '../stores/sessions'
 import { useConnStore } from '../stores/conn'
 import { useRepositoriesStore } from '../stores/repositories'
@@ -24,6 +25,7 @@ import { MessageType, isLiveStatus, type SessionSummary } from '../lib/protocol'
 
 const props = defineProps<{ id: string }>()
 
+const auth = useAuthStore()
 const devices = useDevicesStore()
 const sessions = useSessionsStore()
 const conn = useConnStore()
@@ -71,10 +73,14 @@ const visibleSessions = computed(() => {
       (toMs(b.created_at) ?? 0) - (toMs(a.created_at) ?? 0))
 })
 async function togglePin(id: string): Promise<void> {
+  const user = auth.user?.id
   const records = sessions.recordsFor(props.id, id)
   const pinned = records.some(record => preferences.isPinned(record.session_id))
   try {
-    for (const record of records) if (preferences.isPinned(record.session_id) === pinned) await preferences.togglePin(record.session_id)
+    for (const record of records) {
+      if (auth.user?.id !== user) return
+      if (preferences.isPinned(record.session_id) === pinned) await preferences.togglePin(record.session_id)
+    }
   } catch { /* preferences exposes the write error */ }
 }
 const archivedCount = computed(() => list.value.filter(s => s.archived).length)
@@ -87,12 +93,16 @@ async function toggleArchive(s: SessionSummary): Promise<void> {
   catch (e) { sessionActionError.value = humanizeError(e) }
 }
 async function deleteRecord(s: SessionSummary): Promise<void> {
+  const user = auth.user?.id
   if (deletingSession.value !== s.session_id) { deletingSession.value = s.session_id; return }
   sessionActionError.value = null
   try {
     const pinned = sessions.recordsFor(props.id, s.session_id).filter(record => preferences.isPinned(record.session_id))
     await sessions.remove(props.id, s.session_id)
-    for (const record of pinned) await preferences.togglePin(record.session_id)
+    for (const record of pinned) {
+      if (auth.user?.id !== user) return
+      await preferences.togglePin(record.session_id)
+    }
     deletingSession.value = null
   }
   catch (e) { sessionActionError.value = humanizeError(e) }
