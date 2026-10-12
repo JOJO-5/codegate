@@ -156,7 +156,7 @@ func (s *clientSession) onText(data []byte) error {
 	case protocol.TypePong:
 		return nil
 
-	case protocol.TypeQuotaRead, protocol.TypeConversationList, protocol.TypeConversationRestore, protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
+	case protocol.TypeProjectCreate, protocol.TypeQuotaRead, protocol.TypeConversationList, protocol.TypeConversationRestore, protocol.TypeSessionCreate, protocol.TypeSessionList, protocol.TypeSessionGet,
 		protocol.TypeSessionAttach, protocol.TypeSessionDetach, protocol.TypeSessionClose,
 		protocol.TypeSessionResize, protocol.TypeSessionSignal,
 		protocol.TypeSessionClaimControl,
@@ -249,6 +249,10 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		return
 	}
 
+	if env.Type == protocol.TypeProjectCreate && !agent.Caps().ProjectCreate {
+		sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "新建项目需要 Agent v0.1.24，请更新 Agent"))
+		return
+	}
 	if env.Type == protocol.TypeQuotaRead && !agent.Caps().QuotaRead {
 		sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "查看额度需要 Agent v0.1.15，请更新 Agent"))
 		return
@@ -388,6 +392,16 @@ func (s *clientSession) resolveTarget(env *protocol.Envelope) (string, string, e
 	defer cancel()
 
 	switch env.Type {
+	case protocol.TypeProjectCreate:
+		p, err := protocol.DecodePayload[protocol.ProjectCreatePayload](env)
+		if err != nil {
+			return "", "", err
+		}
+		if _, err := s.srv.authorizeDevice(ctx, s.c.UserID, p.DeviceID); err != nil {
+			return "", "", err
+		}
+		return p.DeviceID, "", nil
+
 	case protocol.TypeSessionCreate:
 		p, err := protocol.DecodePayload[protocol.SessionCreatePayload](env)
 		if err != nil {
