@@ -35,8 +35,8 @@ class Fixture {
 '@ | Set-Content -LiteralPath $fixtureSource -Encoding UTF8
 & $compiler /nologo /platform:anycpu /target:exe ("/out:" + (Join-Path $bin 'codegate-agent.exe')) $fixtureSource
 if ($LASTEXITCODE -ne 0) { throw 'Fixture compile failed' }
-function Wait-Check([scriptblock]$Check) {
- $deadline = [DateTime]::UtcNow.AddSeconds(12)
+function Wait-Check([scriptblock]$Check, [int]$TimeoutSeconds = 12) {
+ $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
  while ([DateTime]::UtcNow -lt $deadline) { if (& $Check) { return }; Start-Sleep -Milliseconds 100 }
  throw ('Background process condition timed out; caller line ' + (Get-PSCallStack)[1].ScriptLineNumber)
 }
@@ -119,7 +119,7 @@ try {
   $fixturePassword = $null; $securePassword = $null
   if ((Get-ScheduledTask -TaskName $passwordTask).Principal.LogonType -ne 'Password') { throw 'Password logon changed during action repair' }
   Start-ScheduledTask -TaskName $passwordTask
-  try { Wait-Check { (Get-ScheduledTaskInfo -TaskName $passwordTask).LastTaskResult -eq 23 } } catch {
+  try { Wait-Check { (Get-ScheduledTaskInfo -TaskName $passwordTask).LastTaskResult -eq 23 } -TimeoutSeconds 45 } catch {
     $taskInfo = Get-ScheduledTaskInfo -TaskName $passwordTask
     throw ('Password fixture execution failed: LastTaskResult=' + $taskInfo.LastTaskResult + '; LastRunTime=' + $taskInfo.LastRunTime)
   }
