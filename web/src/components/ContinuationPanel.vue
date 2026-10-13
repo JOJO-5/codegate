@@ -4,7 +4,7 @@ import { api, type ContinuationTask } from '../lib/api'
 import { useConnStore } from '../stores/conn'
 import { MessageType, type SessionSummary } from '../lib/protocol'
 import { humanizeError, absoluteTime } from '../lib/format'
-const props = defineProps<{ deviceId: string; source?: SessionSummary | null }>()
+const props = defineProps<{ deviceId: string; source?: SessionSummary | null; compact?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const conn = useConnStore()
 const rows = ref<ContinuationTask[]>([]), error = ref(''), busy = ref(false)
@@ -41,7 +41,7 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
   <form class="card continuation-dialog" role="dialog" aria-modal="true" aria-labelledby="continue-title" @submit.prevent="create">
    <h2 id="continue-title">安排原对话继续</h2>
    <p class="dim small">{{source.name}} · {{source.cwd}}</p>
-   <p class="small">到时在该电脑后台恢复原生对话，关闭网页也能等待。请先结束原终端进程；电脑需保持开机、Agent 在线。</p>
+   <p class="small">到时在该电脑后台恢复原生对话，关闭网页也能等待。可以提前安排；原终端仍运行时会等待其结束，不会并行执行。电脑需保持开机、Agent 在线。</p>
    <label v-if="!source.recovery?.native_id">原生对话<select v-model="selected" required aria-label="原生对话"><option value="">核对历史后选择</option><option v-for="item in choices" :key="item.id" :value="item.id">{{item.title}} · {{item.id}}</option></select></label>
    <label>继续方式<select v-model="mode" aria-label="继续方式"><option value="time">按时间继续</option><option value="quota">到时检查额度，耗尽则等待重置</option></select></label>
    <p v-if="mode==='quota'" class="dim small">仅支持可可靠查询额度的默认 CLI 配置；查询失败不会启动模型，请改用按时间继续。</p>
@@ -52,7 +52,7 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
    <div class="row"><button class="btn" type="button" :disabled="busy" @click="emit('close')">返回</button><button class="btn btn--primary" :disabled="busy || !selected" type="submit">保存后台任务</button></div>
   </form>
  </div>
- <section v-if="rows.length" class="card continuation-list">
+ <section v-if="rows.length && !compact" class="card continuation-list">
   <div class="row row--between"><h2>后台续跑</h2><button class="btn btn--sm" type="button" :disabled="busy" @click="load">刷新</button></div>
   <p class="dim small">列表每15秒刷新。执行结束不代表任务已全部完成，请核对原对话和文件改动。</p>
   <article v-for="task in rows" :key="task.id">

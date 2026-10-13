@@ -65,10 +65,6 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 		writeProtoError(w, errNoAccess())
 		return
 	}
-	if meta.Status == "running" || meta.Status == "starting" || meta.Status == "detached" {
-		writeError(w, 409, "session_running", "请先结束终端进程，再安排原对话续跑")
-		return
-	}
 	source := sessionSummary(meta)
 	if source.Recovery == nil {
 		writeError(w, 409, "native_identity_required", "此记录缺少CLI恢复配置，请先使用恢复原对话选择历史")
