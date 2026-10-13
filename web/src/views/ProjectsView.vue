@@ -74,7 +74,7 @@ async function undoRemove(): Promise<void> {
   catch { /* The store exposes the sync error. */ }
 }
 async function saveRepository(repo: { device_id: string; path: string; name: string }): Promise<void> {
-  try { await preferences.saveProject({ label: repo.name, name: repo.name, device_id: repo.device_id, cwd: repo.path, command_id: commandFor(repo.device_id) }) }
+  try { await preferences.saveProject({ label: repo.name, name: '', device_id: repo.device_id, cwd: repo.path, command_id: commandFor(repo.device_id) }) }
   catch { /* The store exposes the sync error. */ }
 }
 </script>
@@ -148,7 +148,7 @@ async function saveRepository(repo: { device_id: string; path: string; name: str
           <RouterLink class="btn btn--ghost btn--sm" :to="{ name: 'workspaces', params: { id: repo.device_id }, query: { path: repo.path } }">管理独立工作区</RouterLink>
           <div class="field"><label :for="`repo-cli-${repo.device_id}-${repo.path}`">编程 CLI</label><select :id="`repo-cli-${repo.device_id}-${repo.path}`" :value="commandFor(repo.device_id)" :disabled="!devices.byId(repo.device_id)?.online" @change="repoCommands[repo.device_id] = ($event.target as HTMLSelectElement).value"><option v-if="!repositories.commands[repo.device_id]?.length" value="">请先在设备页授权已安装的工具</option><option v-for="tool in repositories.commands[repo.device_id]" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>
           <p v-if="unavailable(repo.device_id) || !commandFor(repo.device_id)" class="small dim">{{ unavailable(repo.device_id) || '请先在设备页授权已安装的工具。' }}</p>
-          <div class="row project-launch"><button class="btn btn--primary" type="button" :disabled="!conn.isOpen || !devices.byId(repo.device_id)?.online || !commandFor(repo.device_id)" @click="create({ key: `${repo.device_id}:${repo.path}`, label: repo.name, name: repo.name, device_id: repo.device_id, command_id: commandFor(repo.device_id), cwd: repo.path })">新建任务</button><button class="btn btn--sm" :disabled="preferences.saving || !commandFor(repo.device_id)" @click="saveRepository(repo)">保存项目</button><RouterLink class="btn btn--ghost" :to="{ name: 'device', params: { id: repo.device_id } }">设备与工具 / 独立工作区</RouterLink></div>
+          <div class="row project-launch"><button class="btn btn--primary" type="button" :disabled="!conn.isOpen || !devices.byId(repo.device_id)?.online || !commandFor(repo.device_id)" @click="create({ key: `${repo.device_id}:${repo.path}`, label: repo.name, name: '', device_id: repo.device_id, command_id: commandFor(repo.device_id), cwd: repo.path })">新建任务</button><button class="btn btn--sm" :disabled="preferences.saving || !commandFor(repo.device_id)" @click="saveRepository(repo)">保存项目</button><RouterLink class="btn btn--ghost" :to="{ name: 'device', params: { id: repo.device_id } }">设备与工具 / 独立工作区</RouterLink></div>
         </section>
       </div>
     </section>

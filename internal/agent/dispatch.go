@@ -261,6 +261,7 @@ func (a *Agent) createSessionLocked(req protocol.SessionCreatePayload) (*session
 	if err != nil {
 		return nil, err
 	}
+	nameCwd := cwd
 
 	// Isolated task directories are created only after command and path validation.
 	var rollback func()
@@ -295,9 +296,12 @@ func (a *Agent) createSessionLocked(req protocol.SessionCreatePayload) (*session
 		}
 		return nil, err
 	}
-	name := req.Name
-	if name == "" {
-		name = cmd.Label
+	name, err := a.sessionName(req.Name, nameCwd, cmd.Label)
+	if err != nil {
+		if rollback != nil {
+			rollback()
+		}
+		return nil, err
 	}
 
 	sess, err := a.mgr.Create(context.Background(), session.CreateRequest{
