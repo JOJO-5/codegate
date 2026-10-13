@@ -74,7 +74,7 @@ async function projectReady(result: { path: string; filePath?: string; commandId
  preferenceNotice.value = result.warning ?? `已创建：${result.filePath || result.path}`
  localStorage.setItem(cwdKey.value,result.path)
  if (result.createdProject && (result.commandId || presetId.value)) {
-  try { await preferences.saveProject({label:result.path.split(/[\\/]/).pop() || '新项目',device_id:props.id,command_id:result.commandId || presetId.value,cwd:result.path,name:result.path.split(/[\\/]/).pop() || '新项目'}) } catch { /* File creation remains successful even if preference sync fails. */ }
+  try { await preferences.saveProject({label:result.path.split(/[\\/]/).pop() || '新项目',device_id:props.id,command_id:result.commandId || presetId.value,cwd:result.path,name:''}) } catch { /* File creation remains successful even if preference sync fails. */ }
  }
  if (result.commandId) {presetId.value=result.commandId;await createSession()}
 }
@@ -549,7 +549,7 @@ function canOpen(s: SessionSummary): boolean {
             id="sname"
             v-model="sessionName"
             type="text"
-            placeholder="留空则用命令名"
+            placeholder="留空自动使用项目目录和工具名，同名加编号"
             :disabled="creating"
           />
         </div>

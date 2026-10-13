@@ -17,7 +17,7 @@ const conn = useConnStore()
 const router = useRouter()
 const command = ref(props.commandId)
 const cwd = ref(props.cwd)
-const name = ref(props.label)
+const name = ref('')
 const isolated = ref(false)
 const task = ref('')
 const busy = ref(false)
@@ -48,7 +48,7 @@ async function launch(): Promise<void> {
     <form class="stack" @submit.prevent="launch">
       <div class="field"><label for="launch-cli">编程工具</label><select id="launch-cli" v-model="command" :disabled="busy"><option value="">选择已授权工具</option><option v-for="tool in tools" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>
       <div class="field"><label for="launch-cwd">任务工作目录</label><input id="launch-cwd" v-model="cwd" :disabled="busy" autocapitalize="none" spellcheck="false" /></div>
-      <div class="field"><label for="launch-name">任务名称</label><input id="launch-name" v-model="name" :disabled="busy" maxlength="160" /></div>
+      <div class="field"><label for="launch-name">任务名称</label><input id="launch-name" v-model="name" :disabled="busy" maxlength="160" placeholder="留空自动使用项目目录和工具名，同名加编号" /></div>
       <div class="field"><label for="launch-mode">工作方式</label><select id="launch-mode" v-model="isolated" :disabled="busy"><option :value="false">使用原目录</option><option :value="true">创建独立 Git 工作区</option></select><span class="field__hint">{{ isolated ? '从当前提交创建新分支；原目录的未提交改动不会带入。启动后显示实际分支和目录。' : 'CLI 将直接修改所选目录中的文件。' }}</span></div>
       <div v-if="selected?.kind === 'tui'" class="field"><label for="launch-template">任务模板</label><select id="launch-template" v-model="task" :disabled="busy"><option value="">自由对话</option><option v-for="item in TASK_TEMPLATES" :key="item.id" :value="item.id">{{ item.label }}</option></select><span class="field__hint">只预填终端输入框，由你编辑并发送。</span></div>
       <p class="small dim launch-summary">{{ devices.byId(deviceId)?.name }} · {{ selected?.label || '未选择工具' }} · {{ isolated ? '新建独立分支' : '原目录' }}<br />{{ cwd }}</p>
