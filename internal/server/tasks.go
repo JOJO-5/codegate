@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jojo/codegate/internal/protocol"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -35,13 +36,16 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, ok := decodeJSON[struct {
-		SessionID     string `json:"session_id"`
-		NativeID      string `json:"native_id"`
-		Prompt        string `json:"prompt"`
-		Mode          string `json:"mode"`
-		DueAt         int64  `json:"due_at"`
-		MaxRunMinutes int    `json:"max_run_minutes"`
-		Nonce         string `json:"nonce"`
+		MaxRetries       int    `json:"max_retries,omitempty"`
+		RetryErrors      bool   `json:"retry_errors,omitempty"`
+		QuotaWaitMinutes int    `json:"quota_wait_minutes,omitempty"`
+		SessionID        string `json:"session_id"`
+		NativeID         string `json:"native_id"`
+		Prompt           string `json:"prompt"`
+		Mode             string `json:"mode"`
+		DueAt            int64  `json:"due_at"`
+		MaxRunMinutes    int    `json:"max_run_minutes"`
+		Nonce            string `json:"nonce"`
 	}](w, r)
 	if !ok {
 		return
@@ -85,10 +89,44 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 	if p.MaxRunMinutes == 0 {
 		p.MaxRunMinutes = 120
 	}
+	if p.QuotaWaitMinutes == 0 {
+		p.QuotaWaitMinutes = 300
+	}
+	if p.QuotaWaitMinutes < 1 || p.QuotaWaitMinutes > 10080 {
+		writeError(w, 400, "invalid_payload", "额度等待时间应为1–10080分钟")
+		return
+	}
+	if p.MaxRetries == 0 {
+		p.MaxRetries = 3
+	}
 	now := s.now().UnixMilli()
-	if (p.Mode != "time" && p.Mode != "quota") || p.DueAt < now-60000 || p.DueAt > now+int64(30*24*time.Hour/time.Millisecond) || strings.TrimSpace(p.Prompt) == "" || len(p.Prompt) > 16<<10 || !utf8.ValidString(p.Prompt) || p.MaxRunMinutes < 1 || p.MaxRunMinutes > 360 {
+	if (p.Mode != "time" && p.Mode != "quota" && p.Mode != "live_quota") || p.DueAt < now-60000 || p.DueAt > now+int64(30*24*time.Hour/time.Millisecond) || strings.TrimSpace(p.Prompt) == "" || len(p.Prompt) > 16<<10 || !utf8.ValidString(p.Prompt) || p.MaxRunMinutes < 1 || p.MaxRunMinutes > 360 || p.MaxRetries < 1 || p.MaxRetries > 10 {
 		writeError(w, 400, "invalid_payload", "请检查继续时间、任务内容和运行上限")
 		return
+	}
+	if p.Mode == "live_quota" {
+		provider := liveSessionProvider(meta.Command, meta.Args)
+		if !supportedLiveCommand(provider) || meta.Recovery == nil || meta.Recovery.NativeID == "" || binding.NativeID != meta.Recovery.NativeID || (meta.Status != "running" && meta.Status != "starting" && meta.Status != "detached") {
+			writeError(w, 409, "unsupported_live_continuation", "自动续跑需要已绑定原生身份的运行中编程对话")
+			return
+		}
+		ac, e := s.requireAgent(r.Context(), user, device)
+		if e != nil || !supportsLiveProvider(ac.Caps(), provider) {
+			writeError(w, 409, "agent_upgrade_required", "请更新并连接支持此CLI自动续跑的 Agent")
+			return
+		}
+		p.DueAt = now
+		rows, e := s.store.Continuations(r.Context(), user, device)
+		if e != nil {
+			writeProtoError(w, e)
+			return
+		}
+		for _, row := range rows {
+			if row.Mode == "live_quota" && !taskTerminal(row.State) && row.Source.Recovery != nil && row.Source.Recovery.NativeID == binding.NativeID {
+				writeError(w, 409, "already_watching", "此原生对话已开启自动撞墙续跑，请先取消原任务")
+				return
+			}
+		}
 	}
 	active, err := s.store.ActiveContinuationCount(r.Context(), user, device)
 	if err != nil {
@@ -99,7 +137,7 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "task_limit", "每台设备最多保留20个未结束的续跑任务")
 		return
 	}
-	task := &protocol.ContinuationTask{ID: uuid.NewString(), UserID: user, DeviceID: device, SessionID: meta.ID, Source: source, Prompt: p.Prompt, Mode: p.Mode, DueAt: p.DueAt, State: "queued", MaxAttempts: 3, MaxRunMinutes: p.MaxRunMinutes, CreatedAt: now, UpdatedAt: now}
+	task := &protocol.ContinuationTask{ID: uuid.NewString(), UserID: user, DeviceID: device, SessionID: meta.ID, Source: source, Prompt: p.Prompt, Mode: p.Mode, DueAt: p.DueAt, State: "queued", MaxAttempts: p.MaxRetries + 1, QuotaWaitMinutes: p.QuotaWaitMinutes, MaxRetries: p.MaxRetries, RetryErrors: p.RetryErrors, MaxRunMinutes: p.MaxRunMinutes, CreatedAt: now, UpdatedAt: now}
 	if err = s.store.InsertContinuation(r.Context(), task, p.Nonce); err != nil {
 		writeProtoError(w, err)
 		return
@@ -205,7 +243,7 @@ func (s *Server) applyTaskState(ctx context.Context, ac *AgentConn, p protocol.T
 		return
 	}
 	switch p.State {
-	case "running", "completed", "failed", "cancelled", "needs_review", "waiting_quota", "waiting_idle", "waiting_agent", "cancelling":
+	case "running", "completed", "failed", "cancelled", "needs_review", "waiting_quota", "waiting_idle", "waiting_agent", "waiting_wall", "waiting_retry", "cancelling":
 	default:
 		return
 	}
@@ -222,7 +260,7 @@ func (s *Server) applyTaskState(ctx context.Context, ac *AgentConn, p protocol.T
 		if p.DueAt > t.DueAt {
 			t.DueAt = p.DueAt
 		}
-		if t.Attempt >= t.MaxAttempts {
+		if t.Mode != "live_quota" && t.Attempt >= t.MaxAttempts {
 			t.State = "failed"
 			t.Detail = "已达到续跑尝试上限，请确认额度后重新安排"
 		}
@@ -293,7 +331,7 @@ func (s *Server) dispatchContinuation(ctx context.Context, id string) {
 			s.tasksMu.Unlock()
 			return
 		}
-		if t.Attempt >= t.MaxAttempts {
+		if t.Mode != "live_quota" && t.Attempt >= t.MaxAttempts {
 			t.State = "failed"
 			t.Detail = "已达到尝试上限"
 			_, _ = s.store.UpdateContinuation(ctx, t, old)
@@ -314,7 +352,7 @@ func (s *Server) dispatchContinuation(ctx context.Context, id string) {
 	if e != nil || !changed {
 		return
 	}
-	p := protocol.TaskRunPayload{TaskID: t.ID, UserID: t.UserID, Attempt: t.Attempt, Source: t.Source, Prompt: t.Prompt, Mode: t.Mode, MaxRunMinutes: t.MaxRunMinutes}
+	p := protocol.TaskRunPayload{TaskID: t.ID, UserID: t.UserID, Attempt: t.Attempt, Source: t.Source, Prompt: t.Prompt, Mode: t.Mode, MaxRunMinutes: t.MaxRunMinutes, QuotaWaitMinutes: t.QuotaWaitMinutes, MaxRetries: t.MaxRetries, RetryErrors: t.RetryErrors}
 	response, e := s.taskRPC(ctx, ac, typ, p)
 	if e != nil {
 		// Keep the existing attempt for receipt inspection after reconnect. Neither
@@ -355,4 +393,40 @@ func (s *Server) startTaskLoop(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+func supportedLiveCommand(id string) bool {
+	return id == "codex" || id == "claude" || id == "opencode" || id == "dsh"
+}
+func supportsLiveProvider(c protocol.AgentCaps, id string) bool {
+	if id == "codex" && c.CodexLiveContinue {
+		return true
+	}
+	for _, v := range c.LiveContinueProviders {
+		if v == id {
+			return true
+		}
+	}
+	return false
+}
+
+func liveSessionProvider(command string, args []string) string {
+	base := func(value string) string {
+		name := strings.ToLower(filepath.Base(strings.ReplaceAll(value, `\`, "/")))
+		for _, suffix := range []string{".exe", ".cmd", ".bat"} {
+			name = strings.TrimSuffix(name, suffix)
+		}
+		return name
+	}
+	name := base(command)
+	if name == "cmd" {
+		name = ""
+		for i, arg := range args {
+			if strings.EqualFold(arg, "/c") && i+1 < len(args) {
+				name = base(args[i+1])
+				break
+			}
+		}
+	}
+	return name
 }

@@ -36,7 +36,7 @@ func (s *SQLite) ContinuationByNonce(ctx context.Context, user, nonce string) (*
 	return s.ContinuationByID(ctx, id)
 }
 func (s *SQLite) Continuations(ctx context.Context, user, device string) ([]*protocol.ContinuationTask, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT payload_json,user_id FROM continuation_tasks WHERE (?='' OR user_id=?) AND (?='' OR device_id=?) ORDER BY json_extract(payload_json,'$.created_at') DESC,id LIMIT 200", user, user, device, device)
+	rows, err := s.db.QueryContext(ctx, "SELECT payload_json,user_id FROM continuation_tasks WHERE (?='' OR user_id=?) AND (?='' OR device_id=?) ORDER BY CASE WHEN state IN ('completed','cancelled','failed','needs_review') THEN 1 ELSE 0 END,json_extract(payload_json,'$.created_at') DESC,id LIMIT 200", user, user, device, device)
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -73,7 +73,7 @@ func (s *SQLite) UpdateContinuation(ctx context.Context, t *protocol.Continuatio
 }
 
 func (s *SQLite) ReadyContinuations(ctx context.Context, now int64) ([]*protocol.ContinuationTask, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT payload_json,user_id FROM continuation_tasks WHERE state IN ('queued','waiting_agent','waiting_quota','waiting_idle','dispatching','running','cancelling') AND due_at<=? ORDER BY due_at,id LIMIT 32", now)
+	rows, err := s.db.QueryContext(ctx, "SELECT payload_json,user_id FROM continuation_tasks WHERE state IN ('queued','waiting_agent','waiting_quota','waiting_idle','waiting_wall','waiting_retry','dispatching','running','cancelling') AND due_at<=? ORDER BY due_at,id LIMIT 32", now)
 	if err != nil {
 		return nil, wrapErr(err)
 	}

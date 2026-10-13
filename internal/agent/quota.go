@@ -355,19 +355,21 @@ func claudeQuota(ctx context.Context, env []string, client *http.Client) ([]prot
 		return nil, "未找到本机 Claude OAuth 登录（API Key / 系统钥匙串暂不支持）"
 	}
 	var data struct {
-		Five  *claudeQuotaLane `json:"five_hour"`
-		Seven *claudeQuotaLane `json:"seven_day"`
+		Five   *claudeQuotaLane `json:"five_hour"`
+		Seven  *claudeQuotaLane `json:"seven_day"`
+		Opus   *claudeQuotaLane `json:"seven_day_opus"`
+		Sonnet *claudeQuotaLane `json:"seven_day_sonnet"`
 	}
 	if message := quotaGet(ctx, client, "https://api.anthropic.com/api/oauth/usage", auth.OAuth.Token, true, &data); message != "" {
 		return nil, message
 	}
 	result := []protocol.QuotaWindow{}
-	for i, lane := range []*claudeQuotaLane{data.Five, data.Seven} {
+	for i, lane := range []*claudeQuotaLane{data.Five, data.Seven, data.Opus, data.Sonnet} {
 		if lane == nil {
 			continue
 		}
 		reset, _ := time.Parse(time.RFC3339, lane.Reset)
-		label := []string{"5 小时", "7 天"}[i]
+		label := []string{"5 小时", "7 天", "Opus 7 天", "Sonnet 7 天"}[i]
 		if w, ok := quotaWindow(label, lane.Used, reset.Unix()); ok {
 			result = append(result, w)
 		}

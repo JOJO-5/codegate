@@ -179,3 +179,49 @@ func TestContinuationCanBeScheduledWhileTerminalIsLive(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveContinuationProviderPolicyAndDuplicateMonitor(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "live-policy@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, priv := e.seedPairedDevice(t, owner)
+	agent := e.agentHandshake(t, device, priv, protocol.AgentCaps{BackgroundContinue: true, CodexLiveContinue: true, LiveContinueProviders: []string{"codex", "claude", "opencode", "dsh"}})
+	path := "/api/v1/devices/" + device + "/continuations"
+	for _, cli := range []string{"codex", "claude", "opencode", "dsh"} {
+		meta := &storage.SessionMeta{ID: uuid.NewString(), UserID: owner, DeviceID: device, Command: cli, Cwd: "/owned/work", Status: "running", Recovery: &protocol.ConversationBinding{CommandID: cli, NativeID: uuid.NewString()}, CreatedAt: e.clock.Now()}
+		if err := e.store.UpsertSession(t.Context(), meta); err != nil {
+			t.Fatal(err)
+		}
+		body := map[string]any{"session_id": meta.ID, "prompt": "continue original task", "mode": "live_quota", "due_at": e.clock.Now().UnixMilli(), "nonce": uuid.NewString(), "max_retries": 2, "retry_errors": true, "quota_wait_minutes": 300}
+		response := e.post(t, path, token, body)
+		if response.Status != 201 {
+			t.Fatalf("%s: %d %s", cli, response.Status, response.Body)
+		}
+		var task protocol.ContinuationTask
+		json.Unmarshal(response.Body, &task)
+		if task.MaxRetries != 2 || !task.RetryErrors || task.QuotaWaitMinutes != 300 {
+			t.Fatal(task)
+		}
+		body["nonce"] = uuid.NewString()
+		if r := e.post(t, path, token, body); r.Status != 409 {
+			t.Fatal("duplicate monitor", r.Status)
+		}
+		body["max_retries"] = 11
+		if r := e.post(t, path, token, body); r.Status != 400 {
+			t.Fatal("unbounded retries", r.Status)
+		}
+		done := make(chan struct{})
+		go func() { e.srv.pollContinuations(t.Context()); close(done) }()
+		req := agentRecv(t, agent)
+		p, err := protocol.DecodePayload[protocol.TaskRunPayload](req)
+		if err != nil || p.Mode != "live_quota" || p.MaxRetries != 2 || !p.RetryErrors || p.QuotaWaitMinutes != 300 {
+			t.Fatal(p, err)
+		}
+		agentReply(t, agent, req, protocol.TypeTaskState, protocol.TaskStatePayload{TaskID: task.ID, Attempt: 1, State: "waiting_wall"})
+		<-done
+		r := e.post(t, path+"/"+task.ID+"/cancel", token, nil)
+		if r.Status != 200 {
+			t.Fatal(r.Status)
+		}
+	}
+}

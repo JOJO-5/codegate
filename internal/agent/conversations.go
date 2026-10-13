@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,12 +32,17 @@ import (
 var nativeIDPattern = regexp.MustCompile(`^(ses_[A-Za-z0-9]+|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$`)
 
 func nativeTool(cmd ResolvedCommand) string {
-	name := strings.TrimSuffix(strings.ToLower(filepath.Base(cmd.Command)), ".exe")
-	if name == "cmd" && len(cmd.Args) >= 2 && strings.EqualFold(cmd.Args[0], "/c") {
-		name = strings.TrimSuffix(strings.ToLower(filepath.Base(cmd.Args[1])), ".exe")
+	if tool := quotaProvider(cmd.Command, cmd.Args); tool != "" {
+		return tool
 	}
-	switch name {
-	case "codex", "opencode", "dsh", "claude":
+	base := func(value string) string {
+		return strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(filepath.Base(strings.ReplaceAll(value, `\`, "/"))), ".exe"), ".cmd"), ".bat")
+	}
+	name := base(cmd.Command)
+	if name == "cmd" && len(cmd.Args) >= 2 && strings.EqualFold(cmd.Args[0], "/c") {
+		name = base(cmd.Args[1])
+	}
+	if name == "dsh" {
 		return name
 	}
 	return ""
@@ -472,7 +478,8 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 	if err := os.MkdirAll(markerDir, 0700); err != nil {
 		return nil, nil, "", err
 	}
-	marker := filepath.Join(markerDir, uuid.NewString()+".json")
+	binding.ControlKey = uuid.NewString()
+	marker := filepath.Join(markerDir, binding.ControlKey+".json")
 	switch tool {
 	case "dsh":
 		if binding.StoreKey != "" {
@@ -502,6 +509,19 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 		cmd.Args = append(args, cmd.Args[prefix:]...)
 		env = replaceEnv(env, "CODEGATE_CONVERSATION_MARKER", marker)
 	case "claude":
+		if claudeSupportsLiveHooks(*cmd, env) {
+			exe, err := os.Executable()
+			if err != nil {
+				return nil, nil, "", err
+			}
+			args, err := injectClaudeLiveHooks(cmd.Args, marker, exe)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			cmd.Args = args
+		} else {
+			binding.ControlKey = ""
+		}
 		if binding.NativeID == "" {
 			binding.NativeID = uuid.NewString()
 			cmd.Args = append(cmd.Args, "--session-id", binding.NativeID)
@@ -621,9 +641,13 @@ func RecordConversation(args []string) error {
 	return nil
 }
 
-const openCodeBindingPlugin = `import {writeFile,rename} from "node:fs/promises";
-export const CodeGateBinding = async ({client,directory}) => {let chain=Promise.resolve();return ({
+const openCodeBindingPlugin = `import {writeFile,rename,readFile} from "node:fs/promises";
+` + liveBridgeJS + `
+export const CodeGateBinding = async ({client,directory}) => {let chain=Promise.resolve();
+` + openCodeLiveSetupJS + `
+return ({
  event: async ({event}) => {
+` + openCodeLiveEventJS + `
   let info;
   if (event.type === "session.created") info = event.properties.info;
   else if (event.type === "message.updated" && event.properties.info.role === "user") {
@@ -731,8 +755,11 @@ func (a *Agent) publishConversationBinding(sess *session.Session) {
 	_ = a.sendControl(bound)
 }
 
-const dshBindingPlugin = `import {writeFile,rename} from "node:fs/promises";
+const dshBindingPlugin = `import {writeFile,rename,readFile} from "node:fs/promises";
+import crypto from "node:crypto";
+` + liveBridgeJS + `
 export default function(ctx) {
+` + dshLiveSetupJS + `
  let chain=Promise.resolve();
  const record=(session)=>{
   if (!session?.header || (session.header.delegationDepth??0)>0 || session.header.cwd !== process.cwd()) return;
@@ -808,4 +835,11 @@ func nativeSQLiteURI(path string) string {
 		p = "/" + p
 	}
 	return (&url.URL{Scheme: "file", Path: p, RawQuery: "mode=ro"}).String()
+}
+
+func quoteHookCommand(s string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	return `'` + strings.ReplaceAll(s, `'`, `'"'"'`) + `'`
 }
