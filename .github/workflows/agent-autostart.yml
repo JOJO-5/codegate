@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - 'scripts/agent-autostart.ps1'
+      - 'scripts/agent-background-launcher.cs'
+      - 'scripts/test-agent-background.ps1'
       - '.github/workflows/agent-autostart.yml'
 
 permissions:
@@ -46,3 +48,6 @@ jobs:
             ('InputObject' -in $names) -and ('User' -in $names) -and ('Password' -in $names)
           }
           if (-not $compatible) { throw 'Registration API does not support password-backed task definitions' }
+      - name: Verify real windowless root and process ownership
+        shell: powershell
+        run: ./scripts/test-agent-background.ps1
