@@ -37,7 +37,7 @@ import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import ContinuationPanel from '../components/ContinuationPanel.vue'
-import { sessionQuotaProvider } from '../lib/sessionQuota'
+import { nativeCLI, sessionQuotaProvider } from '../lib/sessionQuota'
 import FilesView from './FilesView.vue'
 import SessionAttachments from '../components/SessionAttachments.vue'
 import TerminalTextReader from '../components/TerminalTextReader.vue'
@@ -984,7 +984,7 @@ onUnmounted(() => {
 
 <template>
   <div class="term" :style="{ height: termHeight }">
-    <ContinuationPanel v-if="sessionDevice && continuing" :key="sessionId" :device-id="sessionDevice" compact :source="continuing ? summary : null" @close="continuing = false" />
+    <ContinuationPanel v-if="sessionDevice" :key="sessionId" :device-id="sessionDevice" :session-id="sessionId" compact :source="continuing ? summary : null" @close="continuing = false" />
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
       <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 会话</button>
@@ -992,7 +992,7 @@ onUnmounted(() => {
       <button class="btn btn--sm" type="button" @click="openFiles">文件</button>
 
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-git', params: { id: sessionId } })">Git</button>
-      <button v-if="summary?.recovery && currentQuotaProvider" class="btn btn--sm" type="button" @click="continuing = true">安排继续</button>
+      <button v-if="summary?.recovery && summary && ['codex','claude','opencode','dsh'].includes(nativeCLI(summary.command,summary.args))" class="btn btn--sm" type="button" @click="continuing = true">{{ isLive ? '自动续跑' : '安排继续' }}</button>
       <span class="term__title" :title="summary?.name ?? sessionId">
         {{ summary?.name || summary?.command || sessionId }}
       </span>

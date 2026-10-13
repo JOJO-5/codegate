@@ -467,7 +467,7 @@ export const api = {
   },
 
   continuations(id:string):Promise<{tasks:ContinuationTask[]}> {return request('GET',`/devices/${encodeURIComponent(id)}/continuations`)},
-  createContinuation(id:string,body:{session_id:string;native_id:string;prompt:string;mode:string;due_at:number;max_run_minutes:number;nonce:string}):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations`,body)},
+  createContinuation(id:string,body:{session_id:string;native_id:string;prompt:string;mode:string;due_at:number;max_run_minutes:number;nonce:string;max_retries?:number;retry_errors?:boolean;quota_wait_minutes?:number}):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations`,body)},
   cancelContinuation(id:string,task:string):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}/cancel`)},
   // ---- 配对（两阶段）----
 

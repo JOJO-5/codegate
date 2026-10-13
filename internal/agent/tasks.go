@@ -21,6 +21,7 @@ import (
 )
 
 type taskReceipt struct {
+	Live   *liveQuotaReceipt         `json:"live,omitempty"`
 	UserID string                    `json:"user_id"`
 	Hash   string                    `json:"hash"`
 	Source protocol.SessionSummary   `json:"source"`
@@ -39,7 +40,7 @@ func continuationHash(p protocol.TaskRunPayload) string {
 	return hex.EncodeToString(h[:])
 }
 func (a *Agent) receiptPath(id string, attempt int) (string, error) {
-	if _, e := uuid.Parse(id); e != nil || attempt < 1 || attempt > 10 {
+	if _, e := uuid.Parse(id); e != nil || attempt < 1 || attempt > 11 {
 		return "", errors.New("invalid task identity")
 	}
 	return filepath.Join(a.cfg.StateDir, "task-receipts", taskRunKey(id, attempt)+".json"), nil
@@ -111,6 +112,10 @@ func (a *Agent) onTaskInspect(req *protocol.Envelope, cancel bool) {
 		a.replyError(req, err)
 		return
 	}
+	if p.Mode == "live_quota" {
+		a.onLiveQuota(req, p, cancel, true)
+		return
+	}
 	key := taskRunKey(p.TaskID, p.Attempt)
 	a.tasksMu.Lock()
 	run := a.tasks[key]
@@ -152,6 +157,10 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 	fail := func(message string) { result.Detail = message; a.reply(req, protocol.TypeTaskState, result) }
 	if err != nil || p.UserID == "" || p.Source.Recovery == nil || !nativeIDPattern.MatchString(p.Source.Recovery.NativeID) || len(p.Prompt) == 0 || len(p.Prompt) > 16<<10 || p.MaxRunMinutes < 1 || p.MaxRunMinutes > 360 {
 		fail("续跑配置或原生对话身份无效")
+		return
+	}
+	if p.Mode == "live_quota" {
+		a.onLiveQuota(req, p, false, false)
 		return
 	}
 	key := taskRunKey(p.TaskID, p.Attempt)
@@ -375,6 +384,9 @@ func (a *Agent) stopBackgroundTasks() {
 	a.tasksMu.Lock()
 	a.tasksClosing = true
 	for _, run := range a.tasks {
+		run.cancel()
+	}
+	for _, run := range a.liveRuns {
 		run.cancel()
 	}
 	a.tasksMu.Unlock()

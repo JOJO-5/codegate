@@ -141,20 +141,22 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
-	BackgroundContinue   bool `json:"background_continue,omitempty"`
-	ProjectCreate        bool `json:"project_create,omitempty"`
-	DSHWebApproval       bool `json:"dsh_web_approval,omitempty"`
-	TerminalViews        bool `json:"terminal_views,omitempty"`
-	QuotaRead            bool `json:"quota_read,omitempty"`
-	ConversationRecovery bool `json:"conversation_recovery,omitempty"`
-	WorktreeManagement   bool `json:"worktree_management,omitempty"`
-	GitActions           bool `json:"git_actions,omitempty"`
-	Worktrees            bool `json:"worktrees,omitempty"`
-	GitReview            bool `json:"git_review,omitempty"`
-	RepositoryScan       bool `json:"repository_scan,omitempty"`
-	MaxSessions          int  `json:"max_sessions"`
-	ConPTY               bool `json:"conpty,omitempty"`
-	UnixPTY              bool `json:"unix_pty,omitempty"`
+	LiveContinueProviders []string `json:"live_continue_providers,omitempty"`
+	CodexLiveContinue     bool     `json:"codex_live_continue,omitempty"`
+	BackgroundContinue    bool     `json:"background_continue,omitempty"`
+	ProjectCreate         bool     `json:"project_create,omitempty"`
+	DSHWebApproval        bool     `json:"dsh_web_approval,omitempty"`
+	TerminalViews         bool     `json:"terminal_views,omitempty"`
+	QuotaRead             bool     `json:"quota_read,omitempty"`
+	ConversationRecovery  bool     `json:"conversation_recovery,omitempty"`
+	WorktreeManagement    bool     `json:"worktree_management,omitempty"`
+	GitActions            bool     `json:"git_actions,omitempty"`
+	Worktrees             bool     `json:"worktrees,omitempty"`
+	GitReview             bool     `json:"git_review,omitempty"`
+	RepositoryScan        bool     `json:"repository_scan,omitempty"`
+	MaxSessions           int      `json:"max_sessions"`
+	ConPTY                bool     `json:"conpty,omitempty"`
+	UnixPTY               bool     `json:"unix_pty,omitempty"`
 }
 
 // AgentChallengePayload 是 Server 发来的随机数，用于防重放。
@@ -634,6 +636,7 @@ type ManagedHealth struct {
 // ConversationBinding identifies a native conversation, independent of a PTY.
 // StoreKey is an opaque UUID identifying DSH's private persistence namespace.
 type ConversationBinding struct {
+	ControlKey string `json:"control_key,omitempty"`
 	CommandID  string `json:"command_id"`
 	NativeID   string `json:"native_id,omitempty"`
 	StoreKey   string `json:"store_key,omitempty"`

@@ -149,6 +149,8 @@ type Session struct {
 	closeOnce sync.Once
 	closeErr  error
 
+	inputMu        sync.Mutex
+	inputRevision  uint64
 	mu             sync.Mutex
 	proc           ProcState
 	cols, rows     uint16
@@ -542,6 +544,8 @@ func (s *Session) Done() <-chan struct{} { return s.closed }
 // 只有 controller 能输入：viewer 是只读的（§7.6）。
 // 这不是防人 —— 同一账号都是自己 —— 而是防"手机和电脑同时敲键盘"的混乱。
 func (s *Session) Write(connID string, p []byte) (int, error) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	s.mu.Lock()
 	v, ok := s.views[connID]
 	if !ok {
@@ -556,6 +560,7 @@ func (s *Session) Write(connID string, p []byte) (int, error) {
 		s.mu.Unlock()
 		return 0, fmt.Errorf("%w: 状态 %s", ErrClosed, s.proc)
 	}
+	s.inputRevision++
 	s.mu.Unlock()
 
 	// PTY 写入可能阻塞，所以放在锁外。
@@ -771,4 +776,21 @@ func (s *Session) notifyViewsLocked() {
 			sink.SendState(v.Role, s.cols, s.rows)
 		}
 	}
+}
+
+// InputRevision lets opt-in automation yield as soon as a person types.
+func (s *Session) InputRevision() uint64 { s.mu.Lock(); defer s.mu.Unlock(); return s.inputRevision }
+
+// WriteAutomation is reserved for an explicitly opted-in native CLI adapter.
+// It atomically yields to human input and never counts its own submission as a person.
+func (s *Session) WriteAutomation(revision uint64, p []byte) (int, error) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.mu.Lock()
+	valid := s.inputRevision == revision && CanInput(s.proc)
+	s.mu.Unlock()
+	if !valid {
+		return 0, ErrClosed
+	}
+	return s.pty.Write(p)
 }
