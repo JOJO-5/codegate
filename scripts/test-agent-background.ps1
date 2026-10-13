@@ -103,6 +103,9 @@ try {
   # isolated test account is removed below, without changing existing users.
   $adminGroup = Get-LocalGroup -SID ([Security.Principal.SecurityIdentifier]'S-1-5-32-544')
   Add-LocalGroupMember -Group $adminGroup.Name -Member $fixtureUser
+  $usersGroup = Get-LocalGroup -SID ([Security.Principal.SecurityIdentifier]'S-1-5-32-545')
+  $fixtureSid = (Get-LocalUser -Name $fixtureUser).SID
+  if (-not (Get-LocalGroupMember -Group $usersGroup.Name | Where-Object { $_.SID -eq $fixtureSid })) { Add-LocalGroupMember -Group $usersGroup.Name -Member $fixtureUser }
   $account = $env:COMPUTERNAME + '\' + $fixtureUser
   $principal = New-ScheduledTaskPrincipal -UserId $account -LogonType Password -RunLevel Limited
   $action = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument '/c exit 0'
