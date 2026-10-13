@@ -38,7 +38,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Fixture compile failed' }
 function Wait-Check([scriptblock]$Check) {
  $deadline = [DateTime]::UtcNow.AddSeconds(12)
  while ([DateTime]::UtcNow -lt $deadline) { if (& $Check) { return }; Start-Sleep -Milliseconds 100 }
- throw 'Background process condition timed out'
+ throw ('Background process condition timed out; caller line ' + (Get-PSCallStack)[1].ScriptLineNumber)
 }
 $hostProcess = $null
 try {
@@ -99,6 +99,10 @@ try {
   $securePassword = ConvertTo-SecureString $fixturePassword -AsPlainText -Force
   New-LocalUser -Name $fixtureUser -Password $securePassword -AccountNeverExpires -PasswordNeverExpires | Out-Null
   $accountCreated = $true
+  # The fixture needs the runner's standard batch-logon/command access; this
+  # isolated test account is removed below, without changing existing users.
+  $adminGroup = Get-LocalGroup -SID ([Security.Principal.SecurityIdentifier]'S-1-5-32-544')
+  Add-LocalGroupMember -Group $adminGroup.Name -Member $fixtureUser
   $account = $env:COMPUTERNAME + '\' + $fixtureUser
   $principal = New-ScheduledTaskPrincipal -UserId $account -LogonType Password -RunLevel Limited
   $action = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument '/c exit 0'
@@ -112,7 +116,10 @@ try {
   $fixturePassword = $null; $securePassword = $null
   if ((Get-ScheduledTask -TaskName $passwordTask).Principal.LogonType -ne 'Password') { throw 'Password logon changed during action repair' }
   Start-ScheduledTask -TaskName $passwordTask
-  Wait-Check { (Get-ScheduledTaskInfo -TaskName $passwordTask).LastTaskResult -eq 23 }
+  try { Wait-Check { (Get-ScheduledTaskInfo -TaskName $passwordTask).LastTaskResult -eq 23 } } catch {
+    $taskInfo = Get-ScheduledTaskInfo -TaskName $passwordTask
+    throw ('Password fixture execution failed: LastTaskResult=' + $taskInfo.LastTaskResult + '; LastRunTime=' + $taskInfo.LastRunTime)
+  }
  } finally {
   $fixturePassword = $null; $securePassword = $null
   if ($credentialTaskCreated) { Stop-ScheduledTask -TaskName $passwordTask -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $passwordTask -Confirm:$false }
