@@ -148,3 +148,34 @@ func TestContinuationQuotaRetryBoundedAndCancellationWins(t *testing.T) {
 		t.Fatal("late waiting overwrote cancellation")
 	}
 }
+
+func TestContinuationCanBeScheduledWhileTerminalIsLive(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "live-schedule@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, priv := e.seedPairedDevice(t, owner)
+	agent := e.agentHandshake(t, device, priv, protocol.AgentCaps{BackgroundContinue: true})
+	for _, status := range []string{"running", "starting", "detached"} {
+		meta := &storage.SessionMeta{ID: uuid.NewString(), UserID: owner, DeviceID: device, Command: "codex", Cwd: "/owned/work", Status: status, Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: uuid.NewString()}, CreatedAt: e.clock.Now()}
+		if err := e.store.UpsertSession(t.Context(), meta); err != nil {
+			t.Fatal(err)
+		}
+		response := e.post(t, "/api/v1/devices/"+device+"/continuations", token, map[string]any{"session_id": meta.ID, "prompt": "continue", "mode": "time", "due_at": e.clock.Now().UnixMilli(), "nonce": uuid.NewString()})
+		if response.Status != 201 {
+			t.Fatalf("%s: %d %s", status, response.Status, response.Body)
+		}
+		var task protocol.ContinuationTask
+		if err := json.Unmarshal(response.Body, &task); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() { e.srv.pollContinuations(t.Context()); close(done) }()
+		req := agentRecv(t, agent)
+		agentReply(t, agent, req, protocol.TypeTaskState, protocol.TaskStatePayload{TaskID: task.ID, Attempt: 1, State: "waiting_idle", DueAt: e.clock.Now().Add(time.Minute).UnixMilli(), Detail: "原对话仍有终端运行"})
+		<-done
+		got, err := e.store.ContinuationByID(t.Context(), task.ID)
+		if err != nil || got.State != "waiting_idle" {
+			t.Fatalf("%s: %#v %v", status, got, err)
+		}
+	}
+}
