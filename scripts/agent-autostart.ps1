@@ -128,6 +128,20 @@ if ($LASTEXITCODE -ne 0) { throw 'Agent 自检失败，未停止原任务。请�
 $stagedLauncher = Join-Path $installDir ('launcher-' + [Guid]::NewGuid().ToString('N') + '.exe')
 try { New-BackgroundLauncher $stagedLauncher } catch { Remove-Item -LiteralPath $stagedLauncher -ErrorAction SilentlyContinue; throw }
 
+$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$credential = $null
+$plainPassword = $null
+if ($Action -eq 'install' -or $task.Principal.LogonType -eq 'Password') {
+    try {
+        $message = if ($Action -eq 'repair') { 'Windows 要求重新验证账户密码以修改 Password 任务入口（不是 PIN）；取消不会停止旧任务' } else { '请输入当前 Windows 账号密码，以便未登录时运行 Agent（PIN 不适用）' }
+        $credential = Get-Credential -UserName $currentUser -Message $message
+        if ($null -eq $credential) { throw '已取消，原任务未停止。' }
+        if (-not [string]::Equals($credential.UserName, $currentUser, [StringComparison]::OrdinalIgnoreCase)) { throw '必须使用当前 Windows 账号，原任务未停止。' }
+        $plainPassword = $credential.GetNetworkCredential().Password
+    } catch { Remove-Item -LiteralPath $stagedLauncher -ErrorAction SilentlyContinue; throw }
+}
+
+try {
 if ($null -ne $task) {
     Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
     for ($i = 0; $i -lt 20; $i++) {
@@ -147,26 +161,17 @@ Move-Item -LiteralPath $stagedLauncher -Destination $installedLauncher -Force
 $scheduledAction = New-ScheduledTaskAction -Execute $installedLauncher -Argument "-config `"$config`"" -WorkingDirectory $installDir
 
 if ($Action -eq 'repair') {
-    # Changing only the action retains the existing account, stored credential,
-    # triggers and permissions. No Windows password is read or requested.
-    Set-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $scheduledAction | Out-Null
+    # Windows requires credentials when updating Password-logon tasks. Keep
+    # the principal and trigger, and authenticate locally only for this case.
+    if ($task.Principal.LogonType -eq 'Password') {
+        Set-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $scheduledAction -User $currentUser -Password $plainPassword | Out-Null
+    } else { Set-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $scheduledAction | Out-Null }
     Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath
     Write-Host '已切换为无窗口入口；原登录方式、配置及设备身份保留。'
     Write-Host "后台诊断日志: $(Join-Path $installDir '..\logs\agent-background.log')"
     exit 0
 }
 
-$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-$credential = Get-Credential -UserName $currentUser -Message '请输入当前 Windows 账号的密码，以便开机且未登录时运行 Agent（PIN 不适用）'
-if ($null -eq $credential) {
-    throw '已取消安装。'
-}
-if (-not [string]::Equals($credential.UserName, $currentUser, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "必须使用当前账号 $currentUser，才能复用已经配对的设备身份。"
-}
-
-$plainPassword = $credential.GetNetworkCredential().Password
-try {
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     # Password logon is non-interactive. 'Hidden' only hides a task in the UI
@@ -178,14 +183,19 @@ try {
     if ($registered.Principal.LogonType -ne 'Password') {
         throw '任务未以非交互后台方式注册，未启动 Agent。请检查计划任务登录方式。'
     }
-}
-finally {
-    $plainPassword = $null
-    $credential = $null
-}
-
 Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath
 Write-Host '开机任务已安装并启动，无窗口入口在登录桌面前也会尝试连接 Server。'
 Write-Host "后台诊断日志: $(Join-Path $installDir '..\logs\agent-background.log')"
 Write-Host '查询状态: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-autostart.ps1 status'
 Write-Host '请在 Server 的设备页确认 Agent 已上线；首次还需在这台机器上验证一次锁屏/重启场景。'
+
+} catch {
+    # If registration failed, the original task definition and credential still
+    # exist. Resume that known task instead of leaving the device offline.
+    if ($null -ne $task) { Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue }
+    throw
+} finally {
+    $plainPassword = $null
+    $credential = $null
+    Remove-Item -LiteralPath $stagedLauncher -ErrorAction SilentlyContinue
+}

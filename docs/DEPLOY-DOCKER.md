@@ -224,6 +224,6 @@ Agent 在电脑上启动 `dsh web --no-open`，通过现有出站连接把本机
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\CodeGate\agent-autostart.ps1" repair
 ```
 
-`repair` 只修复当前账户拥有的标准 CodeGate 任务，沿用原任务的配置路径、账户、登录方式、凭据和触发条件，无需再次提供密码。它会停止任务、替换已校验的守护进程并重启，因此先结束正在工作的 CLI。初次安装仍用 `install`；如需改为未登录桌面也运行，使用 `install` 设置 Password 登录方式。
+`repair` 只修复当前账户拥有的标准 CodeGate 任务，沿用原任务的配置路径、账户、登录方式和触发条件。Password 登录的任务修改入口时，Windows 要求在本机验证一次账户密码（不是 PIN）；取消会保留正在运行的旧任务。其他登录方式无需输入密码。它会停止任务、替换已校验的守护进程并重启，因此先结束正在工作的 CLI。初次安装仍用 `install`；如需改为未登录桌面也运行，使用 `install` 设置 Password 登录方式。
 
 启动器使用 Windows 自带 .NET Framework 编译器生成，最外层及更新校验回退路径都不创建控制台。后台诊断写入 `%LOCALAPPDATA%\CodeGate\logs\agent-background.log`，单文件约1MiB并保留一份轮转日志。隐藏窗口不改变更新 SHA-256 校验，日志中的校验失败仍需按具体更新状态排查。

@@ -85,7 +85,7 @@ try {
   if ($taskInstalled) {Stop-ScheduledTask -TaskName 'CodeGate Agent' -TaskPath '\' -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName 'CodeGate Agent' -TaskPath '\' -Confirm:$false}
   $env:LOCALAPPDATA = $savedLocalAppData
  }
- # Verify Password task updates preserve the stored credential too. Use only
+ # Verify Password task changes authenticate locally and retain logon mode. Use only
  # an ephemeral CI-owned local account; no existing user's password is read.
  $fixtureUser = 'cg-bg-' + [Guid]::NewGuid().ToString('N').Substring(0,10)
  $passwordTask = 'CodeGate Credential Fixture ' + $fixtureUser
@@ -104,19 +104,12 @@ try {
   $action = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument '/c exit 0'
   Register-ScheduledTask -TaskName $passwordTask -InputObject (New-ScheduledTask -Action $action -Principal $principal) -User $account -Password $fixturePassword | Out-Null
   $credentialTaskCreated = $true
-  $fixturePassword = $null; $securePassword = $null
   $nextAction = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\cmd.exe') -Argument '/c exit 23'
-  # COM TASK_UPDATE with TASK_LOGON_NONE leaves credential selection to the
-  # existing definition; verify actual logon rather than assuming CIM behavior.
-  $scheduler = New-Object -ComObject 'Schedule.Service'
-  $scheduler.Connect()
-  $folder = $scheduler.GetFolder('\')
-  $definition = $folder.GetTask($passwordTask).Definition
-  $definition.Actions.Clear()
-  $execAction = $definition.Actions.Create(0)
-  $execAction.Path = $nextAction.Execute
-  $execAction.Arguments = $nextAction.Arguments
-  $folder.RegisterTaskDefinition($passwordTask, $definition, 4, $null, $null, 0, $null) | Out-Null
+  $rejected = $false
+  try { Set-ScheduledTask -TaskName $passwordTask -Action $nextAction -ErrorAction Stop | Out-Null } catch { $rejected = $true }
+  if (-not $rejected) { throw 'Credential fixture expected Windows to require authentication' }
+  Set-ScheduledTask -TaskName $passwordTask -Action $nextAction -User $account -Password $fixturePassword | Out-Null
+  $fixturePassword = $null; $securePassword = $null
   if ((Get-ScheduledTask -TaskName $passwordTask).Principal.LogonType -ne 'Password') { throw 'Password logon changed during action repair' }
   Start-ScheduledTask -TaskName $passwordTask
   Wait-Check { (Get-ScheduledTaskInfo -TaskName $passwordTask).LastTaskResult -eq 23 }
