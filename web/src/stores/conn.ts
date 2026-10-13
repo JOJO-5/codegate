@@ -18,11 +18,11 @@
  * 方法调用会丢 this。浅引用正好：我们只关心「client 换没换」。
  */
 
-import { computed, ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { WSClient, type WSState } from '../lib/ws'
 import type { DecodedFrame, Envelope, MessageType } from '../lib/protocol'
-import { FrameType } from '../lib/protocol'
+import { FrameType, MessageType as ControlType } from '../lib/protocol'
 
 type ControlHandler = (env: Envelope) => void
 type FrameHandler = (frame: DecodedFrame) => void
@@ -41,6 +41,39 @@ export const useConnStore = defineStore('conn', () => {
   const client = shallowRef<WSClient | null>(null)
 
   const isOpen = computed(() => state.value === 'open')
+  let terminalQueue: Promise<void> = Promise.resolve()
+  let terminalSession: string | null = null
+  let terminalEpoch = 0
+  watch(isOpen, open => { if (!open) { terminalEpoch++; terminalSession = null } }, { flush: 'sync' })
+  function terminalOperation<T>(run: () => Promise<T>): Promise<T> {
+    const result = terminalQueue.then(run)
+    terminalQueue = result.then(() => {}, () => {})
+    return result
+  }
+  function attachTerminal<T>(id: string, payload: unknown): Promise<Envelope<T>> {
+    const epoch = terminalEpoch
+    return terminalOperation(async () => {
+      if (!isOpen.value || epoch !== terminalEpoch) throw new Error('连接已变化，请重试连接')
+      if (terminalSession && terminalSession !== id) {
+        const previous = terminalSession
+        await request(ControlType.SessionDetach, { session_id: previous, reason: 'client_close' }, previous)
+        if (epoch !== terminalEpoch) throw new Error('连接已变化，请重试连接')
+        terminalSession = null
+      }
+      const result = await request<T>(ControlType.SessionAttach, payload, id)
+      if (epoch === terminalEpoch) terminalSession = id
+      return result
+    })
+  }
+  function detachTerminal(id: string): Promise<void> {
+    const epoch = terminalEpoch
+    return terminalOperation(async () => {
+      if (!isOpen.value || epoch !== terminalEpoch || terminalSession !== id) return
+      await request(ControlType.SessionDetach, { session_id: id, reason: 'client_close' }, id)
+      if (epoch === terminalEpoch && terminalSession === id) terminalSession = null
+    })
+  }
+
   /** 顶栏指示灯的三态：ok（连上）/ warn（在重连）/ err（挂了）。 */
   const health = computed<'ok' | 'warn' | 'err' | 'idle'>(() => {
     if (fatal.value !== null) return 'err'
@@ -162,6 +195,8 @@ export const useConnStore = defineStore('conn', () => {
     onControl,
     onFrame,
     request,
+    attachTerminal,
+    detachTerminal,
     notify,
     sendFrame,
   }
