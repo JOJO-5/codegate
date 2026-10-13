@@ -79,6 +79,7 @@ const router = useRouter()
 
 const hostEl = ref<HTMLDivElement | null>(null)
 
+const mountedSessionId = props.id
 const sessionId = computed(() => props.id)
 
 const summary = ref<SessionSummary | null>(null)
@@ -669,15 +670,14 @@ async function attach(since: number, queueFullReplay = false): Promise<void> {
   replaying.value = true
   errorText.value = null
   try {
-    const env = await conn.request<SessionAttachedPayload>(
-      MessageType.SessionAttach,
+    const env = await conn.attachTerminal<SessionAttachedPayload>(
+      sessionId.value,
       {
         session_id: sessionId.value,
         since,
         cols: term?.cols ?? 80,
         rows: term?.rows ?? 24,
       },
-      sessionId.value,
     )
     // A closed socket or an unmounted page must not finish an old recovery
     // attempt over a newer connection's state.
@@ -972,7 +972,7 @@ onUnmounted(() => {
 
   // 主动 detach：让服务端把会话标成 detached（PTY 继续跑，I2 不变量）
   if (conn.isOpen) {
-    void conn.request(MessageType.SessionDetach, { session_id: sessionId.value, reason: 'client_close' }, sessionId.value).catch(() => {})
+    void conn.detachTerminal(mountedSessionId).catch(() => {})
   }
 
   term?.dispose()
