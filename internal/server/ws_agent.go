@@ -527,7 +527,7 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 	if (env.Type == protocol.TypeRepositoryListed || env.Type == protocol.TypeError) && s.srv.acceptRepositoryReply(s.ac, env) {
 		return nil
 	}
-	if (env.Type == protocol.TypeToolUpdated || env.Type == protocol.TypeError) && s.srv.acceptToolReply(s.ac, env) {
+	if (env.Type == protocol.TypeToolUpdated || env.Type == protocol.TypeAgentUpdateAccepted || env.Type == protocol.TypeError) && s.srv.acceptToolReply(s.ac, env) {
 		return nil
 	}
 	switch env.Type {
@@ -536,7 +536,7 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 		return nil
 	case protocol.TypeGitResult, protocol.TypeRepositoryListed:
 		return nil
-	case protocol.TypeToolUpdated:
+	case protocol.TypeToolUpdated, protocol.TypeAgentUpdateAccepted:
 		return nil
 	case protocol.TypeWebClose:
 		p, err := protocol.DecodePayload[protocol.WebStreamPayload](env)

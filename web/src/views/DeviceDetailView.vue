@@ -127,6 +127,23 @@ async function deleteRecord(s: SessionSummary): Promise<void> {
   catch (e) { sessionActionError.value = humanizeError(e) }
 }
 const updateInfo = ref<DeviceUpdateStatus | null>(null)
+const updateAction = ref<'check' | 'restart' | null>(null)
+const updateNotice = ref('')
+const updateError = ref('')
+async function controlUpdate(action: 'check' | 'restart'): Promise<void> {
+  if (updateAction.value) return
+  const id = props.id
+  updateAction.value = action
+  updateError.value = ''
+  updateNotice.value = ''
+  try {
+    await api.controlAgentUpdate(id, action)
+    if (props.id !== id) return
+    updateNotice.value = action === 'restart' ? '已安排：先检查更新，空闲时重启。设备会短暂离线后自动连接。' : '已请求检查并下载更新，请等待 Agent 上报状态。'
+    await loadUpdateStatus()
+  } catch (e) { if (props.id === id) updateError.value = humanizeError(e) }
+  finally { updateAction.value = null }
+}
 let updateTimer: ReturnType<typeof setInterval> | null = null
 let updateLoading = false
 async function loadUpdateStatus(): Promise<void> {
@@ -148,7 +165,7 @@ const updateLabel = computed(() => {
   if (!info.online) return '设备离线'
   const u = info.update
   if (u === null || !u.state) return '等待 Agent 心跳'
-  if (!u.enabled || u.state === 'disabled') return '自动更新未启用'
+  if (u.state === 'disabled') return '自动更新未启用'
   return ({
     waiting: '等待设备空闲',
     checking: '正在检查更新',
@@ -774,19 +791,27 @@ function canOpen(s: SessionSummary): boolean {
         </span>
       </div>
       <p v-if="updateInfo?.update?.enabled && updateInfo.update.state === 'waiting'" class="dim small">
-        当前会话、Git 操作、工作区创建或 Web 服务可能占用设备。操作结束后自动更新会再次检查；需要保留的会话无需为了更新而关闭。
+        更新包会先下载保存；现有会话（含保留的终端输出）、后台任务、Git 操作或 Web 服务结束后再重启。
       </p>
       <div v-if="updateInfo?.update?.last_failure" class="notice notice--warn small" style="margin-bottom: 8px">
         上次升级未完成（{{ updateInfo.update.last_failure.version }}）：{{ updateInfo.update.last_failure.reason }}。
         {{ relativeTime(updateInfo.update.last_failure.occurred_at) }}，已继续使用旧版。<span v-if="updateInfo.update.last_failure.retry_after"> 此版本下次允许重试：{{ absoluteTime(updateInfo.update.last_failure.retry_after) }}。</span>
       </div>
+      <p v-if="updateInfo?.update?.managed" class="dim small">新版先下载并校验，空闲后自动升级；重启电脑或 Agent 服务也会安装已保存的更新。升级失败会恢复旧版。</p>
+      <div class="row">
+        <button class="btn btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || updateInfo.update?.state === 'switching'" @click="controlUpdate('check')">{{ updateAction === 'check' ? '正在请求…' : '检查更新' }}</button>
+        <button class="btn btn--primary btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || updateInfo.update?.state === 'switching'" @click="controlUpdate('restart')">{{ updateAction === 'restart' ? '正在请求…' : '空闲时重启并升级' }}</button>
+      </div>
+      <p v-if="updateInfo?.online && !updateInfo.update?.managed" class="dim small">此功能需要新版 Agent 使用 supervise 服务运行；旧版需先在本机升级一次。</p>
+      <p v-if="updateNotice" class="notice small" role="status">{{ updateNotice }}</p>
+      <p v-if="updateError" class="notice notice--err small" role="alert">{{ updateError }}</p>
       <p v-if="updateInfo?.update?.version" class="dim small">目标版本：{{ updateInfo.update.version }}</p>
       <p v-if="updateInfo?.update?.detail" class="dim small">{{ updateInfo.update.detail }}</p>
       <p v-if="updateInfo?.update?.checked_at" class="faint small">
         最近检查：{{ relativeTime(updateInfo.update.checked_at) }}。状态由 Agent 心跳上报，可能有短暂延迟。
       </p>
       <p v-if="updateInfo?.online && updateInfo.update?.state === 'disabled'" class="dim small">
-        要启用空闲自动更新，请在本机 agent.json 设置 update_enabled，并使用 supervise 开机服务。
+        自动更新已关闭；仍可手动检查或安排空闲重启。可在本机 agent.json 设置 update_enabled 为 true 开启自动检查。
       </p>
     </details>
 

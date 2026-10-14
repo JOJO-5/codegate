@@ -221,7 +221,7 @@ type Config struct {
 
 	// UpdateManifestURL points to a trusted HTTPS manifest for optional idle updates.
 	UpdatePublicKey string `json:"update_public_key,omitempty"`
-	UpdateEnabled   bool   `json:"update_enabled,omitempty"`
+	UpdateEnabled   bool   `json:"update_enabled"`
 	// DSHWebEnabled permits starting dsh web and proxying its fixed loopback port.
 	DSHWebEnabled  bool     `json:"dsh_web_enabled,omitempty"`
 	UpdateInterval Duration `json:"update_interval,omitempty"`
@@ -455,6 +455,13 @@ func Load(path string) (Config, error) {
 	cfg := DefaultConfig()
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("agent: 解析配置 %s 失败: %w", path, err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return Config{}, err
+	}
+	if _, explicit := fields["update_enabled"]; !explicit {
+		cfg.UpdateEnabled = strings.HasPrefix(cfg.ServerURL, "wss://") || strings.HasPrefix(cfg.ServerURL, "https://")
 	}
 	return cfg, nil
 }

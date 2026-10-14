@@ -87,6 +87,13 @@ func (s *Server) acceptToolReply(ac *AgentConn, env *protocol.Envelope) bool {
 	}
 	s.web.mu.Lock()
 	wait, ok := s.web.toolPending[env.ReplyTo]
+	expected := wait.expected
+	if expected == "" {
+		expected = protocol.TypeToolUpdated
+	}
+	if env.Type != protocol.TypeError && env.Type != expected {
+		ok = false
+	}
 	if ok && wait.agent == ac {
 		delete(s.web.toolPending, env.ReplyTo)
 	}

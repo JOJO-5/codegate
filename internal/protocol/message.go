@@ -254,7 +254,12 @@ type HeartbeatPayload struct {
 
 // AgentUpdateStatus reports only observable Agent state, never a guessed
 // install outcome from the published Server version.
+type AgentUpdateControl struct {
+	Action string `json:"action"`
+}
+
 type AgentUpdateStatus struct {
+	Managed     bool                `json:"managed,omitempty"`
 	Enabled     bool                `json:"enabled"`
 	State       string              `json:"state"`
 	Version     string              `json:"version,omitempty"`

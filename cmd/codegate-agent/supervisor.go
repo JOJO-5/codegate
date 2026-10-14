@@ -45,6 +45,16 @@ type pendingAgent struct {
 
 func updatePath(stateDir, name string) string { return filepath.Join(stateDir, "updates", name) }
 
+// Persist verified bytes even while busy, so a service/OS restart can install
+// them without downloading again. Candidate activation still requires auth.
+func saveVerifiedUpdate(stateDir, path, version string) error {
+	digest, size, err := artifactDigest(stateDir, path, version)
+	if err != nil {
+		return err
+	}
+	return updatefile.WriteJSON(updatePath(stateDir, "pending.json"), pendingAgent{path, version, digest, size})
+}
+
 func queueVerifiedUpdate(a *agent.Agent, stateDir, path, version string, stop context.CancelFunc) error {
 	if !validUpdatePath(stateDir, path, version) {
 		return errors.New("更新包路径或版本无效")
@@ -237,6 +247,23 @@ func supervise(ctx context.Context, configPath, stateDir, self, selfVersion stri
 	}
 	var running *managedChild
 	var marker string
+	defer func() {
+		if running != nil {
+			running.stop()
+		}
+		if marker != "" {
+			_ = os.Remove(marker)
+			_ = os.Remove(marker + ".legacy")
+		}
+	}()
+	if req, err := consumePending(stateDir); err == nil && versionAfter(req.Version, current.Version) && !retryBlocked(stateDir, req.Version) {
+		if next, nextMarker, err := activateCandidate(ctx, configPath, stateDir, req, current, p); err == nil {
+			current = installedAgent{req.Path, req.Version, req.SHA256, req.Size, current.Path, current.Version, current.SHA256, current.Size}
+			running, marker = next, nextMarker
+		} else if ctx.Err() == nil {
+			_ = writeUpdateFailure(stateDir, req.Version, "启动时更新未通过校验或鉴权，继续使用旧版")
+		}
+	}
 	failures := 0
 	for ctx.Err() == nil {
 		if running == nil {
@@ -274,26 +301,12 @@ func supervise(ctx context.Context, configPath, stateDir, self, selfVersion stri
 			if retryBlocked(stateDir, req.Version) {
 				fmt.Fprintln(os.Stderr, "失败版本仍在退避期，继续使用旧版本")
 			} else {
-				err = checkCandidate(ctx, req)
-				var next *managedChild
-				var nextMarker string
-				if err == nil {
-					next, nextMarker, err = launchManaged(ctx, req.Path, configPath, stateDir)
-				}
-				if err == nil && awaitReadyWithPolicy(ctx, next, nextMarker, req.Version, p) {
-					nextState := installedAgent{Path: req.Path, Version: req.Version, SHA256: req.SHA256, Size: req.Size, Previous: current.Path, PreviousVersion: current.Version, PreviousSHA256: current.SHA256, PreviousSize: current.Size}
-					if err = writeState(updatePath(stateDir, "current.json"), nextState); err == nil {
-						current = nextState
-						running = next
-						marker = nextMarker
-						failures = 0
-						continue
-					}
-				}
-				if next != nil {
-					next.stop()
-					_ = os.Remove(nextMarker)
-					_ = os.Remove(nextMarker + ".legacy")
+				next, nextMarker, activateErr := activateCandidate(ctx, configPath, stateDir, req, current, p)
+				if activateErr == nil {
+					current = installedAgent{req.Path, req.Version, req.SHA256, req.Size, current.Path, current.Version, current.SHA256, current.Size}
+					running, marker = next, nextMarker
+					failures = 0
+					continue
 				}
 				if ctx.Err() != nil {
 					return nil
@@ -325,6 +338,28 @@ func supervise(ctx context.Context, configPath, stateDir, self, selfVersion stri
 	}
 	return nil
 }
+func activateCandidate(ctx context.Context, configPath, stateDir string, req pendingAgent, current installedAgent, p supervisorPolicy) (*managedChild, string, error) {
+	if err := checkCandidate(ctx, req); err != nil {
+		return nil, "", err
+	}
+	next, marker, err := launchManaged(ctx, req.Path, configPath, stateDir)
+	if err != nil {
+		return nil, "", err
+	}
+	if awaitReadyWithPolicy(ctx, next, marker, req.Version, p) {
+		state := installedAgent{req.Path, req.Version, req.SHA256, req.Size, current.Path, current.Version, current.SHA256, current.Size}
+		if err = writeState(updatePath(stateDir, "current.json"), state); err == nil {
+			return next, marker, nil
+		}
+	} else {
+		err = errors.New("新版本未通过 Server 鉴权检查")
+	}
+	next.stop()
+	_ = os.Remove(marker)
+	_ = os.Remove(marker + ".legacy")
+	return nil, "", err
+}
+
 func previousAgent(current installedAgent) installedAgent {
 	return installedAgent{Path: current.Previous, Version: current.PreviousVersion, SHA256: current.PreviousSHA256, Size: current.PreviousSize}
 }

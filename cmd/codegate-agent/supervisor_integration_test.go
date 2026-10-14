@@ -34,6 +34,9 @@ func fixtureAgent() {
 	}
 	marker := os.Getenv("CODEGATE_AGENT_HEALTH_FILE")
 	dir := filepath.Dir(marker)
+	if marker == "" {
+		dir = filepath.Dir(self)
+	}
 	modeBytes, _ := os.ReadFile(filepath.Join(dir, version+".behavior"))
 	mode := string(modeBytes)
 	if os.Args[1] == "version" {
@@ -104,7 +107,7 @@ func fixtureWait(t *testing.T, check func() bool) {
 	}
 	t.Fatal("subprocess condition timed out")
 }
-func fixtureRun(t *testing.T, mode string) (string, string, context.CancelFunc, <-chan error) {
+func fixtureRun(t *testing.T, mode string, stagedAtStartup ...bool) (string, string, context.CancelFunc, <-chan error) {
 	t.Helper()
 	t.Setenv("CODEGATE_SUPERVISOR_FIXTURE", "1")
 	state, err := filepath.EvalSymlinks(t.TempDir())
@@ -123,6 +126,12 @@ func fixtureRun(t *testing.T, mode string) (string, string, context.CancelFunc, 
 	candidate := updatePath(state, "codegate-agent-v9.0.1-"+runtime.GOOS+"-"+runtime.GOARCH+suffix)
 	fixtureCopy(t, candidate)
 	os.WriteFile(updatePath(state, "v9.0.1.behavior"), []byte(mode), 0600)
+	startup := len(stagedAtStartup) > 0 && stagedAtStartup[0]
+	if startup {
+		if err := saveVerifiedUpdate(state, candidate, "v9.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	policy := supervisorPolicy{2 * time.Second, 1500 * time.Millisecond, 5 * time.Second, 10 * time.Millisecond, 10 * time.Millisecond}
@@ -138,6 +147,9 @@ func fixtureRun(t *testing.T, mode string) (string, string, context.CancelFunc, 
 			t.Error("supervisor did not stop")
 		}
 	})
+	if startup {
+		return state, candidate, cancel, done
+	}
 	fixtureWait(t, func() bool {
 		data, _ := os.ReadFile(updatePath(state, "fixture-launches.log"))
 		return strings.Contains(string(data), "v9.0.0")
@@ -227,4 +239,24 @@ func TestSupervisorRejectsTamperingAndBacksOffSameVersion(t *testing.T) {
 	if next.Attempts != 2 || next.RetryAfter <= first.RetryAfter || !retryBlocked(state, "v9.0.1") || retryBlocked(state, "v9.0.2") {
 		t.Fatalf("bad retry isolation: %+v %+v", first, next)
 	}
+}
+
+func TestSupervisorInstallsSavedUpdateAtStartup(t *testing.T) {
+	state, candidate, _, _ := fixtureRun(t, "", true)
+	fixtureWait(t, func() bool {
+		var s installedAgent
+		return updatefile.ReadJSON(updatePath(state, "current.json"), &s) == nil && s.Path == candidate
+	})
+	data, _ := os.ReadFile(updatePath(state, "fixture-launches.log"))
+	if strings.Contains(string(data), "v9.0.0") {
+		t.Fatalf("old Agent started before saved update: %s", data)
+	}
+}
+func TestSupervisorRejectsSavedUpdateWithWrongVersionAtStartup(t *testing.T) {
+	state, _, _, _ := fixtureRun(t, "wrong-version", true)
+	fixtureWait(t, func() bool { return retryBlocked(state, "v9.0.1") })
+	fixtureWait(t, func() bool {
+		data, _ := os.ReadFile(updatePath(state, "fixture-launches.log"))
+		return strings.Contains(string(data), "v9.0.0")
+	})
 }

@@ -40,8 +40,9 @@ type webStartWait struct {
 	reply chan webStartReply
 }
 type toolWait struct {
-	agent *AgentConn
-	reply chan error
+	expected protocol.Type
+	agent    *AgentConn
+	reply    chan error
 }
 type proxyStream struct {
 	agent  *AgentConn

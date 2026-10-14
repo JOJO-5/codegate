@@ -327,3 +327,34 @@ func TestCommandKindInterruptible(t *testing.T) {
 		t.Error("未知 kind 不该被判为合法")
 	}
 }
+
+func TestLoadDefaultsSecureUpdatesAndPreservesExplicitOptOut(t *testing.T) {
+	for _, tc := range []struct {
+		data string
+		want bool
+	}{
+		{`{"server_url":"wss://example.com/ws/agent"}`, true},
+		{`{"server_url":"wss://example.com/ws/agent","update_enabled":false}`, false},
+		{`{"server_url":"ws://localhost/ws/agent","insecure":true}`, false},
+	} {
+		path := filepath.Join(t.TempDir(), "agent.json")
+		if err := os.WriteFile(path, []byte(tc.data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil || cfg.UpdateEnabled != tc.want {
+			t.Fatalf("load: enabled=%v err=%v", cfg.UpdateEnabled, err)
+		}
+		bytes, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, bytes, 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err = Load(path)
+		if err != nil || cfg.UpdateEnabled != tc.want {
+			t.Fatalf("reload: enabled=%v err=%v", cfg.UpdateEnabled, err)
+		}
+	}
+}

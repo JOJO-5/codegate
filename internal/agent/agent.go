@@ -62,7 +62,13 @@ type Agent struct {
 	startedAt          time.Time
 
 	// OnVerifiedUpdate is set by the supervised CLI before Run starts.
-	OnVerifiedUpdate func(path, version string) error
+	OnVerifiedUpdate          func(path, version string) error
+	OnStagedUpdate            func(path, version string) error
+	OnRestart                 func() error
+	updateWake                chan struct{}
+	restartRequested          atomic.Bool
+	restartReady              bool
+	stagedPath, stagedVersion string
 
 	updateMu     sync.RWMutex
 	updateStatus protocol.AgentUpdateStatus
@@ -147,6 +153,7 @@ func NewWithIdentity(cfg Config, id *Identity, log *slog.Logger) (*Agent, error)
 		startedAt:         time.Now(),
 		repositories:      protocol.RepositoryListResult{State: "scanning", Repositories: []protocol.Repository{}},
 		repositoryRefresh: make(chan struct{}, 1),
+		updateWake:        make(chan struct{}, 1),
 		updateStatus:      protocol.AgentUpdateStatus{Enabled: cfg.UpdateEnabled && Version != "dev", State: "disabled"},
 		views:             make(map[uuid.UUID]map[string]struct{}),
 		uploads:           make(map[string]*fileUpload),
@@ -209,7 +216,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// 超期后回收（§7.5）。
 	go a.reapLoop(ctx)
 	go a.repositoryLoop(ctx)
-	if a.cfg.UpdateEnabled && Version != "dev" {
+	if (a.cfg.UpdateEnabled || a.OnRestart != nil) && Version != "dev" {
 		go a.updateLoop(ctx)
 	}
 

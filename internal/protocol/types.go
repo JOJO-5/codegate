@@ -7,11 +7,13 @@ type Type string
 
 const (
 	// ---- Agent 连接与鉴权 ----
-	TypeAgentHello     Type = "agent.hello"
-	TypeAgentChallenge Type = "agent.challenge"
-	TypeAgentAuth      Type = "agent.auth"
-	TypeAgentReady     Type = "agent.ready"
-	TypeAgentHeartbeat Type = "agent.heartbeat"
+	TypeAgentHello          Type = "agent.hello"
+	TypeAgentChallenge      Type = "agent.challenge"
+	TypeAgentAuth           Type = "agent.auth"
+	TypeAgentReady          Type = "agent.ready"
+	TypeAgentHeartbeat      Type = "agent.heartbeat"
+	TypeAgentUpdateControl  Type = "agent.update.control"
+	TypeAgentUpdateAccepted Type = "agent.update.accepted"
 
 	// ---- 设备配对 ----
 	TypeAgentPairBegin     Type = "agent.pair.begin"
@@ -145,6 +147,7 @@ func (s Side) Local() Sender { return SentByServer }
 // 而不是忽略后继续。理由：浏览器若能发 `session.exit` 或 `agent.ready`，
 // 就能伪造 Agent 事件，欺骗 UI 和 Server 的状态机。
 var allowedSenders = map[Type]Sender{
+	TypeAgentUpdateControl: SentByServer, TypeAgentUpdateAccepted: SentByAgent,
 	TypeTaskRun: SentByServer, TypeTaskInspect: SentByServer, TypeTaskCancel: SentByServer, TypeTaskState: SentByAgent,
 	TypeProjectCreate: SentByClient, TypeProjectCreated: SentByAgent,
 	TypeQuotaRead: SentByClient, TypeQuotaResult: SentByAgent,

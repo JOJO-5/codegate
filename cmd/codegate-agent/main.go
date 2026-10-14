@@ -142,6 +142,14 @@ func cmdRun(args []string) error {
 	defer stop()
 
 	if os.Getenv("CODEGATE_AGENT_SUPERVISED") == "1" {
+		a.OnStagedUpdate = func(path, version string) error { return saveVerifiedUpdate(cfg.StateDir, path, version) }
+		a.OnRestart = func() error {
+			if !a.FreezeForUpdate() {
+				return agent.ErrUpdateBusy
+			}
+			stop()
+			return nil
+		}
 		a.OnVerifiedUpdate = func(path, version string) error {
 			return queueVerifiedUpdate(a, cfg.StateDir, path, version, stop)
 		}

@@ -87,6 +87,7 @@ func IsFatalClose(err error) bool {
 
 // outbound 是一条待发送的帧。
 type outbound struct {
+	written  chan struct{}
 	binary   bool
 	data     []byte
 	enqueued time.Time
@@ -191,6 +192,24 @@ func (c *Conn) SendText(data []byte) error {
 	return c.enqueue(outbound{data: data}, sendEnqueueTimeout)
 }
 
+// SendTextAndWait flushes the reply before a requested restart closes the socket.
+func (c *Conn) SendTextAndWait(data []byte) error {
+	written := make(chan struct{})
+	if err := c.enqueue(outbound{data: data, written: written}, sendEnqueueTimeout); err != nil {
+		return err
+	}
+	timer := time.NewTimer(sendEnqueueTimeout + writeTimeout)
+	defer timer.Stop()
+	select {
+	case <-written:
+		return nil
+	case <-c.closed:
+		return errors.New("Agent 连接已关闭")
+	case <-timer.C:
+		return errors.New("Agent 应答发送超时")
+	}
+}
+
 // SendBinary 发送一条二进制帧。
 //
 // ★ 非阻塞：队列满时立即返回 false，由调用方标记 DROPPED。
@@ -277,6 +296,9 @@ func (c *Conn) writePump() {
 			return
 		}
 		c.stats.ObserveWrite(started)
+		if out.written != nil {
+			close(out.written)
+		}
 	}
 
 }

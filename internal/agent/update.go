@@ -47,6 +47,7 @@ var updateHTTPClient = &http.Client{
 func (a *Agent) currentUpdateStatus() protocol.AgentUpdateStatus {
 	a.updateMu.RLock()
 	status := a.updateStatus
+	status.Managed = a.OnRestart != nil && Version != "dev"
 	a.updateMu.RUnlock()
 	var failure protocol.AgentUpdateFailure
 	if updatefile.ReadJSON(filepath.Join(a.cfg.StateDir, "updates", "last-failure.json"), &failure) == nil && failure.OccurredAt > 0 {
@@ -60,80 +61,130 @@ func (a *Agent) setUpdateStatus(state, version, detail string) {
 	a.updateMu.Lock()
 	defer a.updateMu.Unlock()
 	a.updateStatus = protocol.AgentUpdateStatus{
-		Enabled: true, State: state, Version: version, Detail: detail,
+		Enabled: a.cfg.UpdateEnabled, State: state, Version: version, Detail: detail,
 		CheckedAt: time.Now().UnixMilli(),
 	}
 }
 
+// updateLoop owns staged state. Downloads are independent of activity; only
+// switching or restarting crosses the idle barrier.
 func (a *Agent) updateLoop(ctx context.Context) {
-	a.checkUpdate(ctx)
+	if a.cfg.UpdateEnabled {
+		a.checkUpdate(ctx)
+	}
 	ticker := time.NewTicker(a.cfg.UpdateInterval.Std())
 	defer ticker.Stop()
+	idleTicker := time.NewTicker(5 * time.Second)
+	defer idleTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-a.updateWake:
 			a.checkUpdate(ctx)
+		case <-ticker.C:
+			if a.cfg.UpdateEnabled {
+				a.checkUpdate(ctx)
+			}
+		case <-idleTicker.C:
+			a.applyStagedUpdate()
 		}
 	}
 }
 
 func (a *Agent) checkUpdate(ctx context.Context) {
-	// Count includes retained exited sessions: their scrollback must remain
-	// available until the user closes them or retention reaps them.
-	count, generation := a.mgr.UpdateState()
-	active, activityGeneration := a.activityState()
-	if count != 0 || active != 0 || a.webActive() {
-		a.setUpdateStatus("waiting", "", "有会话正在运行或等待回看")
-		return
-	}
-	idle := func() int {
-		count, current := a.mgr.UpdateState()
-		active, activityCurrent := a.activityState()
-		if active != 0 || activityCurrent != activityGeneration || current != generation || a.webActive() {
-			return 1
-		}
-		return count
-	}
-	a.setUpdateStatus("checking", "", "")
+	a.restartReady = false
+	a.setUpdateStatus("checking", a.stagedVersion, "正在检查并下载更新")
 	manifestURL, err := a.updateManifestURL()
 	if err != nil {
-		a.setUpdateStatus("error", "", "更新地址无效")
-		a.log.Warn("Agent 更新地址无效", "err", err)
+		a.setUpdateStatus("error", a.stagedVersion, err.Error())
 		return
 	}
-	path, version, err := stageUpdate(ctx, manifestURL, a.cfg.StateDir, Version, idle, a.id, a.cfg.UpdatePublicKey)
+	// Activity may continue while bytes are downloaded and verified.
+	path, version, err := stageUpdate(ctx, manifestURL, a.cfg.StateDir, Version, func() int { return 0 }, a.id, a.cfg.UpdatePublicKey)
 	if err != nil {
 		if ctx.Err() == nil {
-			a.setUpdateStatus("error", "", err.Error())
+			a.setUpdateStatus("error", a.stagedVersion, err.Error())
 			a.log.Warn("Agent 更新检查失败", "err", err)
 		}
-		return
-	}
-	if path == "" {
-		if idle() != 0 {
-			a.setUpdateStatus("waiting", "", "检查期间会话状态发生变化")
-		} else {
-			a.setUpdateStatus("current", "", "当前未发现新版本")
+		// Keep a previously verified package, but never restart after a failed
+		// check with no package: the failure must remain visible.
+		if a.stagedPath != "" {
+			a.applyStagedUpdate()
 		}
 		return
 	}
 	if path != "" {
-		a.setUpdateStatus("staged", version, "更新包已校验")
-		a.log.Info("已下载并校验 Agent 更新包", "version", version, "path", path)
-		if a.OnVerifiedUpdate != nil {
-			if err := a.OnVerifiedUpdate(path, version); err != nil {
-				if errors.Is(err, ErrUpdateBusy) {
-					a.setUpdateStatus("waiting", version, err.Error())
-				} else {
-					a.setUpdateStatus("error", version, err.Error())
-				}
-				a.log.Warn("更新切换准备失败", "err", err)
-			} else {
-				a.setUpdateStatus("switching", version, "等待守护进程确认新版本")
+		if a.OnStagedUpdate != nil {
+			if err := a.OnStagedUpdate(path, version); err != nil {
+				a.setUpdateStatus("error", version, err.Error())
+				return
 			}
 		}
+		a.stagedPath, a.stagedVersion = path, version
+		a.setUpdateStatus("staged", version, "更新已下载并校验，下次启动也可安装")
+	} else if a.stagedPath == "" {
+		a.setUpdateStatus("current", "", "当前未发现新版本")
+	}
+	a.restartReady = true
+	a.applyStagedUpdate()
+}
+
+func (a *Agent) applyStagedUpdate() {
+	if a.currentUpdateStatus().State == "switching" {
+		return
+	}
+	var err error
+	if a.stagedPath != "" && a.OnVerifiedUpdate != nil {
+		err = a.OnVerifiedUpdate(a.stagedPath, a.stagedVersion)
+	} else if a.restartRequested.Load() && a.restartReady && a.OnRestart != nil {
+		err = a.OnRestart()
+	} else {
+		return
+	}
+	if err != nil {
+		state := "error"
+		if errors.Is(err, ErrUpdateBusy) {
+			state = "waiting"
+		}
+		a.setUpdateStatus(state, a.stagedVersion, err.Error())
+		return
+	}
+	a.restartRequested.Store(false)
+	a.setUpdateStatus("switching", a.stagedVersion, "正在重启，等待守护进程确认")
+}
+
+func (a *Agent) onUpdateControl(env *protocol.Envelope) {
+	p, err := protocol.DecodePayload[protocol.AgentUpdateControl](env)
+	if err != nil || (p.Action != "check" && p.Action != "restart") {
+		a.replyError(env, errors.New("更新操作无效"))
+		return
+	}
+	if a.OnRestart == nil || Version == "dev" {
+		a.replyError(env, errors.New("需要使用正式版 supervise 服务运行 Agent"))
+		return
+	}
+	// Flush the acknowledgement before allowing the loop to stop this child.
+	reply, err := protocol.NewReply(env, protocol.TypeAgentUpdateAccepted, nil)
+	if err != nil {
+		return
+	}
+	raw, err := protocol.Encode(reply)
+	if err != nil {
+		return
+	}
+	a.connMu.RLock()
+	conn := a.conn
+	a.connMu.RUnlock()
+	if conn == nil || conn.SendTextAndWait(raw) != nil {
+		return
+	}
+	if p.Action == "restart" {
+		a.restartRequested.Store(true)
+	}
+	select {
+	case a.updateWake <- struct{}{}:
+	default:
 	}
 }
 
