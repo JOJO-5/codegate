@@ -56,6 +56,7 @@ import { useConnStore } from '../stores/conn'
 import { useSessionsStore } from '../stores/sessions'
 import { useDevicesStore } from '../stores/devices'
 import { usePreferencesStore } from '../stores/preferences'
+import { useDraftsStore } from '../stores/drafts'
 import {
   FrameFlag,
   FrameType,
@@ -75,6 +76,7 @@ const conn = useConnStore()
 const sessions = useSessionsStore()
 const devices = useDevicesStore()
 const preferences = usePreferencesStore()
+const drafts = useDraftsStore()
 const router = useRouter()
 
 const hostEl = ref<HTMLDivElement | null>(null)
@@ -138,7 +140,10 @@ const confirmTerminate = ref(false)
 const replayWarning = ref(false)
 const exitInfo = ref<SessionExitPayload | null>(null)
 const errorText = ref<string | null>(null)
-const mobileDraft = ref('')
+const draftKey = `terminal:${mountedSessionId}`
+const mobileDraft = ref(drafts.get(draftKey))
+watch(mobileDraft, text => drafts.set(draftKey, text), { flush: 'sync' })
+watch(() => drafts.owner, () => { mobileDraft.value = drafts.get(draftKey) }, { flush: 'sync' })
 const composer = ref<HTMLTextAreaElement | null>(null)
 const shortcutInput = ref(false)
 const attachmentsOpen = ref(false)
@@ -1039,7 +1044,7 @@ onUnmounted(() => {
     <div class="term__workspace">
       <aside class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区">
         <div class="term__sidebar-heading">工作区</div>
-        <button class="btn btn--primary" type="button" @click="goBack">＋ 新会话</button>
+        <button class="btn btn--primary" type="button" @click="router.push({ name: 'device', params: { id: sessionDevice }, query: { create: 'session', cwd: summary?.cwd } })">＋ 新对话</button>
         <div class="term__recent">
         <div class="term__sidebar-heading">最近会话</div>
         <button v-for="item in siblingSessions" :key="item.session_id" class="term__session-link" :class="{ 'term__session-link--active': item.session_id === sessionId }" type="button" @click="router.push({ name: 'session', params: { id: item.session_id } })">
@@ -1152,6 +1157,8 @@ onUnmounted(() => {
         <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" :inputmode="shortcutInput ? 'none' : 'text'" autocapitalize="none" autocorrect="off" spellcheck="false" @pointerdown="enableSoftKeyboard" @keydown="onComposerKeydown" />
         <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !conn.isOpen" @click="submitDraft()">发送 ↵</button>
       </div>
+      <p v-if="mobileDraft && !drafts.storageUnavailable" class="small dim" role="status">未发送草稿已保存在当前标签页，切换会话后可接着写；退出账号时清除。</p>
+      <p v-if="mobileDraft && drafts.storageUnavailable" class="notice notice--warn small" role="status">浏览器无法持久保存草稿，当前仅保存在标签页内存中；刷新前请先复制。</p>
       <div v-if="clipboardStatus" class="small" role="status" style="margin-bottom: 6px">{{ clipboardStatus }}</div>
       <div v-if="preferences.error" class="notice notice--err small">偏好同步失败：{{ preferences.error }}</div>
       <div v-if="copyFallback" class="stack clipboard-panel"><textarea :value="copyFallback" readonly rows="4" aria-label="手动复制终端输出" /><button class="btn btn--sm" type="button" @click="copyFallback = ''">关闭</button></div>
@@ -1173,19 +1180,19 @@ onUnmounted(() => {
         <button class="btn btn--sm" type="button" :disabled="!terminalReady" @click="openTextReader">选字</button>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="readClipboard">粘贴</button>
         <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @pointerdown.prevent="prepareShortcutInput" @click="prepareShortcutInput($event); sendInterrupt()">Ctrl+C</button>
-        <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" aria-controls="terminal-extra-keys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起按键' : '更多按键' }}</button>
+        <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" aria-controls="terminal-extra-keys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起操作' : '更多操作' }}</button>
       </div>
-      <div v-if="showExtraKeys" id="terminal-extra-keys" class="row term__tools term__extra-keys" role="group" aria-label="终端辅助按键" style="gap: 6px; flex-wrap: wrap">
-        <button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
+      <div v-if="showExtraKeys" id="terminal-extra-keys" class="row term__tools term__extra-keys" role="group" aria-label="终端操作" style="gap: 6px; flex-wrap: wrap">
+        <div class="row" role="group" aria-label="浏览与复制"><span class="small dim">浏览与复制</span><button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
         <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
         <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>
         <button class="btn btn--sm" type="button" @click="copyOutput()">复制选中</button>
         <button class="btn btn--sm" type="button" @click="copyOutput(true)">复制画面</button>
-        <label class="row small">字号<select :value="preferences.fontSize" :disabled="preferences.saving" aria-label="终端字号（随账号同步）" @change="setFontSize"><option v-for="size in [10, 12, 14, 16, 18, 20, 22, 24]" :key="size" :value="size">{{ size }}</option></select></label>
+        </div><div class="row" role="group" aria-label="显示与查找"><span class="small dim">显示与查找</span><label class="row small">字号<select :value="preferences.fontSize" :disabled="preferences.saving" aria-label="终端字号（随账号同步）" @change="setFontSize"><option v-for="size in [10, 12, 14, 16, 18, 20, 22, 24]" :key="size" :value="size">{{ size }}</option></select></label>
         <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="redraw">重绘</button>
         <!-- 手机上没有 Ctrl+Shift+F，所以搜索也必须有个可点的入口 -->
         <button class="btn btn--sm" type="button" title="查找" @click="openSearch">查找</button>
-        <button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button>
+        </div><div class="row" role="group" aria-label="会话控制"><span class="small dim">会话控制</span><button class="btn btn--sm btn--danger" type="button" :disabled="exiting || !conn.isOpen || !isLive" title="关闭这个会话并结束进程" @click="confirmTerminate = true">关闭会话</button></div>
       </div>
     </div>
     <TerminalTextReader v-if="textSnapshot" :snapshot="textSnapshot" @close="textSnapshot = null" />

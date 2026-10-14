@@ -22,7 +22,12 @@ func TestOwnerUpdateControlRoutesAndAcknowledgesCurrentAgent(t *testing.T) {
 		t.Fatalf("legacy Agent: %d", old.Status)
 	}
 	ac.SetUpdateStatus(protocol.AgentUpdateStatus{Managed: true})
-	for _, action := range []string{"check", "restart"} {
+	unsupported := e.request(t, http.MethodPost, path, token, map[string]string{"action": "cancel_restart"})
+	if unsupported.Status != http.StatusConflict {
+		t.Fatal("accepted cancellation on unsupported Agent")
+	}
+	ac.SetUpdateStatus(protocol.AgentUpdateStatus{Managed: true, CanCancelRestart: true})
+	for _, action := range []string{"check", "restart", "cancel_restart"} {
 		result := make(chan int, 1)
 		go func() {
 			response := e.request(t, http.MethodPost, path, token, map[string]string{"action": action})

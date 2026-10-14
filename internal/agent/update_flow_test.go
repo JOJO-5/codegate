@@ -15,6 +15,81 @@ import (
 	"time"
 )
 
+func TestWaitingDoesNotChangeLastVersionCheck(t *testing.T) {
+	a := idleActivityAgent(t)
+	a.setUpdateStatus("checking", "", "checking")
+	before := a.currentUpdateStatus().CheckedAt
+	time.Sleep(2 * time.Millisecond)
+	a.setUpdateStatus("waiting", "", "busy")
+	if a.currentUpdateStatus().CheckedAt != before {
+		t.Fatal("waiting changed the last version check timestamp")
+	}
+}
+
+func TestUpdateLoopReportsAndResetsNextCheck(t *testing.T) {
+	a := idleActivityAgent(t)
+	a.cfg.UpdateEnabled = true
+	a.cfg.ServerURL = "ws://localhost"
+	a.updateWake = make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); a.updateLoop(ctx) }()
+	defer func() { cancel(); <-done }()
+	wait := func(previous int64) protocol.AgentUpdateStatus {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			s := a.currentUpdateStatus()
+			if s.NextCheckAt > previous {
+				return s
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("next automatic check was not scheduled")
+		return protocol.AgentUpdateStatus{}
+	}
+	first := wait(0)
+	if first.NextCheckAt <= first.CheckedAt {
+		t.Fatal("next check precedes completed attempt")
+	}
+	time.Sleep(2 * time.Millisecond)
+	a.updateWake <- struct{}{}
+	second := wait(first.NextCheckAt)
+	if second.CheckedAt <= first.CheckedAt {
+		t.Fatal("manual check did not update check time")
+	}
+}
+
+func TestCancelRequestedRestartKeepsWorkAndPackage(t *testing.T) {
+	a := idleActivityAgent(t)
+	a.restartRequested.Store(true)
+	a.restartReady = true
+	a.stagedPath = "verified-package"
+	release, _ := a.beginActivity()
+	defer release()
+	if err := a.cancelRequestedRestart(); err != nil {
+		t.Fatal(err)
+	}
+	if a.restartRequested.Load() || a.stagedPath != "verified-package" {
+		t.Fatal("cancel lost package or kept restart")
+	}
+	count, _ := a.activityState()
+	if count != 1 {
+		t.Fatal("cancel interrupted work")
+	}
+	status := a.currentUpdateStatus()
+	if status.BlockingOperations != 1 {
+		t.Fatal("active operation missing from heartbeat")
+	}
+	a.stagedPath = ""
+	a.OnRestart = func() error { t.Fatal("cancelled restart ran"); return nil }
+	a.applyStagedUpdate()
+	a.setUpdateStatus("switching", "", "")
+	if a.cancelRequestedRestart() == nil {
+		t.Fatal("accepted cancellation after switching")
+	}
+}
+
 func TestBusyAgentStagesThenSwitchesWithoutRefetch(t *testing.T) {
 	payload := []byte("next agent")
 	sum := sha256.Sum256(payload)

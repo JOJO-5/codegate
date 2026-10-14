@@ -11,7 +11,8 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "preview": "vite preview",
     "test:transfer": "node tests/transfer.mjs",
-    "test:conversations": "node tests/conversations.mjs"
+    "test:conversations": "node tests/conversations.mjs",
+    "test:ux": "node tests/ux-continuity.mjs && node tests/drafts.mjs && node tests/errors.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

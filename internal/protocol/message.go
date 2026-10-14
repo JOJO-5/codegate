@@ -259,13 +259,20 @@ type AgentUpdateControl struct {
 }
 
 type AgentUpdateStatus struct {
-	Managed     bool                `json:"managed,omitempty"`
-	Enabled     bool                `json:"enabled"`
-	State       string              `json:"state"`
-	Version     string              `json:"version,omitempty"`
-	Detail      string              `json:"detail,omitempty"`
-	CheckedAt   int64               `json:"checked_at,omitempty"`
-	LastFailure *AgentUpdateFailure `json:"last_failure,omitempty"`
+	InstanceStartedAt  int64               `json:"instance_started_at,omitempty"`
+	Managed            bool                `json:"managed,omitempty"`
+	Enabled            bool                `json:"enabled"`
+	State              string              `json:"state"`
+	Version            string              `json:"version,omitempty"`
+	Detail             string              `json:"detail,omitempty"`
+	CheckedAt          int64               `json:"checked_at,omitempty"`
+	NextCheckAt        int64               `json:"next_check_at,omitempty"`
+	RestartScheduled   bool                `json:"restart_scheduled,omitempty"`
+	CanCancelRestart   bool                `json:"can_cancel_restart,omitempty"`
+	BlockingSessions   int                 `json:"blocking_sessions,omitempty"`
+	BlockingOperations int                 `json:"blocking_operations,omitempty"`
+	BlockingWeb        bool                `json:"blocking_web,omitempty"`
+	LastFailure        *AgentUpdateFailure `json:"last_failure,omitempty"`
 }
 
 type AgentUpdateFailure struct {

@@ -25,6 +25,7 @@ import { PRESETS, type CommandPreset } from '../lib/commands'
 import { estimateTerminalSize } from '../lib/viewport'
 import { MessageType, isLiveStatus, type SessionSummary } from '../lib/protocol'
 import { nativeCLI } from '../lib/sessionQuota'
+import { canRecoverConversation } from '../lib/conversationSessions'
 
 const props = defineProps<{ id: string }>()
 
@@ -127,21 +128,29 @@ async function deleteRecord(s: SessionSummary): Promise<void> {
   catch (e) { sessionActionError.value = humanizeError(e) }
 }
 const updateInfo = ref<DeviceUpdateStatus | null>(null)
-const updateAction = ref<'check' | 'restart' | null>(null)
+const updateAction = ref<'check' | 'restart' | 'cancel_restart' | null>(null)
 const updateNotice = ref('')
+const updatePreviousCheck = ref(0)
+const updateStartVersion = ref('')
+const updateStartInstance = ref(0)
+const requestedUpdate = ref('')
 const updateError = ref('')
-async function controlUpdate(action: 'check' | 'restart'): Promise<void> {
+async function controlUpdate(action: 'check' | 'restart' | 'cancel_restart'): Promise<void> {
   if (updateAction.value) return
   const id = props.id
   updateAction.value = action
   updateError.value = ''
   updateNotice.value = ''
   try {
+    updatePreviousCheck.value = updateInfo.value?.update?.checked_at ?? 0
+    updateStartVersion.value = updateInfo.value?.agent_version ?? ''
+    updateStartInstance.value = updateInfo.value?.update?.instance_started_at ?? 0
+    requestedUpdate.value = action
     await api.controlAgentUpdate(id, action)
     if (props.id !== id) return
-    updateNotice.value = action === 'restart' ? '已安排：先检查更新，空闲时重启。设备会短暂离线后自动连接。' : '已请求检查并下载更新，请等待 Agent 上报状态。'
+    updateNotice.value = action === 'cancel_restart' ? '已取消手动重启安排；已下载更新与自动空闲升级仍保留。' : action === 'restart' ? '已安排：先检查更新，空闲时重启。设备会短暂离线后自动连接。' : '已请求检查并下载更新，请等待 Agent 上报状态。'
     await loadUpdateStatus()
-  } catch (e) { if (props.id === id) updateError.value = humanizeError(e) }
+  } catch (e) { if (props.id === id) { requestedUpdate.value = ''; updateError.value = humanizeError(e) } }
   finally { updateAction.value = null }
 }
 let updateTimer: ReturnType<typeof setInterval> | null = null
@@ -149,12 +158,26 @@ let updateLoading = false
 async function loadUpdateStatus(): Promise<void> {
   if (updateLoading) return
   updateLoading = true
+  const id = props.id
   try {
-    const status = await api.getDeviceUpdateStatus(props.id)
+    const status = await api.getDeviceUpdateStatus(id)
+    if (props.id !== id) return
     updateInfo.value = status
+    if (requestedUpdate.value && status.online) {
+      const u = status.update
+      if (status.agent_version && updateStartVersion.value && status.agent_version !== updateStartVersion.value) {
+        updateNotice.value = `Agent 已上线，当前版本 ${status.agent_version}。`; requestedUpdate.value = ''
+      } else if (u?.state === 'error' && (u.checked_at ?? 0) > updatePreviousCheck.value) {
+        updateNotice.value = '检查或升级失败，请查看下方原因。'; requestedUpdate.value = ''
+      } else if (requestedUpdate.value === 'check' && (u?.checked_at ?? 0) > updatePreviousCheck.value && ['current', 'staged', 'waiting'].includes(u?.state ?? '')) {
+        updateNotice.value = u?.version ? `已检查，目标版本 ${u.version} 已准备。` : '检查完成，未发现新版本。'; requestedUpdate.value = ''
+      } else if (requestedUpdate.value === 'restart' && updateStartInstance.value && u?.instance_started_at && u.instance_started_at !== updateStartInstance.value) {
+        updateNotice.value = `Agent 已重新上线，当前版本 ${status.agent_version ?? '待确认'}。`; requestedUpdate.value = ''
+      } else if (requestedUpdate.value === 'cancel_restart' && !u?.restart_scheduled) requestedUpdate.value = ''
+    }
     devices.patch(props.id, { online: status.online, ...(status.agent_version ? { agent_version: status.agent_version } : {}) })
   } catch {
-    updateInfo.value = null
+    if (props.id === id) updateInfo.value = null
   } finally {
     updateLoading = false
   }
@@ -334,6 +357,10 @@ onMounted(async () => {
   // 本地没有记住的值时，用 Agent 配置里的第一个 allowed_root 兜底 ——
   // 否则每次新建会话都要手打一个 Windows 长路径。
   if (cwd.value.trim() === '') cwd.value = allowedRoots.value[0] ?? ''
+  if (route.query.create === 'session') {
+    document.getElementById('create-session-heading')?.scrollIntoView({ block: 'start' })
+    document.getElementById('create-session-heading')?.focus()
+  }
   updateTimer = setInterval(() => { void loadUpdateStatus(); if (device.value?.online) void repositories.load(props.id) }, 5000)
 
   // 订阅会话生命周期事件，让列表保持最新。
@@ -491,7 +518,7 @@ function canOpen(s: SessionSummary): boolean {
     <!-- ---- 新建会话 ---- -->
     <div class="card device-create">
       <div class="card__title">
-        <h2>新建会话</h2><button class="btn btn--sm" type="button" :disabled="!conn.isOpen || !device?.online || !allowedRoots.length" @click="newProjectOpen = true">新建项目 / 文件</button>
+        <h2 id="create-session-heading" tabindex="-1">新建对话</h2><button class="btn btn--sm" type="button" :disabled="!conn.isOpen || !device?.online || !allowedRoots.length" @click="newProjectOpen = true">新建项目 / 文件</button>
         <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
       </div>
 
@@ -505,7 +532,7 @@ function canOpen(s: SessionSummary): boolean {
             </select>
             <button v-if="shortcuts.some(s => s.commandId === presetId && s.cwd === cwd.trim())" class="btn btn--sm" type="button" @click="removeShortcut(shortcuts.findIndex(s => s.commandId === presetId && s.cwd === cwd.trim()))">移除</button>
           </div>
-          <span class="field__hint">组合随账号同步，并显示在“项目”页。选择后点击“新建独立会话”。</span>
+          <span class="field__hint">组合随账号同步，并显示在“项目”页。选择后点击“新建对话”。</span>
         </div>
         <div class="field">
           <label for="preset">命令</label>
@@ -557,7 +584,7 @@ function canOpen(s: SessionSummary): boolean {
         </div>
 
         <div class="field">
-          <label class="row"><input v-model="worktree" type="checkbox" :disabled="creating" />创建独立 Git 工作区</label>
+          <label class="row"><input v-model="worktree" type="checkbox" :disabled="creating" />创建独立 Git 工作区</label><p class="field__hint">{{ worktree ? '新分支和独立目录，不带入原目录未提交改动。' : '新对话直接使用原目录，与该目录的其他会话共享文件。' }}</p>
           <span class="field__hint">从当前 HEAD 创建新分支，原目录的未提交修改不会带入。工作区会保留，可通过仓库扫描再次打开；需要有初始提交且 Agent 至少为 v0.1.8。</span>
         </div>
         <div class="field">
@@ -605,7 +632,7 @@ function canOpen(s: SessionSummary): boolean {
         <div class="row">
           <button class="btn btn--primary" type="submit" :disabled="creating || !conn.isOpen || selectableCommands.length === 0">
             <span v-if="creating" class="spinner" />
-            新建独立会话 →
+            新建对话 →
           </button>
           <button class="btn btn--sm" type="button" :disabled="!selectedPreset || !cwd.trim() || preferences.saving" @click="saveShortcut">{{ preferences.saving ? '保存中…' : '保存为项目' }}</button>
         </div>
@@ -659,7 +686,7 @@ function canOpen(s: SessionSummary): boolean {
             <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
             <button class="btn btn--ghost btn--sm" type="button" :aria-label="pinnedIds.includes(s.session_id) ? '取消置顶会话' : '置顶会话'" :aria-pressed="pinnedIds.includes(s.session_id)" @click="togglePin(s.session_id)">{{ pinnedIds.includes(s.session_id) ? '★ 已置顶' : '☆ 置顶' }}</button>
             <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : '设备离线，重新上线后可接回'" @click="openSession(s)">{{ canOpen(s) ? '接回' : '离线，暂不可接回' }}</button>
-            <button v-if="!isLiveStatus(s.status) && (s.recovery || /(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.command) || (s.command.endsWith('cmd.exe') && /^(?:codex|opencode|dsh|claude)(?:\.exe)?$/.test(s.args?.[1] ?? '')))" class="btn btn--primary btn--sm" type="button" :disabled="!device?.online || !conn.isOpen" @click="recoveringSession = s">恢复原对话</button>
+            <button v-if="!isLiveStatus(s.status) && canRecoverConversation(s)" class="btn btn--primary btn--sm" type="button" :disabled="!device?.online || !conn.isOpen" @click="recoveringSession = s">恢复原对话</button>
 <button v-if="s.recovery && (['codex','claude','opencode'].includes(nativeCLI(s.command, s.args) ?? '') || nativeCLI(s.command,s.args)==='dsh' && isLiveStatus(s.status))" class="btn btn--sm" type="button" @click="continuingSession = s">安排继续</button>
             <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
             <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
@@ -801,7 +828,10 @@ function canOpen(s: SessionSummary): boolean {
       <div class="row">
         <button class="btn btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || updateInfo.update?.state === 'switching'" @click="controlUpdate('check')">{{ updateAction === 'check' ? '正在请求…' : '检查更新' }}</button>
         <button class="btn btn--primary btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || updateInfo.update?.state === 'switching'" @click="controlUpdate('restart')">{{ updateAction === 'restart' ? '正在请求…' : '空闲时重启并升级' }}</button>
+        <button v-if="updateInfo?.update?.restart_scheduled && updateInfo.update.can_cancel_restart" class="btn btn--sm" type="button" :disabled="!!updateAction || !updateInfo.online" @click="controlUpdate('cancel_restart')">取消手动重启安排</button>
       </div>
+      <p v-if="updateInfo?.update?.state === 'waiting'" class="notice small" role="status"><template v-if="updateInfo.update.instance_started_at">等待项：{{ updateInfo.update.blocking_sessions ?? 0 }} 个终端会话、{{ updateInfo.update.blocking_operations ?? 0 }} 项操作{{ updateInfo.update.blocking_web ? '、DSH Web 运行中' : '' }}。结束工作后每 5 秒重新判断空闲。</template><template v-else>当前 Agent 未上报详细等待项，请参考下方状态说明。</template>关闭网页不等于结束终端。</p>
+      <p v-if="updateInfo?.update?.next_check_at" class="small dim">下次自动检查：{{ absoluteTime(updateInfo.update.next_check_at) }}</p>
       <p v-if="updateInfo?.online && !updateInfo.update?.managed" class="dim small">此功能需要新版 Agent 使用 supervise 服务运行；旧版需先在本机升级一次。</p>
       <p v-if="updateNotice" class="notice small" role="status">{{ updateNotice }}</p>
       <p v-if="updateError" class="notice notice--err small" role="alert">{{ updateError }}</p>

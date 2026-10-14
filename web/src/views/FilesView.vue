@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { TransferChunkSizer } from '../lib/transferPacing'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useDraftsStore } from '../stores/drafts'
 import { useRouter } from 'vue-router'
 import { useConnStore } from '../stores/conn'
 import { MessageType, type SessionCreatedPayload } from '../lib/protocol'
@@ -15,6 +16,7 @@ interface Chunk { path: string; size: number; offset: number; data: string }
 const props = defineProps<{ id: string; embedded?: boolean }>()
 const conn = useConnStore()
 const router = useRouter()
+const drafts = useDraftsStore()
 const cwd = ref('')
 const deviceId = ref('')
 const newTextOpen = ref(false), textName = ref(''), textContent = ref('')
@@ -41,6 +43,7 @@ function handoff(entry: Entry): void {
 const folder = ref('')
 const entries = ref<Entry[]>([])
 const busy = ref(false)
+const listed = ref(false)
 const error = ref('')
 const previewName = ref('')
 const previewText = ref('')
@@ -54,6 +57,27 @@ const overwrite = ref(false)
 const selected = ref<File | null>(null)
 const picker = ref<HTMLInputElement | null>(null)
 const folderLabel = computed(() => folder.value || '工作区根目录')
+const fileDraftKey = computed(() => `file:${props.id}:${folder.value}`)
+const confirmDiscard = ref(false)
+let restoringDraft = false
+watch([fileDraftKey, () => drafts.owner], () => {
+  restoringDraft = true
+  try {
+    const saved = JSON.parse(drafts.get(fileDraftKey.value) || '{}') as { name?: unknown; content?: unknown }
+    textName.value = typeof saved.name === 'string' ? saved.name : ''
+    textContent.value = typeof saved.content === 'string' ? saved.content : ''
+  } catch { textName.value = ''; textContent.value = '' }
+  newTextOpen.value = Boolean(textName.value || textContent.value)
+  confirmDiscard.value = false
+  restoringDraft = false
+}, { immediate: true, flush: 'sync' })
+watch([textName, textContent], () => {
+  if (!restoringDraft) drafts.set(fileDraftKey.value, textName.value || textContent.value
+    ? JSON.stringify({ name: textName.value, content: textContent.value }) : '')
+}, { flush: 'sync' })
+function discardDraft(): void {
+  textName.value = ''; textContent.value = ''; confirmDiscard.value = false; newTextOpen.value = false
+}
 
 function clearPreview(): void {
   if (previewURL.value) URL.revokeObjectURL(previewURL.value)
@@ -71,6 +95,7 @@ async function list(path = folder.value): Promise<void> {
     const env = await conn.request<Listed>(MessageType.FileList, { session_id: props.id, path }, props.id)
     entries.value = env.payload?.entries ?? []
     folder.value = path
+    listed.value = true
   } catch (e) { error.value = humanizeError(e) }
   finally { busy.value = false }
 }
@@ -198,20 +223,24 @@ onUnmounted(clearPreview)
       <label class="field">文件内容<textarea v-model="textContent" :disabled="uploading" rows="6" style="width:100%;min-width:0" placeholder="可留空，保存为 UTF-8 文本" /></label>
       <p class="small dim">创建在当前目录，已有同名文件不会覆盖。</p>
       <button class="btn btn--primary" type="submit" :disabled="uploading || !conn.isOpen">{{ uploading ? '正在保存…' : '保存新文件' }}</button>
-      <button class="btn btn--sm" type="button" :disabled="uploading" @click="newTextOpen=false">取消</button>
+      <button class="btn btn--sm" type="button" :disabled="uploading" @click="newTextOpen=false">收起并保留草稿</button>
+      <button v-if="textName || textContent" class="btn btn--ghost btn--sm" type="button" :disabled="uploading" @click="confirmDiscard=true">丢弃草稿</button>
+      <p v-if="!drafts.storageUnavailable" class="small dim">草稿仅保存在当前标签页，退出账号时清除。</p>
+      <p v-else class="notice notice--warn small" role="status">浏览器无法持久保存草稿；刷新前请先复制内容。</p>
+      <div v-if="confirmDiscard" class="notice notice--warn" role="alert">将丢弃尚未保存的文件名称和内容。<div class="row"><button class="btn btn--danger btn--sm" type="button" @click="discardDraft">确认丢弃草稿</button><button class="btn btn--sm" type="button" @click="confirmDiscard=false">保留草稿</button></div></div>
     </form>
     <div class="card">
       <div v-if="transferLabel" class="notice notice--info" role="status">{{ transferLabel }} · {{ transferPercent }}%<progress :value="transferPercent" max="100" style="display: block; width: 100%; margin-top: 6px" /></div>
       <div v-if="transferDone" class="notice notice--info" role="status">{{ transferDone }}</div>
       <div class="small dim mono">{{ cwd }} / {{ folderLabel }}</div>
       <div class="row" style="margin: 12px 0">
-        <button class="btn btn--sm" type="button" :disabled="!folder || busy" @click="up">上一级</button>
+        <button class="btn btn--sm" type="button" :disabled="!folder || busy || uploading" @click="up">上一级</button>
         <span v-if="busy" class="spinner" />
       </div>
-      <div v-if="error" class="notice notice--err">{{ error }}</div>
-      <div v-if="!busy && entries.length === 0" class="empty">目录为空</div>
+      <div v-if="error" class="notice notice--err" role="alert">{{ error }} <button class="btn btn--sm" type="button" :disabled="busy || !conn.isOpen" @click="list()">重试读取</button><p v-if="listed && entries.length" class="small">下方保留上次成功读取的目录内容。</p></div>
+      <div v-if="!busy && listed && !error && entries.length === 0" class="empty">目录为空</div>
       <div v-for="entry in entries" :key="entry.path" class="row row--between file-entry" style="padding: 8px 0; border-bottom: 1px solid var(--border)">
-        <button class="btn btn--ghost btn--sm mono" type="button" :disabled="busy" @click="entry.is_dir ? list(entry.path) : preview(entry)">
+        <button class="btn btn--ghost btn--sm mono" type="button" :disabled="busy || uploading" @click="entry.is_dir ? list(entry.path) : preview(entry)">
           {{ entry.is_dir ? '📁' : '📄' }} {{ entry.name }}
         </button>
         <div v-if="!entry.is_dir" class="row">

@@ -13,7 +13,7 @@ func (s *Server) handleDeviceUpdateControl(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if p.Action != "check" && p.Action != "restart" {
+	if p.Action != "check" && p.Action != "restart" && p.Action != "cancel_restart" {
 		writeError(w, http.StatusBadRequest, "invalid_action", "更新操作无效")
 		return
 	}
@@ -27,6 +27,10 @@ func (s *Server) handleDeviceUpdateControl(w http.ResponseWriter, r *http.Reques
 	status := ac.UpdateStatus()
 	if status == nil || !status.Managed {
 		writeError(w, http.StatusConflict, "agent_upgrade_required", "需要新版 Agent 通过 supervise 服务运行")
+		return
+	}
+	if p.Action == "cancel_restart" && !status.CanCancelRestart {
+		writeError(w, http.StatusConflict, "agent_upgrade_required", "Agent 版本不支持取消，或已开始重启")
 		return
 	}
 	reqID := uuid.NewString()

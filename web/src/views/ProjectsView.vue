@@ -8,7 +8,12 @@ import { useSessionsStore } from '../stores/sessions'
 import { useConnStore } from '../stores/conn'
 import { statusLabel } from '../lib/format'
 import { isLiveStatus } from '../lib/protocol'
+import AddProject from '../components/AddProject.vue'
+import WorkSummary from '../components/WorkSummary.vue'
 import TaskLaunch from '../components/TaskLaunch.vue'
+import ConversationRecovery from '../components/ConversationRecovery.vue'
+import { canRecoverConversation } from '../lib/conversationSessions'
+import type { SessionSummary } from '../lib/protocol'
 import type { ProjectPreference } from '../lib/api'
 
 const repositories = useRepositoriesStore()
@@ -18,6 +23,7 @@ const preferences = usePreferencesStore()
 const devices = useDevicesStore()
 const sessions = useSessionsStore()
 const conn = useConnStore()
+const addingProject = ref(false)
 const query = ref('')
 const expanded = ref('')
 const error = ref('')
@@ -26,6 +32,7 @@ const label = ref('')
 const removed = ref<(ProjectPreference & { key: string }) | null>(null)
 const launch = ref<(ProjectPreference & { key: string }) | null>(null)
 const launchHost = ref<HTMLElement | null>(null)
+const recoveringSession = ref<SessionSummary | null>(null)
 const scanBusy = computed(() => devices.items.some(d => d.online && (repositories.loading[d.id] || !repositories.results[d.id] || repositories.results[d.id]?.state === 'scanning')))
 const scanFailed = computed(() => devices.items.some(d => d.online && !!repositories.errors[d.id]))
 const recent = computed(() => devices.items.flatMap(d => sessions.forDevice(d.id).filter(s => !s.archived).map(s => ({ ...s, device_id: d.id, online: d.online }))).sort((a,b) => (b.last_attached_at || b.created_at) - (a.last_attached_at || a.created_at)).slice(0, 6))
@@ -35,7 +42,9 @@ async function loadRecent(): Promise<void> { await Promise.all(devices.items.map
 const visible = computed(() => preferences.projects.filter(p =>
   [p.label, p.cwd, devices.byId(p.device_id)?.name].some(v => v?.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase()))))
 const discovered = computed(() => devices.items.flatMap(device => (repositories.results[device.id]?.repositories ?? []).map(repo => ({ ...repo, device_id: device.id, device_name: device.name }))).filter(repo => [repo.name, repo.path, repo.device_name].some(value => value.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase()))))
-function commandFor(id: string): string { return (repositories.commands[id] ?? []).some(c => c.id === repoCommands.value[id]) ? repoCommands.value[id]! : repositories.commands[id]?.[0]?.id ?? '' }
+function commandFor(id: string, path: string): string {
+  const key = JSON.stringify([id, path])
+  return (repositories.commands[id] ?? []).some(c => c.id === repoCommands.value[key]) ? repoCommands.value[key]! : repositories.commands[id]?.[0]?.id ?? '' }
 async function loadRepositories(rescan = false): Promise<void> {
   await Promise.all(devices.items.filter(device => device.online).map(device => repositories.load(device.id, rescan)))
 }
@@ -74,16 +83,18 @@ async function undoRemove(): Promise<void> {
   catch { /* The store exposes the sync error. */ }
 }
 async function saveRepository(repo: { device_id: string; path: string; name: string }): Promise<void> {
-  try { await preferences.saveProject({ label: repo.name, name: '', device_id: repo.device_id, cwd: repo.path, command_id: commandFor(repo.device_id) }) }
+  try { await preferences.saveProject({ label: repo.name, name: '', device_id: repo.device_id, cwd: repo.path, command_id: commandFor(repo.device_id, repo.path) }) }
   catch { /* The store exposes the sync error. */ }
 }
 </script>
 
 <template>
   <main class="page page--wide projects-page">
+    <AddProject v-if="addingProject" @close="addingProject = false" />
+    <ConversationRecovery v-if="recoveringSession" :source="recoveringSession" @close="recoveringSession = null" />
     <div class="projects-heading">
       <div><p class="projects-eyebrow">你的工作区</p><h1>项目 <span class="projects-count">{{ preferences.projects.length }}</span></h1><p class="dim">从熟悉的目录开始，随时开启或接回对话。</p></div>
-      <div class="projects-heading__actions"><button class="btn btn--ghost btn--sm" type="button" :disabled="preferences.loading" @click="refresh">刷新</button><RouterLink class="btn btn--primary" to="/devices">＋ 添加项目</RouterLink></div>
+      <div class="projects-heading__actions"><button class="btn btn--ghost btn--sm" type="button" :disabled="preferences.loading" @click="refresh">刷新</button><button class="btn btn--primary" type="button" @click="addingProject = true">＋ 添加项目</button></div>
     </div>
     <div v-if="error || preferences.error" class="notice notice--err" role="alert">{{ error || preferences.error }}</div>
     <div v-if="removed" class="notice row" role="status">已移除“{{ removed.label }}”入口，文件和会话保留。<button class="btn btn--sm" :disabled="preferences.saving" @click="undoRemove">撤销移除</button></div>
@@ -94,6 +105,7 @@ async function saveRepository(repo: { device_id: string; path: string; name: str
       <div v-for="item in recent" :key="item.session_id" class="recent-work__item">
         <div><strong>{{ item.name || item.command }}</strong><p class="small dim">{{ devices.byId(item.device_id)?.name }} · {{ statusLabel(item.status) }}{{ sessions.sources[item.device_id] === 'cache' ? ' · 缓存快照' : '' }}</p><p class="small mono project-path">{{ item.cwd }}</p></div>
         <RouterLink v-if="item.online && conn.isOpen && sessions.sources[item.device_id] === 'live' && isLiveStatus(item.status)" class="btn btn--primary btn--sm" :to="{ name: 'session', params: { id: item.session_id } }">继续工作</RouterLink>
+        <button v-else-if="!isLiveStatus(item.status) && canRecoverConversation(item)" class="btn btn--primary btn--sm" type="button" :disabled="!item.online || !conn.isOpen" :title="unavailable(item.device_id)" @click="recoveringSession = item">恢复原对话</button>
         <span v-else class="small dim">{{ !item.online ? '设备离线' : !conn.isOpen ? '连接恢复中' : sessions.sources[item.device_id] === 'cache' ? '状态待确认' : '进程已结束' }}</span>
       </div>
     </section>
@@ -115,13 +127,15 @@ async function saveRepository(repo: { device_id: string; path: string; name: str
         <div v-if="expanded === project.key" class="project-sessions">
           <span v-if="sessions.loading" class="spinner" />
           <div v-if="sessions.error" class="notice notice--err">{{ sessions.error }}</div>
-          <p class="small dim">此目录下的会话；结束的进程无法接回，新建会启动新的对话。</p>
+          <p class="small dim">运行中的会话可接回；已结束的编程会话可恢复已保存的原对话。新建会启动新的对话。</p>
           <div v-for="session in sessions.forDevice(project.device_id).filter(s => s.cwd === project.cwd && !s.archived)" :key="session.session_id" class="row row--between">
             <span>{{ session.name || session.command }} <small class="dim">{{ statusLabel(session.status) }}</small></span>
             <RouterLink v-if="isLiveStatus(session.status) && devices.byId(project.device_id)?.online && conn.isOpen && sessions.sources[project.device_id] === 'live'" class="btn btn--sm" :to="{ name: 'session', params: { id: session.session_id } }">接回</RouterLink>
+            <button v-else-if="!isLiveStatus(session.status) && canRecoverConversation(session)" class="btn btn--sm" type="button" :disabled="!devices.byId(project.device_id)?.online || !conn.isOpen" :title="unavailable(project.device_id)" @click="recoveringSession = session">恢复原对话</button>
           </div>
           <p v-if="!sessions.loading && !sessions.forDevice(project.device_id).some(s => s.cwd === project.cwd && !s.archived)" class="small dim">此目录还没有会话。</p>
         </div>
+        <WorkSummary :device-id="project.device_id" :cwd="project.cwd" :online="!!devices.byId(project.device_id)?.online" />
         <div class="row project-management">
           <RouterLink v-if="devices.byId(project.device_id)" class="btn btn--ghost btn--sm" :to="{ name: 'workspaces', params: { id: project.device_id }, query: { path: project.cwd } }">管理独立工作区</RouterLink>
           <RouterLink v-if="devices.byId(project.device_id)" class="btn btn--ghost btn--sm" :to="{ name: 'device', params: { id: project.device_id } }">设备与工具 / 独立工作区</RouterLink>
@@ -146,9 +160,9 @@ async function saveRepository(repo: { device_id: string; path: string; name: str
           <p class="dim small">{{ repo.device_name }}{{ devices.byId(repo.device_id)?.online ? '' : ' · 离线' }}</p>
           <p class="mono project-path">{{ repo.path }}</p>
           <RouterLink class="btn btn--ghost btn--sm" :to="{ name: 'workspaces', params: { id: repo.device_id }, query: { path: repo.path } }">管理独立工作区</RouterLink>
-          <div class="field"><label :for="`repo-cli-${repo.device_id}-${repo.path}`">编程 CLI</label><select :id="`repo-cli-${repo.device_id}-${repo.path}`" :value="commandFor(repo.device_id)" :disabled="!devices.byId(repo.device_id)?.online" @change="repoCommands[repo.device_id] = ($event.target as HTMLSelectElement).value"><option v-if="!repositories.commands[repo.device_id]?.length" value="">请先在设备页授权已安装的工具</option><option v-for="tool in repositories.commands[repo.device_id]" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>
-          <p v-if="unavailable(repo.device_id) || !commandFor(repo.device_id)" class="small dim">{{ unavailable(repo.device_id) || '请先在设备页授权已安装的工具。' }}</p>
-          <div class="row project-launch"><button class="btn btn--primary" type="button" :disabled="!conn.isOpen || !devices.byId(repo.device_id)?.online || !commandFor(repo.device_id)" @click="create({ key: `${repo.device_id}:${repo.path}`, label: repo.name, name: '', device_id: repo.device_id, command_id: commandFor(repo.device_id), cwd: repo.path })">新建任务</button><button class="btn btn--sm" :disabled="preferences.saving || !commandFor(repo.device_id)" @click="saveRepository(repo)">保存项目</button><RouterLink class="btn btn--ghost" :to="{ name: 'device', params: { id: repo.device_id } }">设备与工具 / 独立工作区</RouterLink></div>
+          <div class="field"><label :for="`repo-cli-${repo.device_id}-${repo.path}`">编程 CLI</label><select :id="`repo-cli-${repo.device_id}-${repo.path}`" :value="commandFor(repo.device_id, repo.path)" :disabled="!devices.byId(repo.device_id)?.online" @change="repoCommands[JSON.stringify([repo.device_id, repo.path])] = ($event.target as HTMLSelectElement).value"><option v-if="!repositories.commands[repo.device_id]?.length" value="">请先在设备页授权已安装的工具</option><option v-for="tool in repositories.commands[repo.device_id]" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>
+          <p v-if="unavailable(repo.device_id) || !commandFor(repo.device_id, repo.path)" class="small dim">{{ unavailable(repo.device_id) || '请先在设备页授权已安装的工具。' }}</p>
+          <div class="row project-launch"><button class="btn btn--primary" type="button" :disabled="!conn.isOpen || !devices.byId(repo.device_id)?.online || !commandFor(repo.device_id, repo.path)" @click="create({ key: `${repo.device_id}:${repo.path}`, label: repo.name, name: '', device_id: repo.device_id, command_id: commandFor(repo.device_id, repo.path), cwd: repo.path })">新建任务</button><button class="btn btn--sm" :disabled="preferences.saving || !commandFor(repo.device_id, repo.path)" @click="saveRepository(repo)">保存项目</button><RouterLink class="btn btn--ghost" :to="{ name: 'device', params: { id: repo.device_id } }">设备与工具 / 独立工作区</RouterLink></div>
         </section>
       </div>
     </section>

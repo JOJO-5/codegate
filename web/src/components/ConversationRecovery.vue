@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ModalDialog from './ModalDialog.vue'
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConnStore } from '../stores/conn'
@@ -42,8 +43,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="recovery-backdrop">
-    <section class="recovery-panel card" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
+  <ModalDialog title-id="recovery-title" :busy="busy" @close="emit('close')">
+    <section class="recovery-panel card" >
       <h2 id="recovery-title">恢复原对话</h2>
       <p class="dim small">{{ source.name }} · {{ source.cwd }}</p>
       <p v-if="busy" role="status">正在读取或恢复原生对话…</p>
@@ -64,7 +65,7 @@ onMounted(async () => {
         <button v-else-if="error" class="btn btn--primary" type="button" :disabled="busy" @click="restore()">重试</button>
       </div>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>

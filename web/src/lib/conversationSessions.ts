@@ -10,6 +10,9 @@ export function conversationKey(s: SessionSummary): string {
     r.store_key ?? '', r.native_root ?? '', r.native_id])
 }
 export const liveSession = (s: SessionSummary): boolean => ['starting', 'running', 'detached'].includes(s.status)
+export function canRecoverConversation(s: SessionSummary): boolean {
+  return Boolean(s.recovery || nativeCLI(s.command, s.args))
+}
 export function conversationRecords(records: SessionSummary[], sessionId: string): SessionSummary[] {
   const source = records.find(s => s.session_id === sessionId)
   return source ? records.filter(s => conversationKey(s) === conversationKey(source)) : []

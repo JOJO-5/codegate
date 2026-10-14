@@ -49,6 +49,16 @@ func (a *Agent) currentUpdateStatus() protocol.AgentUpdateStatus {
 	status := a.updateStatus
 	status.Managed = a.OnRestart != nil && Version != "dev"
 	a.updateMu.RUnlock()
+	if !a.startedAt.IsZero() {
+		status.InstanceStartedAt = a.startedAt.UnixMilli()
+	}
+	status.RestartScheduled = a.restartRequested.Load()
+	status.CanCancelRestart = status.Managed && status.State != "switching"
+	if a.mgr != nil {
+		status.BlockingSessions = a.mgr.Count()
+	}
+	status.BlockingOperations, _ = a.activityState()
+	status.BlockingWeb = a.webActive()
 	var failure protocol.AgentUpdateFailure
 	if updatefile.ReadJSON(filepath.Join(a.cfg.StateDir, "updates", "last-failure.json"), &failure) == nil && failure.OccurredAt > 0 {
 		status.LastFailure = &failure
@@ -60,9 +70,10 @@ func (a *Agent) currentUpdateStatus() protocol.AgentUpdateStatus {
 func (a *Agent) setUpdateStatus(state, version, detail string) {
 	a.updateMu.Lock()
 	defer a.updateMu.Unlock()
-	a.updateStatus = protocol.AgentUpdateStatus{
-		Enabled: a.cfg.UpdateEnabled, State: state, Version: version, Detail: detail,
-		CheckedAt: time.Now().UnixMilli(),
+	a.updateStatus.Enabled = a.cfg.UpdateEnabled
+	a.updateStatus.State, a.updateStatus.Version, a.updateStatus.Detail = state, version, detail
+	if state == "checking" {
+		a.updateStatus.CheckedAt = time.Now().UnixMilli()
 	}
 }
 
@@ -72,8 +83,23 @@ func (a *Agent) updateLoop(ctx context.Context) {
 	if a.cfg.UpdateEnabled {
 		a.checkUpdate(ctx)
 	}
-	ticker := time.NewTicker(a.cfg.UpdateInterval.Std())
-	defer ticker.Stop()
+	interval := a.cfg.UpdateInterval.Std()
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	schedule := func() {
+		a.updateMu.Lock()
+		if a.cfg.UpdateEnabled {
+			a.updateStatus.NextCheckAt = time.Now().Add(interval).UnixMilli()
+		} else {
+			a.updateStatus.NextCheckAt = 0
+		}
+		a.updateMu.Unlock()
+		timer.Reset(interval)
+	}
+	schedule()
 	idleTicker := time.NewTicker(5 * time.Second)
 	defer idleTicker.Stop()
 	for {
@@ -82,10 +108,12 @@ func (a *Agent) updateLoop(ctx context.Context) {
 			return
 		case <-a.updateWake:
 			a.checkUpdate(ctx)
-		case <-ticker.C:
+			schedule()
+		case <-timer.C:
 			if a.cfg.UpdateEnabled {
 				a.checkUpdate(ctx)
 			}
+			schedule()
 		case <-idleTicker.C:
 			a.applyStagedUpdate()
 		}
@@ -93,6 +121,9 @@ func (a *Agent) updateLoop(ctx context.Context) {
 }
 
 func (a *Agent) checkUpdate(ctx context.Context) {
+	a.updateMu.Lock()
+	a.updateStatus.NextCheckAt = 0
+	a.updateMu.Unlock()
 	a.restartReady = false
 	a.setUpdateStatus("checking", a.stagedVersion, "正在检查并下载更新")
 	manifestURL, err := a.updateManifestURL()
@@ -131,6 +162,8 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 }
 
 func (a *Agent) applyStagedUpdate() {
+	a.updateIntentMu.Lock()
+	defer a.updateIntentMu.Unlock()
 	if a.currentUpdateStatus().State == "switching" {
 		return
 	}
@@ -154,15 +187,37 @@ func (a *Agent) applyStagedUpdate() {
 	a.setUpdateStatus("switching", a.stagedVersion, "正在重启，等待守护进程确认")
 }
 
+// Serializes cancellation with the final idle barrier; downloads and automatic
+// installation remain enabled. Once switching starts it cannot be cancelled.
+func (a *Agent) cancelRequestedRestart() error {
+	a.updateIntentMu.Lock()
+	defer a.updateIntentMu.Unlock()
+	if a.currentUpdateStatus().State == "switching" {
+		return errors.New("Agent 已开始重启，无法取消")
+	}
+	a.restartRequested.Store(false)
+	status := a.currentUpdateStatus()
+	if status.State == "waiting" && status.Version == "" {
+		a.setUpdateStatus("current", "", "手动重启安排已取消")
+	}
+	return nil
+}
+
 func (a *Agent) onUpdateControl(env *protocol.Envelope) {
 	p, err := protocol.DecodePayload[protocol.AgentUpdateControl](env)
-	if err != nil || (p.Action != "check" && p.Action != "restart") {
+	if err != nil || (p.Action != "check" && p.Action != "restart" && p.Action != "cancel_restart") {
 		a.replyError(env, errors.New("更新操作无效"))
 		return
 	}
 	if a.OnRestart == nil || Version == "dev" {
 		a.replyError(env, errors.New("需要使用正式版 supervise 服务运行 Agent"))
 		return
+	}
+	if p.Action == "cancel_restart" {
+		if err := a.cancelRequestedRestart(); err != nil {
+			a.replyError(env, err)
+			return
+		}
 	}
 	// Flush the acknowledgement before allowing the loop to stop this child.
 	reply, err := protocol.NewReply(env, protocol.TypeAgentUpdateAccepted, nil)
@@ -180,7 +235,12 @@ func (a *Agent) onUpdateControl(env *protocol.Envelope) {
 		return
 	}
 	if p.Action == "restart" {
+		a.updateIntentMu.Lock()
 		a.restartRequested.Store(true)
+		a.updateIntentMu.Unlock()
+	}
+	if p.Action == "cancel_restart" {
+		return
 	}
 	select {
 	case a.updateWake <- struct{}{}:

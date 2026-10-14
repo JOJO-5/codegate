@@ -153,6 +153,8 @@ export function humanizeError(e: unknown): string {
     if (e.status === 0) return '网络不可用，请检查连接后重试'
     if (e.status === 401) return '登录已失效，请重新登录'
     if (e.status === 429) return '操作过于频繁，请稍后再试'
+    if (e.code === 'device_offline') return '设备离线，请确认电脑开机且 Agent 在线后重试'
+    if (e.code === 'agent_timeout') return 'Agent 响应超时，请检查设备连接后重试'
     if (e.status >= 500) return '服务端出错了，请稍后重试'
     return e.message || `请求失败 (HTTP ${e.status})`
   }

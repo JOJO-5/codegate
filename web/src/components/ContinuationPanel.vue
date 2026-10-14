@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import ModalDialog from './ModalDialog.vue'
+import { continuationLabels as labels } from '../lib/continuationLabels'
+
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { api, type ContinuationTask } from '../lib/api'
 import { useConnStore } from '../stores/conn'
@@ -9,6 +12,7 @@ const props = defineProps<{ deviceId: string; source?: SessionSummary | null; co
 const emit = defineEmits<{ close: [] }>()
 const conn = useConnStore()
 const rows = ref<ContinuationTask[]>([]), error = ref(''), busy = ref(false)
+const listError = ref(''), loading = ref(false), loaded = ref(false)
 const prompt = ref('请继续之前尚未完成的任务，先检查当前进度，避免重复已完成的操作。')
 const canLive = computed(() => !!props.source?.recovery?.native_id && ['codex','claude','opencode','dsh'].includes(nativeCLI(props.source.command, props.source.args)) && ['running','starting','detached'].includes(props.source.status))
 const dismissed = ref('')
@@ -18,12 +22,12 @@ const maxRetries = ref(3), retryErrors = ref(true), quotaWaitMinutes = ref(300)
 const choices = ref<{ id: string; title: string }[]>([])
 function localDate(ms: number): string { const d=new Date(ms); return new Date(ms-d.getTimezoneOffset()*60000).toISOString().slice(0,16) }
 const due = ref(localDate(Date.now()+5*3600000))
-let disposed=false, loading=false, generation=0, nonce=crypto.randomUUID()
+let disposed=false, generation=0, nonce=crypto.randomUUID()
 async function load(): Promise<void> {
- if (loading || disposed || document.hidden) return
- loading=true;const g=generation
- try { const result=await api.continuations(props.deviceId);if (!disposed && g===generation) rows.value=result.tasks }
- catch(e) {if(!disposed && g===generation) error.value=humanizeError(e)} finally {loading=false}
+ if (loading.value || disposed || document.hidden) return
+ loading.value=true;const g=generation
+ try { const result=await api.continuations(props.deviceId);if (!disposed && g===generation) { rows.value=result.tasks; loaded.value=true; listError.value='' } }
+ catch(e) {if(!disposed && g===generation) listError.value=humanizeError(e)} finally {loading.value=false}
 }
 watch(()=>props.source, async source=>{
  mode.value = canLive.value ? 'live_quota' : 'time';due.value = localDate(Date.now() + (canLive.value ? 0 : 5*3600000))
@@ -35,16 +39,16 @@ async function create():Promise<void>{
  try {const saved=await api.createContinuation(props.deviceId,{session_id:props.source.session_id,native_id:selected.value,prompt:prompt.value,mode:mode.value,due_at:mode.value === 'live_quota' ? Date.now() : new Date(due.value).getTime(),max_run_minutes:minutes.value,nonce,max_retries:maxRetries.value,retry_errors:mode.value==='live_quota' && retryErrors.value,quota_wait_minutes:quotaWaitMinutes.value});if(disposed)return;rows.value=[saved,...rows.value.filter(t=>t.id!==saved.id)];emit('close');await load()}
  catch(e){if(!disposed)error.value=humanizeError(e)} finally{busy.value=false}
 }
-async function cancel(t:ContinuationTask):Promise<void>{busy.value=true;try{await api.cancelContinuation(props.deviceId,t.id);await load()}catch(e){error.value=humanizeError(e)}finally{busy.value=false}}
-const labels:Record<string,string>={queued:'等待时间',waiting_agent:'等待设备',waiting_idle:'等待原终端结束',waiting_wall:'监测额度墙',waiting_retry:'等待重试',waiting_quota:'等待额度',dispatching:'正在派发',running:'后台执行中',cancelling:'正在停止',completed:'本次执行结束',cancelled:'已取消',failed:'执行失败',needs_review:'需要确认'}
+async function cancel(t:ContinuationTask):Promise<void>{busy.value=true;try{await api.cancelContinuation(props.deviceId,t.id);await load()}catch(e){listError.value=humanizeError(e)}finally{busy.value=false}}
+
 function terminal(state:string):boolean{return ['completed','cancelled','failed','needs_review'].includes(state)}
 let timer:ReturnType<typeof setInterval>|undefined
 onMounted(()=>{void load();timer=setInterval(()=>void load(),15000)})
 onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
 </script>
 <template>
- <div v-if="source" class="continuation-backdrop">
-  <form class="card continuation-dialog" role="dialog" aria-modal="true" aria-labelledby="continue-title" @submit.prevent="create">
+ <ModalDialog v-if="source" title-id="continue-title" :busy="busy" @close="emit('close')">
+  <form class="card continuation-dialog"  @submit.prevent="create">
    <h2 id="continue-title">安排原对话继续</h2>
    <p class="dim small">{{source.name}} · {{source.cwd}}</p>
    <p v-if="mode !== 'live_quota'" class="small">到时在该电脑后台恢复原生对话，关闭网页也能等待。可以提前安排；原终端仍运行时会等待其结束，不会并行执行。电脑需保持开机、Agent 在线。</p>
@@ -62,9 +66,12 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
    <p v-if="error" class="error" role="alert">{{error}}</p>
    <div class="row"><button class="btn" type="button" :disabled="busy" @click="emit('close')">返回</button><button class="btn btn--primary" :disabled="busy || !selected" type="submit">{{ mode==='live_quota' ? '开启自动续跑' : '保存后台任务' }}</button></div>
   </form>
- </div>
- <section v-if="visibleRows.length" class="card continuation-list" :class="{ 'continuation-list--compact': compact }">
-  <div v-if="!compact" class="row row--between"><h2>后台续跑</h2><button class="btn btn--sm" type="button" :disabled="busy" @click="load">刷新</button></div>
+ </ModalDialog>
+ <section v-if="!compact || visibleRows.length || listError" class="card continuation-list" :class="{ 'continuation-list--compact': compact }">
+  <div v-if="!compact" class="row row--between"><h2>后台续跑</h2><button class="btn btn--sm" type="button" :disabled="busy || loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button></div>
+  <p v-if="listError" class="error" role="alert">{{listError}} <button class="btn btn--sm" type="button" :disabled="busy || loading" @click="load">重试读取</button><span v-if="visibleRows.length" class="small"> 下方保留上次读取结果。</span></p>
+  <p v-else-if="loading && !visibleRows.length && !compact" class="dim small" role="status">正在读取后台任务…</p>
+  <p v-else-if="loaded && !visibleRows.length && !compact" class="dim small">暂无后台任务，可在会话中选择“安排继续”。</p>
   <p v-if="!compact" class="dim small">列表每15秒刷新。执行结束不代表任务已全部完成，请核对原对话和文件改动。</p>
   <article v-for="task in visibleRows" :key="task.id">
    <strong>{{task.source.name || '原对话'}} · {{labels[task.state]??task.state}}</strong>
@@ -73,7 +80,6 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
    <button v-if="compact && terminal(task.state)" class="btn btn--sm" type="button" @click="dismissed=task.id">收起</button>
    <button v-if="!terminal(task.state)" class="btn btn--sm" type="button" :disabled="busy" @click="cancel(task)">{{ task.mode === 'live_quota' ? '关闭自动续跑' : '取消续跑' }}</button>
   </article>
-  <p v-if="error && !source" class="error" role="alert">{{error}}</p>
  </section>
 </template>
 <style scoped>

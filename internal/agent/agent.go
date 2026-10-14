@@ -67,6 +67,7 @@ type Agent struct {
 	OnRestart                 func() error
 	updateWake                chan struct{}
 	restartRequested          atomic.Bool
+	updateIntentMu            sync.Mutex
 	restartReady              bool
 	stagedPath, stagedVersion string
 

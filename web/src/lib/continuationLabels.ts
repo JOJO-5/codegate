@@ -1,0 +1,1 @@
+export const continuationLabels: Record<string, string> = {queued:'等待时间',waiting_agent:'等待设备',waiting_idle:'等待原终端结束',waiting_wall:'监测额度墙',waiting_retry:'等待重试',waiting_quota:'等待额度',dispatching:'正在派发',running:'后台执行中',cancelling:'正在停止',completed:'本次执行结束',cancelled:'已取消',failed:'执行失败',needs_review:'需要确认'}

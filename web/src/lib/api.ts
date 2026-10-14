@@ -270,6 +270,13 @@ export interface AgentUpdateStatus {
   version?: string
   detail?: string
   checked_at?: number
+  instance_started_at?: number
+  next_check_at?: number
+  restart_scheduled?: boolean
+  can_cancel_restart?: boolean
+  blocking_sessions?: number
+  blocking_operations?: number
+  blocking_web?: boolean
   last_failure?: { version: string; reason: string; occurred_at: number; attempts?: number; retry_after?: number }
 }
 
@@ -426,7 +433,7 @@ export const api = {
     return request<RepositoryListResult>('GET', `/devices/${encodeURIComponent(id)}/repositories?offset=${offset}&refresh=${refresh}`)
   },
 
-  controlAgentUpdate(id: string, action: 'check' | 'restart'): Promise<{ action: string }> {
+  controlAgentUpdate(id: string, action: 'check' | 'restart' | 'cancel_restart'): Promise<{ action: string }> {
     return request('POST', `/devices/${encodeURIComponent(id)}/update`, { action })
   },
   getDeviceUpdateStatus(id: string): Promise<DeviceUpdateStatus> {
