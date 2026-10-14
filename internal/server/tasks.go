@@ -158,10 +158,14 @@ func (s *Server) handleCancelContinuation(w http.ResponseWriter, r *http.Request
 		writeProtoError(w, errNoAccess())
 		return
 	}
-	if !taskTerminal(task.State) {
+	if !taskTerminal(task.State) || task.State == "needs_review" {
 		old := task.State
+		previousDetail := task.Detail
 		task.State = "cancelled"
 		task.Detail = "已取消等待"
+		if old == "needs_review" {
+			task.Detail = "已取消续跑安排；原执行结果仍需核对。" + previousDetail
+		}
 		if old == "running" || old == "dispatching" || old == "cancelling" {
 			task.State = "cancelling"
 			task.Detail = "正在停止后台进程"

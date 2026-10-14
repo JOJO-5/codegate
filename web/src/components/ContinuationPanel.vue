@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ModalDialog from './ModalDialog.vue'
+import { useDraftsStore } from '../stores/drafts'
 import { continuationLabels as labels } from '../lib/continuationLabels'
 
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
@@ -15,8 +16,24 @@ const rows = ref<ContinuationTask[]>([]), error = ref(''), busy = ref(false)
 const listError = ref(''), loading = ref(false), loaded = ref(false)
 const prompt = ref('请继续之前尚未完成的任务，先检查当前进度，避免重复已完成的操作。')
 const canLive = computed(() => !!props.source?.recovery?.native_id && ['codex','claude','opencode','dsh'].includes(nativeCLI(props.source.command, props.source.args)) && ['running','starting','detached'].includes(props.source.status))
-const dismissed = ref('')
-const visibleRows = computed(() => props.compact ? rows.value.filter(t => t.mode === 'live_quota' && t.session_id === props.sessionId && t.id !== dismissed.value).slice(0,1) : rows.value)
+const drafts = useDraftsStore()
+const dismissed = ref<string[]>([])
+const notice = ref('')
+const dismissKey = computed(() => `continuations:hidden:${props.deviceId}`)
+watch([() => drafts.owner, dismissKey], () => {
+ try { const saved: unknown = JSON.parse(drafts.get(dismissKey.value) || '[]'); dismissed.value = Array.isArray(saved) ? saved.filter((v): v is string => typeof v === 'string') : [] }
+ catch { dismissed.value = [] }
+}, { immediate: true })
+const visibleRows = computed(() => {
+ const shown = rows.value.filter(t => !terminal(t.state) || !dismissed.value.includes(t.id))
+ return props.compact ? shown.filter(t => t.mode === 'live_quota' && t.session_id === props.sessionId).slice(0,1) : shown
+})
+function dismiss(t: ContinuationTask): void {
+ if (!terminal(t.state)) return
+ dismissed.value = [...new Set([...dismissed.value, t.id])]
+ drafts.set(dismissKey.value, JSON.stringify(dismissed.value))
+}
+function showDismissed(): void { dismissed.value = []; drafts.set(dismissKey.value, '') }
 const mode = ref('time'), selected = ref(''), minutes = ref(120)
 const maxRetries = ref(3), retryErrors = ref(true), quotaWaitMinutes = ref(300)
 const choices = ref<{ id: string; title: string }[]>([])
@@ -39,7 +56,16 @@ async function create():Promise<void>{
  try {const saved=await api.createContinuation(props.deviceId,{session_id:props.source.session_id,native_id:selected.value,prompt:prompt.value,mode:mode.value,due_at:mode.value === 'live_quota' ? Date.now() : new Date(due.value).getTime(),max_run_minutes:minutes.value,nonce,max_retries:maxRetries.value,retry_errors:mode.value==='live_quota' && retryErrors.value,quota_wait_minutes:quotaWaitMinutes.value});if(disposed)return;rows.value=[saved,...rows.value.filter(t=>t.id!==saved.id)];emit('close');await load()}
  catch(e){if(!disposed)error.value=humanizeError(e)} finally{busy.value=false}
 }
-async function cancel(t:ContinuationTask):Promise<void>{busy.value=true;try{await api.cancelContinuation(props.deviceId,t.id);await load()}catch(e){listError.value=humanizeError(e)}finally{busy.value=false}}
+async function cancel(t:ContinuationTask):Promise<void>{
+ if (busy.value) return
+ busy.value=true;notice.value='';generation++
+ try {
+  const saved=await api.cancelContinuation(props.deviceId,t.id)
+  if(disposed)return
+  rows.value=rows.value.map(row=>row.id===saved.id?saved:row)
+  listError.value='';notice.value=saved.state==='cancelling'?'已请求停止自动执行，等待 Agent 确认。':'已取消续跑安排，原终端保持不变；记录可收起。'
+ }catch(e){if(!disposed)listError.value=humanizeError(e)}finally{busy.value=false}
+}
 
 function terminal(state:string):boolean{return ['completed','cancelled','failed','needs_review'].includes(state)}
 let timer:ReturnType<typeof setInterval>|undefined
@@ -72,13 +98,17 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
   <p v-if="listError" class="error" role="alert">{{listError}} <button class="btn btn--sm" type="button" :disabled="busy || loading" @click="load">重试读取</button><span v-if="visibleRows.length" class="small"> 下方保留上次读取结果。</span></p>
   <p v-else-if="loading && !visibleRows.length && !compact" class="dim small" role="status">正在读取后台任务…</p>
   <p v-else-if="loaded && !visibleRows.length && !compact" class="dim small">暂无后台任务，可在会话中选择“安排继续”。</p>
-  <p v-if="!compact" class="dim small">列表每15秒刷新。执行结束不代表任务已全部完成，请核对原对话和文件改动。</p>
+  <p v-if="notice" class="notice small" role="status">{{ notice }}</p>
+  <button v-if="!compact && dismissed.length" class="btn btn--sm" type="button" @click="showDismissed">显示已收起记录</button>
+  <p v-if="!compact" class="dim small">收起只影响当前标签页，退出账号时清除；记录仍保留在服务端。列表每15秒刷新。执行结束不代表任务已全部完成，请核对原对话和文件改动。</p>
   <article v-for="task in visibleRows" :key="task.id">
-   <strong>{{task.source.name || '原对话'}} · {{labels[task.state]??task.state}}</strong>
-   <p v-if="!compact" class="dim small">{{absoluteTime(task.due_at)}} · {{task.source.cwd}}</p><p class="small" :title="task.detail">{{task.detail}}</p>
+   <strong>{{task.source.name || '原对话'}} · {{task.mode === 'live_quota' && task.state === 'queued' ? '等待开启监测' : labels[task.state]??task.state}}</strong>
+   <p v-if="!compact" class="dim small">{{task.mode === 'live_quota' ? '下次状态核对' : '下次派发检查'}}：{{absoluteTime(task.due_at)}} · {{task.source.cwd}}</p>
+   <p v-if="task.state === 'needs_review'" class="small notice notice--warn">自动执行已暂停，需要处理下方原因；到时间不会自动重试。可取消安排，核对原对话后重新开启。</p>
+   <p class="small" :title="task.detail">{{task.detail}}</p>
    <details v-if="!compact"><summary>任务与执行结果</summary><p>{{task.prompt}}</p><pre v-if="task.output">{{task.output}}</pre><p v-else class="dim">暂无最终回复；可恢复原对话查看历史。</p></details>
-   <button v-if="compact && terminal(task.state)" class="btn btn--sm" type="button" @click="dismissed=task.id">收起</button>
-   <button v-if="!terminal(task.state)" class="btn btn--sm" type="button" :disabled="busy" @click="cancel(task)">{{ task.mode === 'live_quota' ? '关闭自动续跑' : '取消续跑' }}</button>
+   <button v-if="terminal(task.state)" class="btn btn--sm" type="button" @click="dismiss(task)">收起记录</button>
+   <button v-if="!terminal(task.state) || task.state === 'needs_review'" class="btn btn--sm" type="button" :disabled="busy" @click="cancel(task)">{{ task.state === 'needs_review' ? '取消安排' : task.mode === 'live_quota' ? '关闭自动续跑' : '取消续跑' }}</button>
   </article>
  </section>
 </template>

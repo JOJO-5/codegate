@@ -63,6 +63,31 @@ func TestContinuationAuthorizationPersistenceAndOffline(t *testing.T) {
 		t.Fatal("cancelled task launched")
 	}
 }
+
+func TestOwnerCanCancelNeedsReviewContinuationWithoutRestartingSource(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "review-cancel@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, _ := e.seedPairedDevice(t, owner)
+	task := &protocol.ContinuationTask{ID: uuid.NewString(), UserID: owner, DeviceID: device, SessionID: uuid.NewString(), Mode: "live_quota", State: "needs_review", Detail: "identity mismatch", Attempt: 1, DueAt: e.clock.Now().UnixMilli()}
+	if err := e.store.InsertContinuation(t.Context(), task, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/devices/" + device + "/continuations/" + task.ID + "/cancel"
+	r := e.post(t, path, token, nil)
+	if r.Status != 200 {
+		t.Fatal(r.Status)
+	}
+	got, err := e.store.ContinuationByID(t.Context(), task.ID)
+	if err != nil || got.State != "cancelled" || got.Attempt != 1 {
+		t.Fatalf("cancel did not acknowledge blocked arrangement: %+v %v", got, err)
+	}
+	e.srv.pollContinuations(t.Context())
+	got, _ = e.store.ContinuationByID(t.Context(), task.ID)
+	if got.State != "cancelled" {
+		t.Fatal("cancelled arrangement dispatched")
+	}
+}
 func TestContinuationDispatchReceiptAndLateReply(t *testing.T) {
 	e := newTestEnv(t)
 	token := e.signup(t, "task-dispatch@example.com", "correct-horse-battery")

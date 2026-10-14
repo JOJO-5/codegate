@@ -36,5 +36,6 @@ jobs:
       - run: npm ci
       - run: npm run test:transfer
       - run: npm run test:conversations
+      - run: npm run test:ux
       - name: Typecheck and build
         run: npm run build

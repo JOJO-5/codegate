@@ -204,6 +204,29 @@ func TestLiveQuotaWaitsThenContinuesSameTerminalExactlyOnce(t *testing.T) {
 		t.Fatal("cancel replay submitted")
 	}
 }
+
+func TestLiveQuotaAcceptsServerOwnedSessionWithoutLocalUserID(t *testing.T) {
+	a, sess, p, _ := liveFixture(t)
+	// Production terminal creation intentionally leaves ownership at the Server.
+	sess.UserID = uuid.Nil
+	r := liveRun(t, a, p)
+	if r.Result.State != "waiting_wall" {
+		t.Fatal(r.Result)
+	}
+}
+
+func TestLiveQuotaRejectsDifferentExplicitLocalOwner(t *testing.T) {
+	a, _, p, f := liveFixture(t)
+	p.UserID = uuid.NewString()
+	req, _ := protocol.NewRequest(uuid.NewString(), protocol.TypeTaskRun, "", p)
+	a.onTaskRun(req)
+	if _, err := a.taskReceipt(p.TaskID, p.Attempt, p.UserID); !os.IsNotExist(err) {
+		t.Fatal("wrong local owner was accepted", err)
+	}
+	if f.startCount() != 0 {
+		t.Fatal("wrong owner started a turn")
+	}
+}
 func TestLiveQuotaLostSubmissionNeverRepeats(t *testing.T) {
 	a, _, p, f := liveFixture(t)
 	liveRun(t, a, p)

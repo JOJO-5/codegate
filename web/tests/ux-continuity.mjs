@@ -12,13 +12,22 @@ async function render(path, state) {
   const code = compile(template, { mode: 'function', expressionPlugins: ['typescript'] }).code
   const js = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
   const render = new Function('Vue', js)(Vue)
-  const app = Vue.createSSRApp({ setup: () => state, render })
+  const app = Vue.createSSRApp({ setup: () => ({ dismissed: [], notice: '', ...state }), render })
   app.component('RouterLink', { template: '<a><slot /></a>' })
   app.config.warnHandler = () => {}
   return renderToString(app)
 }
 const noop = () => {}
 const checks = [
+  ['需要确认的续跑有取消安排和收起记录入口', async () => {
+    const html = await render('../src/components/ContinuationPanel.vue', {
+      source: null, compact: false, visibleRows: [{ id: 'blocked', source: { name: 'Codex' }, mode: 'live_quota', state: 'needs_review', detail: 'identity mismatch' }],
+      listError: '', loading: false, loaded: true, busy: false, labels: { needs_review: '需要确认' },
+      absoluteTime: () => '测试时间', terminal: () => true, load: noop, cancel: noop, dismiss: noop,
+    })
+    assert.ok(html.includes('取消安排'))
+    assert.ok(html.includes('收起记录'))
+  }],
   ['摘要保留失败原因与缓存结果，不把进程退出等同于交付完成', async () => {
     const html = await render('../src/components/WorkSummary.vue', {
       records: [{ status: 'exited' }], latest: { session_id: 'ended', status: 'exited' },

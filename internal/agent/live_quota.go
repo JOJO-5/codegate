@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"net"
 	"os"
 	"path/filepath"
@@ -211,7 +212,9 @@ func (a *Agent) onLiveQuota(req *protocol.Envelope, p protocol.TaskRunPayload, c
 		return
 	}
 	current := sess.Summary()
-	if sess.UserID.String() != p.UserID || !sameNativeTask(current, p.Source) || !supportedLiveTool(current.Command, current.Args) {
+	// Production terminals leave UserID unset: the authenticated Server owns
+	// device/session authorization. Enforce a local owner only when present.
+	if (sess.UserID != uuid.Nil && sess.UserID.String() != p.UserID) || !sameNativeTask(current, p.Source) || !supportedLiveTool(current.Command, current.Args) {
 		fail("原终端与Codex原生对话身份不一致")
 		return
 	}
