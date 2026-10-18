@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import WorkflowPanel from './WorkflowPanel.vue'
+const mode = ref('terminal')
 import { useRouter } from 'vue-router'
 import { useRepositoriesStore } from '../stores/repositories'
 import { useDevicesStore } from '../stores/devices'
@@ -45,7 +47,9 @@ async function launch(): Promise<void> {
 <template>
   <section class="card stack task-launch" aria-labelledby="launch-title">
     <div class="row row--between"><h2 id="launch-title">新建任务 · {{ label }}</h2><button class="btn btn--ghost" :disabled="busy" @click="emit('close')">取消新建</button></div>
-    <form class="stack" @submit.prevent="launch">
+    <label class="field">执行方式<select v-model="mode" :disabled="busy" aria-label="执行方式"><option value="terminal">打开 CLI，由我对话</option><option value="workflow">主 Agent 自主调度</option></select></label>
+    <WorkflowPanel v-if="mode === 'workflow'" :key="deviceId + cwd" :device-id="deviceId" :cwd="cwd" :label="label" />
+    <form v-else class="stack" @submit.prevent="launch">
       <div class="field"><label for="launch-cli">编程工具</label><select id="launch-cli" v-model="command" :disabled="busy"><option value="">选择已授权工具</option><option v-for="tool in tools" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>
       <div class="field"><label for="launch-cwd">任务工作目录</label><input id="launch-cwd" v-model="cwd" :disabled="busy" autocapitalize="none" spellcheck="false" /></div>
       <div class="field"><label for="launch-name">任务名称</label><input id="launch-name" v-model="name" :disabled="busy" maxlength="160" placeholder="留空自动使用项目目录和工具名，同名加编号" /></div>

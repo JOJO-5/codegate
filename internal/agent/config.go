@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jojo/codegate/internal/protocol"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -190,7 +191,8 @@ type Config struct {
 	AllowedRoots []string `json:"allowed_roots"`
 
 	// AllowedCommands 是预置命令白名单。
-	AllowedCommands []CommandSpec `json:"allowed_commands"`
+	AllowedCommands  []CommandSpec              `json:"allowed_commands"`
+	WorkflowProfiles []protocol.WorkflowProfile `json:"workflow_profiles,omitempty"`
 
 	// AllowCustomCommands 允许浏览器下发任意命令行。
 	//
@@ -414,6 +416,9 @@ func (c Config) Prepare() (Config, error) {
 	copy(cmds, c.AllowedCommands)
 	for i := range cmds {
 		cmds[i].Command = normalizeCommandPath(cmds[i].Command)
+		if cmds[i].ID == "opencode" {
+			cmds[i].Command = migrateOpenCodePackagePath(cmds[i].Command)
+		}
 	}
 	c.AllowedCommands = cmds
 
@@ -425,6 +430,28 @@ func (c Config) Prepare() (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// Only the exact removed npm V1 executable has a known V2 successor. Do not
+// replace an existing binary or search arbitrary PATH entries for custom paths.
+func migrateOpenCodePackagePath(command string) string {
+	if !filepath.IsAbs(command) {
+		return command
+	}
+	if _, err := os.Stat(command); !errors.Is(err, os.ErrNotExist) {
+		return command
+	}
+	bin := filepath.Dir(command)
+	pkg := filepath.Dir(bin)
+	modules := filepath.Dir(pkg)
+	if !strings.EqualFold(filepath.Base(command), "opencode.exe") || !strings.EqualFold(filepath.Base(bin), "bin") || !strings.EqualFold(filepath.Base(pkg), "opencode-ai") || !strings.EqualFold(filepath.Base(modules), "node_modules") {
+		return command
+	}
+	next := filepath.Join(modules, "@opencode", "cli", "bin", "opencode.exe")
+	if fi, err := os.Stat(next); err == nil && fi.Mode().IsRegular() {
+		return next
+	}
+	return command
 }
 
 // FindCommand 按 ID 查白名单。

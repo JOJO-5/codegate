@@ -9,6 +9,7 @@
  */
 
 import ContinuationPanel from '../components/ContinuationPanel.vue'
+import WorkflowPanel from '../components/WorkflowPanel.vue'
 import ConversationRecovery from '../components/ConversationRecovery.vue'
 import NewProjectDialog from '../components/NewProjectDialog.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -496,7 +497,6 @@ function canOpen(s: SessionSummary): boolean {
 <template>
   <ConversationRecovery v-if="recoveringSession" :source="recoveringSession" @close="recoveringSession = null" />
   <main class="page device-page">
-<ContinuationPanel :key="id" :device-id="id" :source="continuingSession" @close="continuingSession = null" />
     <div class="device-heading">
       <div class="row row--between">
       <div class="row">
@@ -511,6 +511,8 @@ function canOpen(s: SessionSummary): boolean {
       <p class="device-heading__summary"><span class="health__dot" :style="{ background: device?.online ? 'var(--ok)' : 'var(--fg-faint)' }" />{{ device?.online ? '设备在线' : '设备离线' }}<span v-if="device">· {{ platformLabel(device.platform) }} · Agent {{ device.agent_version || '—' }}</span></p>
     </div>
 
+    <ContinuationPanel :key="id" :device-id="id" :source="continuingSession" @close="continuingSession = null" />
+    <WorkflowPanel :key="`workflow:${id}`" :device-id="id" />
     <div v-if="preferences.error" class="notice notice--err">偏好同步失败：{{ preferences.error }} <button class="btn btn--sm" type="button" @click="preferences.load(true)">重试</button></div>
     <div v-if="hasLegacyPreferences" class="notice notice--info">此浏览器有旧版置顶或启动组合。<button class="btn btn--sm" type="button" :disabled="importingPreferences || preferences.saving" @click="importLegacyPreferences">{{ importingPreferences ? '正在导入…' : '导入到当前账号' }}</button></div>
     <div v-if="preferenceNotice" class="notice notice--info" role="status">{{ preferenceNotice }}</div>

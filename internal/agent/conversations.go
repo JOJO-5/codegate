@@ -159,7 +159,7 @@ func (a *Agent) onConversationRequest(env *protocol.Envelope) {
 	if binding.NativeRoot != "" {
 		childEnv = replaceEnv(childEnv, "DSH_TUI_SESSION_ROOT", binding.NativeRoot)
 	}
-	history, err := a.nativeHistory(nativeTool(cmd), cwd, childEnv, binding.StoreKey, target)
+	history, err := a.nativeCommandHistory(cmd, cwd, childEnv, binding.StoreKey, target)
 	if err != nil {
 		a.replyError(env, protocol.NewError(protocol.CodeInvalidPayload, err.Error()))
 		return
@@ -463,6 +463,36 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 	}
 	if binding.NativeID != "" && !nativeIDPattern.MatchString(binding.NativeID) {
 		return nil, nil, "", errors.New("无效的原生对话 ID")
+	}
+	if tool == "opencode" {
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		defer cancel()
+		v2, err := isOpenCodeV2(ctx, *cmd, env, cwd)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if v2 {
+			client, err := connectOpenCodeV2(ctx, *cmd, env, cwd)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			newNative := binding.NativeID == ""
+			if err = client.prepare(ctx, binding); err != nil {
+				return nil, nil, "", err
+			}
+			if newNative {
+				// Explicit --server clients do not forward their environment.
+				// Set the approved environment only for the new native session;
+				// restoring an existing session preserves its original environment.
+				if err = client.environment(ctx, binding.NativeID, env); err != nil {
+					return nil, nil, "", err
+				}
+			}
+			cmd.Args = append(cmd.Args, "--session", binding.NativeID, "--server", client.endpoint.String())
+			env = replaceEnv(env, "OPENCODE_PASSWORD", client.password)
+			env = replaceEnv(env, "CODEGATE_OPENCODE_V2_URL", client.endpoint.String())
+			return env, binding, "", nil
+		}
 	}
 	if binding.NativeID != "" {
 		switch tool {

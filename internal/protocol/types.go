@@ -147,6 +147,7 @@ func (s Side) Local() Sender { return SentByServer }
 // 而不是忽略后继续。理由：浏览器若能发 `session.exit` 或 `agent.ready`，
 // 就能伪造 Agent 事件，欺骗 UI 和 Server 的状态机。
 var allowedSenders = map[Type]Sender{
+	TypeWorkflowControl:SentByServer,TypeWorkflowState:SentByAgent,
 	TypeAgentUpdateControl: SentByServer, TypeAgentUpdateAccepted: SentByAgent,
 	TypeTaskRun: SentByServer, TypeTaskInspect: SentByServer, TypeTaskCancel: SentByServer, TypeTaskState: SentByAgent,
 	TypeProjectCreate: SentByClient, TypeProjectCreated: SentByAgent,

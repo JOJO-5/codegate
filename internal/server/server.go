@@ -45,6 +45,7 @@ type Server struct {
 	tasksMu           sync.Mutex
 	taskRPCMu         sync.Mutex
 	taskPending       map[string]repositoryWait
+	workflowPending   map[string]repositoryWait
 	repositoryMu      sync.Mutex
 	repositoryPending map[string]repositoryWait
 	gitPending        map[string]repositoryWait

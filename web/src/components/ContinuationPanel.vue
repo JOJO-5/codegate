@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import ModalDialog from './ModalDialog.vue'
-import { useDraftsStore } from '../stores/drafts'
 import { continuationLabels as labels } from '../lib/continuationLabels'
 
-import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { api, type ContinuationTask } from '../lib/api'
 import { useConnStore } from '../stores/conn'
 import { MessageType, type SessionSummary } from '../lib/protocol'
@@ -16,33 +15,47 @@ const rows = ref<ContinuationTask[]>([]), error = ref(''), busy = ref(false)
 const listError = ref(''), loading = ref(false), loaded = ref(false)
 const prompt = ref('请继续之前尚未完成的任务，先检查当前进度，避免重复已完成的操作。')
 const canLive = computed(() => !!props.source?.recovery?.native_id && ['codex','claude','opencode','dsh'].includes(nativeCLI(props.source.command, props.source.args)) && ['running','starting','detached'].includes(props.source.status))
-const drafts = useDraftsStore()
-const dismissed = ref<string[]>([])
 const notice = ref('')
-const dismissKey = computed(() => `continuations:hidden:${props.deviceId}`)
-watch([() => drafts.owner, dismissKey], () => {
- try { const saved: unknown = JSON.parse(drafts.get(dismissKey.value) || '[]'); dismissed.value = Array.isArray(saved) ? saved.filter((v): v is string => typeof v === 'string') : [] }
- catch { dismissed.value = [] }
-}, { immediate: true })
+const filter = ref('active')
+const removed = ref<ContinuationTask[]>([])
+const undoButton=ref<HTMLButtonElement|null>(null),historyButton=ref<HTMLButtonElement|null>(null)
+const now = ref(Date.now())
+function history(t:ContinuationTask):boolean {return ['completed','cancelled','failed'].includes(t.state)}
+function group(t:ContinuationTask):string {return t.state==='needs_review'?'review':history(t)?'history':'active'}
+const counts = computed(()=>({active:rows.value.filter(t=>group(t)==='active').length,review:rows.value.filter(t=>group(t)==='review').length,history:rows.value.filter(history).length}))
 const visibleRows = computed(() => {
- const shown = rows.value.filter(t => !terminal(t.state) || !dismissed.value.includes(t.id))
- return props.compact ? shown.filter(t => t.mode === 'live_quota' && t.session_id === props.sessionId).slice(0,1) : shown
+ const shown = rows.value.filter(t => !t.deleted_at)
+ return props.compact ? shown.filter(t => t.mode === 'live_quota' && t.session_id === props.sessionId).slice(0,1) : shown.filter(t=>group(t)===filter.value)
 })
-function dismiss(t: ContinuationTask): void {
- if (!terminal(t.state)) return
- dismissed.value = [...new Set([...dismissed.value, t.id])]
- drafts.set(dismissKey.value, JSON.stringify(dismissed.value))
+async function remove(t:ContinuationTask):Promise<void> {
+ if(busy.value || !history(t))return
+ busy.value=true;generation++;listError.value=''
+ try {await api.deleteContinuation(props.deviceId,t.id);if(disposed)return;rows.value=rows.value.filter(row=>row.id!==t.id);removed.value=[t];notice.value='记录已删除，原生对话和项目文件保留。'}
+ catch(e){if(!disposed)listError.value=humanizeError(e)}finally{busy.value=false;await nextTick();if(!disposed)undoButton.value?.focus()}
 }
-function showDismissed(): void { dismissed.value = []; drafts.set(dismissKey.value, '') }
+async function undoRemove():Promise<void> {
+ if(busy.value || !removed.value.length)return
+ busy.value=true;generation++;listError.value=''
+ try {for(const t of [...removed.value]) {const saved=await api.restoreContinuation(props.deviceId,t.id);if(disposed)return;rows.value=[saved,...rows.value.filter(row=>row.id!==saved.id)];removed.value=removed.value.filter(row=>row.id!==saved.id)}notice.value='已恢复记录。';await nextTick();historyButton.value?.focus()}
+ catch(e){if(!disposed)listError.value=humanizeError(e)}finally{busy.value=false}
+}
+async function clearHistory():Promise<void> {
+ if(busy.value)return
+ const targets=rows.value.filter(history);if(!targets.length)return
+ busy.value=true;generation++;listError.value='';removed.value=[]
+ try {for(const t of targets) {await api.deleteContinuation(props.deviceId,t.id);if(disposed)return;rows.value=rows.value.filter(row=>row.id!==t.id);removed.value.push(t)}}
+ catch(e){if(!disposed)listError.value=humanizeError(e)}finally{busy.value=false;notice.value=`已删除 ${removed.value.length} 条历史记录，可撤销；项目文件保留。`;await nextTick();undoButton.value?.focus()}
+}
+function elapsed(start:number):string {const seconds=Math.max(0,Math.floor((now.value-start)/1000));return `${Math.floor(seconds/60)} 分 ${seconds%60} 秒`}
 const mode = ref('time'), selected = ref(''), minutes = ref(120)
 const maxRetries = ref(3), retryErrors = ref(true), quotaWaitMinutes = ref(300)
 const choices = ref<{ id: string; title: string }[]>([])
 function localDate(ms: number): string { const d=new Date(ms); return new Date(ms-d.getTimezoneOffset()*60000).toISOString().slice(0,16) }
 const due = ref(localDate(Date.now()+5*3600000))
-let disposed=false, generation=0, nonce=crypto.randomUUID()
+let disposed=false, generation=0, nonce=crypto.randomUUID(), lastPollAt=0
 async function load(): Promise<void> {
  if (loading.value || disposed || document.hidden) return
- loading.value=true;const g=generation
+ loading.value=true;lastPollAt=Date.now();const g=generation
  try { const result=await api.continuations(props.deviceId);if (!disposed && g===generation) { rows.value=result.tasks; loaded.value=true; listError.value='' } }
  catch(e) {if(!disposed && g===generation) listError.value=humanizeError(e)} finally {loading.value=false}
 }
@@ -63,13 +76,13 @@ async function cancel(t:ContinuationTask):Promise<void>{
   const saved=await api.cancelContinuation(props.deviceId,t.id)
   if(disposed)return
   rows.value=rows.value.map(row=>row.id===saved.id?saved:row)
-  listError.value='';notice.value=saved.state==='cancelling'?'已请求停止自动执行，等待 Agent 确认。':'已取消续跑安排，原终端保持不变；记录可收起。'
+  listError.value='';notice.value=saved.state==='cancelling'?'已请求停止自动执行，等待 Agent 确认。':'已取消续跑安排，记录已移至历史。';if(!props.compact && history(saved))filter.value='history'
  }catch(e){if(!disposed)listError.value=humanizeError(e)}finally{busy.value=false}
 }
 
 function terminal(state:string):boolean{return ['completed','cancelled','failed','needs_review'].includes(state)}
 let timer:ReturnType<typeof setInterval>|undefined
-onMounted(()=>{void load();timer=setInterval(()=>void load(),15000)})
+onMounted(()=>{void load();timer=setInterval(()=>{now.value=Date.now();if(rows.value.some(t=>['running','dispatching','cancelling'].includes(t.state)) || now.value-lastPollAt>=15000)void load()},3000)})
 onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
 </script>
 <template>
@@ -93,22 +106,41 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
    <div class="row"><button class="btn" type="button" :disabled="busy" @click="emit('close')">返回</button><button class="btn btn--primary" :disabled="busy || !selected" type="submit">{{ mode==='live_quota' ? '开启自动续跑' : '保存后台任务' }}</button></div>
   </form>
  </ModalDialog>
- <section v-if="!compact || visibleRows.length || listError" class="card continuation-list" :class="{ 'continuation-list--compact': compact }">
-  <div v-if="!compact" class="row row--between"><h2>后台续跑</h2><button class="btn btn--sm" type="button" :disabled="busy || loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button></div>
+ <section v-if="!compact || visibleRows.length || listError || removed.length" class="card continuation-list" :class="{ 'continuation-list--compact': compact }">
+  <div v-if="!compact" class="row row--between"><h2>预约与续跑</h2><button class="btn btn--sm" type="button" :disabled="busy || loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button></div>
+  <div v-if="!compact" class="row continuation-filters" role="group" aria-label="任务分类">
+   <button class="btn btn--sm" :aria-pressed="filter==='active'" @click="filter='active'">进行中 {{counts.active}}</button>
+   <button class="btn btn--sm" :aria-pressed="filter==='review'" @click="filter='review'">需要处理 {{counts.review}}</button>
+   <button ref="historyButton" class="btn btn--sm" :aria-pressed="filter==='history'" @click="filter='history'">历史记录 {{counts.history}}</button>
+   <button v-if="filter==='history' && counts.history" class="btn btn--sm" :disabled="busy" @click="clearHistory">清理当前列表历史</button>
+  </div>
   <p v-if="listError" class="error" role="alert">{{listError}} <button class="btn btn--sm" type="button" :disabled="busy || loading" @click="load">重试读取</button><span v-if="visibleRows.length" class="small"> 下方保留上次读取结果。</span></p>
   <p v-else-if="loading && !visibleRows.length && !compact" class="dim small" role="status">正在读取后台任务…</p>
-  <p v-else-if="loaded && !visibleRows.length && !compact" class="dim small">暂无后台任务，可在会话中选择“安排继续”。</p>
+  <p v-else-if="loaded && !visibleRows.length && !compact" class="dim small">{{filter==='history'?'暂无历史记录。':filter==='review'?'暂无需要处理的任务。':'暂无进行中的任务，可在会话中选择“安排继续”。'}}</p>
   <p v-if="notice" class="notice small" role="status">{{ notice }}</p>
-  <button v-if="!compact && dismissed.length" class="btn btn--sm" type="button" @click="showDismissed">显示已收起记录</button>
-  <p v-if="!compact" class="dim small">收起只影响当前标签页，退出账号时清除；记录仍保留在服务端。列表每15秒刷新。执行结束不代表任务已全部完成，请核对原对话和文件改动。</p>
+  <button v-if="removed.length" ref="undoButton" class="btn btn--sm" type="button" :disabled="busy" @click="undoRemove">撤销删除（{{removed.length}}）</button>
+  <p v-if="!compact" class="dim small">运行中可查看只读执行过程；历史可删除并撤销，保留原生对话与文件。</p>
+  <p v-if="!compact && rows.length>=200" class="notice small">仅显示最近200条记录；删除历史后可刷新读取更早记录。</p>
   <article v-for="task in visibleRows" :key="task.id">
    <strong>{{task.source.name || '原对话'}} · {{task.mode === 'live_quota' && task.state === 'queued' ? '等待开启监测' : labels[task.state]??task.state}}</strong>
-   <p v-if="!compact" class="dim small">{{task.mode === 'live_quota' ? '下次状态核对' : '下次派发检查'}}：{{absoluteTime(task.due_at)}} · {{task.source.cwd}}</p>
+   <p v-if="!compact" class="dim small">{{task.source.cwd}} · {{task.source.command}}</p>
+   <p v-if="!compact && history(task) && task.updated_at" class="dim small">结束时间：{{absoluteTime(task.updated_at)}}</p>
+   <p v-else-if="!compact && task.state!=='needs_review' && task.state!=='running' && task.state!=='cancelling'" class="dim small">下次检查：{{absoluteTime(task.due_at)}}（实际启动取决于设备、原终端和额度状态）</p>
    <p v-if="task.state === 'needs_review'" class="small notice notice--warn">自动执行已暂停，需要处理下方原因；到时间不会自动重试。可取消安排，核对原对话后重新开启。</p>
    <p class="small" :title="task.detail">{{task.detail}}</p>
-   <details v-if="!compact"><summary>任务与执行结果</summary><p>{{task.prompt}}</p><pre v-if="task.output">{{task.output}}</pre><p v-else class="dim">暂无最终回复；可恢复原对话查看历史。</p></details>
-   <button v-if="terminal(task.state)" class="btn btn--sm" type="button" @click="dismiss(task)">收起记录</button>
-   <button v-if="!terminal(task.state) || task.state === 'needs_review'" class="btn btn--sm" type="button" :disabled="busy" @click="cancel(task)">{{ task.state === 'needs_review' ? '取消安排' : task.mode === 'live_quota' ? '关闭自动续跑' : '取消续跑' }}</button>
+   <details v-if="!compact"><summary>{{history(task)?'查看结果':'查看执行'}}</summary>
+    <p class="dim small">第 {{task.attempt || 0}} 次执行 · {{task.mode==='live_quota'?'原终端自动继续':'独立后台执行 · 只读记录，不接受终端输入'}}</p>
+    <p v-if="task.source.recovery?.native_id" class="dim small">原生对话：{{task.source.recovery.native_id}}</p>
+    <RouterLink v-if="task.session_id" :to="{name:'session',params:{id:task.session_id}}">打开原会话记录</RouterLink>
+    <p v-if="task.progress" class="small">{{task.progress.activity}}<br>开始：{{absoluteTime(task.progress.started_at)}}<span v-if="task.state==='running'"> · 已运行 {{elapsed(task.progress.started_at)}}</span><br>最近同步：{{absoluteTime(task.progress.observed_at)}}<span v-if="task.progress.activity_at"> · 最近活动：{{absoluteTime(task.progress.activity_at)}}</span></p>
+    <p v-if="task.progress && !history(task) && now-task.progress.observed_at>15000" class="notice notice--warn small">状态更新已延迟，以下为最后确认数据；正在等待设备同步，请勿重复派发。</p>
+    <p v-else-if="!task.progress && task.state==='running'" class="dim small">当前 Agent 尚未提供执行活动，请更新 Agent 后查看；暂无输出不代表执行停止。</p>
+    <p>{{task.prompt}}</p>
+    <pre v-if="task.output || task.progress?.text">{{task.output || task.progress?.text}}</pre>
+    <p v-else class="dim">暂未收到模型回复；等待状态和工具活动不等于任务已完成。</p>
+   </details>
+   <button v-if="history(task)" class="btn btn--sm" type="button" :disabled="busy" @click="remove(task)">删除记录</button>
+   <button v-if="!terminal(task.state) || task.state === 'needs_review'" class="btn btn--sm" type="button" :disabled="busy || task.state==='cancelling'" @click="cancel(task)">{{task.state==='cancelling'?'等待停止确认':task.state === 'needs_review' ? '取消安排' : task.mode === 'live_quota' ? '关闭自动续跑' : task.state==='running'||task.state==='dispatching'?'停止本次执行':'取消预约'}}</button>
   </article>
  </section>
 </template>
@@ -116,4 +148,5 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
 .continuation-backdrop{position:fixed;inset:0;z-index:80;background:#0008;display:flex;align-items:center;justify-content:center;padding:12px}.continuation-dialog{width:100%;max-width:580px;max-height:calc(100dvh - 24px);overflow:auto;overflow-wrap:anywhere}.continuation-dialog label{display:grid;gap:6px;margin:12px 0}.continuation-dialog input,.continuation-dialog select,.continuation-dialog textarea{width:100%;min-width:0}.continuation-list{margin-top:16px}.continuation-list article{border-top:1px solid var(--border);padding:12px 0;overflow-wrap:anywhere}.continuation-list pre{white-space:pre-wrap;overflow-wrap:anywhere}
 .continuation-list--compact{margin:0;flex:none;padding:4px 10px}.continuation-list--compact article{border:0;padding:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}.continuation-list--compact p{margin:0;flex:1;min-width:80px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .continuation-dialog input[type=checkbox]{width:auto;margin-right:6px}
+.continuation-filters{flex-wrap:wrap;margin:8px 0}.continuation-filters [aria-pressed=true]{border-color:var(--accent);font-weight:600}.continuation-list summary{cursor:pointer;padding:8px 0}.continuation-list pre{max-height:360px;overflow:auto}
 </style>

@@ -39,7 +39,7 @@ import {
   type ErrorPayload,
 } from './protocol'
 import { ulid } from './ulid'
-import { api } from './api'
+import { api, ApiError } from './api'
 
 /** 连接状态。 */
 export type WSState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
@@ -63,6 +63,9 @@ const REQUEST_TIMEOUT_MS = 30_000
 /** 退避参数。 */
 const BACKOFF_BASE_MS = 1_000
 const BACKOFF_MAX_MS = 30_000
+const CONNECT_TIMEOUT_MS = 30_000
+const HEARTBEAT_INTERVAL_MS = 20_000
+const HEARTBEAT_TIMEOUT_MS = 10_000
 
 /**
  * 这些关闭码表示「重连也没用」，必须停下来。
@@ -99,6 +102,11 @@ export class WSClient {
   private disposed = false
 
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private connectionTimer: ReturnType<typeof setTimeout> | null = null
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+  private ticketAbort: AbortController | null = null
+  private generation = 0
+  private opening = false
 
   constructor(opts: WSClientOptions = {}) {
     this.opts = opts
@@ -119,7 +127,8 @@ export class WSClient {
   /** 建立连接。重复调用是安全的（已在连或已连上时直接返回）。 */
   connect(): void {
     if (this.disposed) return
-    if (this.state === 'connecting' || this.state === 'open') return
+    if (this.opening || this.ws !== null) return
+    this.clearRetry()
     void this.openOnce()
   }
 
@@ -127,6 +136,10 @@ export class WSClient {
   dispose(): void {
     this.disposed = true
     this.clearRetry()
+    this.generation++
+    this.clearConnectionTimers()
+    this.ticketAbort?.abort()
+    this.ticketAbort = null
     this.rejectAllPending(new Error('连接已关闭'))
     if (this.ws !== null) {
       try {
@@ -140,28 +153,50 @@ export class WSClient {
   }
 
   private async openOnce(): Promise<void> {
+    if (this.disposed || this.opening || this.ws !== null) return
+    this.opening = true
+    const generation = ++this.generation
+    const current = () => !this.disposed && generation === this.generation
+    this.ticketAbort = new AbortController()
+    // Cover both the HTTP ticket request and WebSocket upgrade. Neither always
+    // produces an error/close promptly after a laptop wakes or changes networks.
+    this.connectionTimer = setTimeout(() => {
+      if (current()) this.recover('连接超时，正在重试')
+    }, CONNECT_TIMEOUT_MS)
     this.setState(this.connects === 0 ? 'connecting' : 'reconnecting')
 
     // ---- 1. 取票 ----
     let ticket: string
     let proto: { min: number; max: number }
     try {
-      const t = await api.wsTicket()
+      const t = await api.wsTicket(this.ticketAbort.signal)
       ticket = t.ticket
       proto = t.protocol
     } catch (e) {
-      // 取票失败通常是 401（会话失效）或网络问题。
-      // 401 由 api 层已经触发 authLost，这里只需要停止重连。
-      this.setState('closed', e instanceof Error ? e.message : '取票失败')
-      this.opts.onFatal?.(e instanceof Error ? e.message : '取票失败')
+      if (!current()) return
+      this.opening = false
+      this.clearConnectionTimers()
+      this.ticketAbort = null
+      const message = e instanceof Error ? e.message : '取票失败'
+      if (e instanceof ApiError && e.status >= 400 && e.status < 500 &&
+          e.status !== 408 && e.status !== 429 && !e.retryable) {
+        this.setState('closed', message)
+        this.opts.onFatal?.(message)
+      } else {
+        this.scheduleRetry(message)
+      }
       return
     }
+    if (!current()) return
+    this.ticketAbort = null
 
     // ---- 2. 版本协商（§9.4）----
     //
     // 提前拒绝不兼容的页面，比连上去之后收到一堆看不懂的帧要好得多 ——
     // 后者的症状是「终端显示乱码」，而真正的原因在协议版本上。
     if (PROTOCOL_VERSION < proto.min || PROTOCOL_VERSION > proto.max) {
+      this.opening = false
+      this.clearConnectionTimers()
       const msg = `前端协议版本 ${PROTOCOL_VERSION} 不在服务端支持区间 [${proto.min}, ${proto.max}] 内，请刷新页面或更新部署`
       this.setState('closed', msg)
       this.opts.onFatal?.(msg)
@@ -178,6 +213,8 @@ export class WSClient {
     try {
       ws = new WebSocket(url)
     } catch (e) {
+      this.opening = false
+      this.clearConnectionTimers()
       this.scheduleRetry(e instanceof Error ? e.message : '建连失败')
       return
     }
@@ -185,13 +222,18 @@ export class WSClient {
     this.ws = ws
 
     ws.onopen = () => {
+      if (!current() || this.ws !== ws) return
+      this.opening = false
+      this.clearConnectionTimers()
       this.connects++
       this.attempt = 0
       this.setState('open')
       this.opts.onReady?.(this.connects > 1)
+      this.scheduleHeartbeat(generation)
     }
 
     ws.onmessage = (ev: MessageEvent) => {
+      if (!current() || this.ws !== ws) return
       this.handleMessage(ev)
     }
 
@@ -201,6 +243,12 @@ export class WSClient {
     }
 
     ws.onclose = (ev: CloseEvent) => {
+      if (!current() || this.ws !== ws) return
+      // Invalidate probes before rejecting pending requests: their rejection
+      // handlers must not restart a socket closed for authentication/protocol.
+      this.generation++
+      this.opening = false
+      this.clearConnectionTimers()
       this.ws = null
       this.rejectAllPending(new Error(`连接已断开 (${ev.code})`))
 
@@ -217,6 +265,44 @@ export class WSClient {
       }
       this.scheduleRetry(`连接关闭 (${ev.code} ${ev.reason || '无原因'})`)
     }
+  }
+
+  private clearConnectionTimers(): void {
+    if (this.connectionTimer !== null) clearTimeout(this.connectionTimer)
+    if (this.heartbeatTimer !== null) clearTimeout(this.heartbeatTimer)
+    this.connectionTimer = null
+    this.heartbeatTimer = null
+  }
+
+  /** Retire a connection even when the browser never delivers onclose. */
+  private recover(detail: string): void {
+    this.generation++
+    this.opening = false
+    this.clearConnectionTimers()
+    this.ticketAbort?.abort()
+    this.ticketAbort = null
+    const ws = this.ws
+    this.ws = null
+    this.rejectAllPending(new WSError('unavailable', detail, true))
+    try { ws?.close(1000, 'reconnect') } catch { /* already gone */ }
+    this.scheduleRetry(detail)
+  }
+
+  private scheduleHeartbeat(generation: number): void {
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null
+      if (this.disposed || generation !== this.generation || !this.isOpen()) return
+      void this.request(MessageType.Ping, {}, undefined, HEARTBEAT_TIMEOUT_MS).then(env => {
+        if (this.disposed || generation !== this.generation) return
+        if (env.type !== MessageType.Pong) {
+          this.recover('连接探测响应异常，正在重连')
+          return
+        }
+        this.scheduleHeartbeat(generation)
+      }, () => {
+        if (!this.disposed && generation === this.generation) this.recover('连接无响应，正在重连')
+      })
+    }, HEARTBEAT_INTERVAL_MS)
   }
 
   /** 安排一次重连。 */

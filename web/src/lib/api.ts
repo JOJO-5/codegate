@@ -35,7 +35,12 @@ export interface WorktreeInfo { path: string; branch: string; head: string; chan
 export interface GitCommit { hash: string; subject: string; committed_at: number }
 export interface GitResult { upstream?: string; ahead?: number; behind?: number; sync_known?: boolean; repository_url?: string; commits?: GitCommit[]; worktrees?: WorktreeInfo[]; head: string; message?: string; root: string; branch: string; files: GitFile[]; diff?: string; truncated: boolean }
 
-export interface ContinuationTask { id:string;device_id:string;session_id:string;source:SessionSummary;prompt:string;mode:string;due_at:number;state:string;attempt:number;detail?:string;output?:string }
+export interface TaskProgress {sequence:number;started_at:number;observed_at:number;activity_at?:number;activity:string;text?:string}
+export interface ContinuationTask { id:string;device_id:string;session_id:string;source:SessionSummary;prompt:string;mode:string;due_at:number;state:string;attempt:number;detail?:string;output?:string;created_at?:number;updated_at?:number;deleted_at?:number;progress?:TaskProgress }
+export interface WorkflowProfile { id: string; label: string; command_id: string; tool: string; model?: string; provider?: string; free: boolean }
+export interface WorkflowStep { id: string; kind: string; profile_id?: string; profile_label?:string; native_id?: string; state: string; instruction?: string; output?: string }
+export interface Workflow { id: string; device_id: string; goal: string; cwd: string; master_id: string; master_label?:string; master_native_id?: string; free_workers: boolean; max_turns: number; max_minutes: number; state: string; detail?: string; worktree?: string; branch?: string; base_commit?: string; revision: number; steps: WorkflowStep[]; diff?: string; diff_truncated?: boolean; created_at: number; updated_at: number }
+export interface WorkflowInput { nonce: string; goal: string; cwd: string; master_id: string; free_workers: boolean; max_turns: number; max_minutes: number }
 const BASE = '/api/v1'
 
 /**
@@ -122,17 +127,22 @@ async function doRefresh(): Promise<boolean> {
       headers: { Accept: 'application/json' },
       // ★ 这一行是 refresh 能工作的全部原因：refresh token 在 Cookie 里。
       credentials: 'include',
+      // A shared refresh must eventually settle so later reconnects can retry.
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) {
+      if (res.status !== 401 && res.status !== 403) {
+        throw new ApiError(res.status, 'refresh_unavailable', `登录续期暂不可用 (HTTP ${res.status})`, true)
+      }
       accessToken = null
       return false
     }
     const data = (await res.json()) as TokenResponse
     accessToken = data.access_token
     return true
-  } catch {
-    accessToken = null
-    return false
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw new ApiError(0, 'network', '登录续期网络请求失败，请稍后重试', true)
   }
 }
 
@@ -477,9 +487,15 @@ export const api = {
     await request<void>('DELETE', `/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}`)
   },
 
+  workflowProfiles(id: string): Promise<{profiles: WorkflowProfile[]}> { return request('GET', `/devices/${encodeURIComponent(id)}/workflow-profiles`) },
+  workflows(id: string): Promise<{workflows: Workflow[]}> { return request('GET', `/devices/${encodeURIComponent(id)}/workflows`) },
+  createWorkflow(id: string, body: WorkflowInput): Promise<Workflow> { return request('POST', `/devices/${encodeURIComponent(id)}/workflows`, body) },
+  cancelWorkflow(id: string, workflow: string): Promise<Workflow> { return request('POST', `/devices/${encodeURIComponent(id)}/workflows/${encodeURIComponent(workflow)}/cancel`) },
   continuations(id:string):Promise<{tasks:ContinuationTask[]}> {return request('GET',`/devices/${encodeURIComponent(id)}/continuations`)},
   createContinuation(id:string,body:{session_id:string;native_id:string;prompt:string;mode:string;due_at:number;max_run_minutes:number;nonce:string;max_retries?:number;retry_errors?:boolean;quota_wait_minutes?:number}):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations`,body)},
   cancelContinuation(id:string,task:string):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}/cancel`)},
+  deleteContinuation(id:string,task:string):Promise<ContinuationTask> {return request('DELETE',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}`)},
+  restoreContinuation(id:string,task:string):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}/restore`)},
   // ---- 配对（两阶段）----
 
   /** 第一步：提交配对码，拿回待确认设备的信息。这一步**不**产生绑定。 */
@@ -502,8 +518,8 @@ export const api = {
 
   // ---- WebSocket 票据 ----
 
-  wsTicket(): Promise<WSTicketResponse> {
-    return request<WSTicketResponse>('POST', '/ws-ticket')
+  wsTicket(signal?: AbortSignal): Promise<WSTicketResponse> {
+    return request<WSTicketResponse>('POST', '/ws-ticket', undefined, { signal })
   },
 
   // ---- 版本（无认证）----

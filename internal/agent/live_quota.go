@@ -19,14 +19,15 @@ import (
 )
 
 type liveQuotaReceipt struct {
-	TurnID        string `json:"turn_id"`
-	InputRevision uint64 `json:"input_revision"`
-	Runs          int    `json:"runs"`
-	OwnTurnID     string `json:"own_turn_id,omitempty"`
-	StartedAt     int64  `json:"started_at,omitempty"`
-	Preparing     bool   `json:"preparing,omitempty"`
-	RetryAt       int64  `json:"retry_at,omitempty"`
-	NextQuotaAt   int64  `json:"next_quota_at,omitempty"`
+	ControlFailures int    `json:"control_failures,omitempty"`
+	TurnID          string `json:"turn_id"`
+	InputRevision   uint64 `json:"input_revision"`
+	Runs            int    `json:"runs"`
+	OwnTurnID       string `json:"own_turn_id,omitempty"`
+	StartedAt       int64  `json:"started_at,omitempty"`
+	Preparing       bool   `json:"preparing,omitempty"`
+	RetryAt         int64  `json:"retry_at,omitempty"`
+	NextQuotaAt     int64  `json:"next_quota_at,omitempty"`
 }
 type nativeTurn struct {
 	RetryAt int64  `json:"retryAt,omitempty"`
@@ -49,11 +50,19 @@ type codexControl struct {
 	stop func() bool
 }
 
+type codexControlUnavailable struct{ cause error }
+
+func (e *codexControlUnavailable) Error() string { return "Codex 本机守护进程暂时不可连接" }
+func (e *codexControlUnavailable) Unwrap() error { return e.cause }
+
 func openCodexControl(ctx context.Context, home string) (*codexControl, error) {
 	// The path is derived from the approved CLI environment. No remote endpoint
 	// or daemon startup is accepted from a web request.
 	path := filepath.Join(home, "app-server-control", "app-server-control.sock")
 	st, e := os.Lstat(path)
+	if os.IsNotExist(e) {
+		return nil, &codexControlUnavailable{cause: e}
+	}
 	if e != nil || st.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("Codex本机守护进程不可用，请更新Codex并使用默认守护进程启动对话")
 	}
@@ -62,7 +71,7 @@ func openCodexControl(ctx context.Context, home string) (*codexControl, error) {
 	}}
 	ws, _, e := d.DialContext(ctx, "ws://localhost/", nil)
 	if e != nil {
-		return nil, errors.New("无法连接Codex本机守护进程")
+		return nil, &codexControlUnavailable{cause: e}
 	}
 	ws.SetReadLimit(4 << 20)
 	deadline, _ := ctx.Deadline()
@@ -191,9 +200,12 @@ func (a *Agent) onLiveQuota(req *protocol.Envelope, p protocol.TaskRunPayload, c
 		return true
 	}
 	// Cancellation without an armed receipt has no side effect to undo.
-	if cancel && !exists {
+	if cancel && (!exists || !receipt.Live.Preparing && receipt.Live.OwnTurnID == "") {
 		result.State = "cancelled"
-		result.Detail = "已关闭自动续跑"
+		result.Detail = "已关闭自动续跑监测，保留原终端和对话"
+		if exists && !save() {
+			return
+		}
 		reply()
 		return
 	}
@@ -262,6 +274,24 @@ func (a *Agent) onLiveQuota(req *protocol.Envelope, p protocol.TaskRunPayload, c
 	defer stop()
 	native, e := a.openLiveControl(ctx, current, env, p)
 	if e != nil {
+		var unavailable *codexControlUnavailable
+		if !cancel && (!exists || receipt.Live.OwnTurnID == "") && errors.As(e, &unavailable) {
+			if !exists {
+				receipt = taskReceipt{UserID: p.UserID, Hash: continuationHash(p), Source: p.Source, Live: &liveQuotaReceipt{InputRevision: sess.InputRevision()}}
+			}
+			receipt.Live.ControlFailures++
+			result.State = "waiting_retry"
+			result.DueAt = time.Now().Add(30 * time.Second).UnixMilli()
+			result.Detail = "Codex 本机控制服务暂不可连接，30秒后重新核对；未提交继续指令"
+			if receipt.Live.ControlFailures > 3 {
+				result.State = "needs_review"
+				result.Detail = "连续4次无法连接 Codex 本机控制服务，请检查守护进程并从原终端恢复对话后重新开启监测"
+			}
+			if save() {
+				reply()
+			}
+			return
+		}
 		fail(e.Error())
 		return
 	}
@@ -275,9 +305,10 @@ func (a *Agent) onLiveQuota(req *protocol.Envelope, p protocol.TaskRunPayload, c
 		fail("原对话未在当前Codex守护进程中加载，未恢复或新建其他对话")
 		return
 	}
-	if !exists {
+	if !exists || receipt.Live.TurnID == "" {
 		receipt = taskReceipt{UserID: p.UserID, Hash: continuationHash(p), Source: p.Source, Live: &liveQuotaReceipt{TurnID: turn.ID, InputRevision: sess.InputRevision()}}
 	}
+	receipt.Live.ControlFailures = 0
 	live := receipt.Live
 	if cancel {
 		if live.OwnTurnID == turn.ID && turn.Status == "inProgress" {

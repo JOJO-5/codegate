@@ -19,6 +19,38 @@ func taskTerminal(state string) bool {
 	}
 	return false
 }
+
+func (s *Server) handleDeleteContinuation(w http.ResponseWriter, r *http.Request) {
+	user, _ := userIDFromContext(r.Context())
+	device := r.PathValue("id")
+	if _, err := s.authorizeDevice(r.Context(), user, device); err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+	t, err := s.store.ContinuationByID(r.Context(), r.PathValue("task"))
+	if err != nil || t.UserID != user || t.DeviceID != device {
+		writeProtoError(w, errNoAccess())
+		return
+	}
+	// An unresolved execution must remain visible until the user acknowledges it.
+	if t.State != "completed" && t.State != "cancelled" && t.State != "failed" {
+		writeError(w, 409, "task_not_finished", "请先取消安排或确认执行已停止，再删除记录")
+		return
+	}
+	t.DeletedAt = s.now().UnixMilli()
+	if r.Method == "POST" {
+		t.DeletedAt = 0
+	}
+	// Retain the original nonce and execution identity: delayed creates cannot
+	// resurrect an already executed task. Files/native history are untouched.
+	if _, err = s.store.UpdateContinuation(r.Context(), t, t.State); err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	writeJSON(w, 200, t)
+}
 func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 	user, _ := userIDFromContext(r.Context())
 	device := r.PathValue("id")
@@ -254,6 +286,20 @@ func (s *Server) applyTaskState(ctx context.Context, ac *AgentConn, p protocol.T
 	if t.State == "cancelling" && p.State != "cancelled" && p.State != "completed" && p.State != "failed" && p.State != "needs_review" {
 		return
 	}
+	if p.Progress != nil {
+		if t.Progress != nil && p.Progress.Sequence <= t.Progress.Sequence {
+			// Progress deduplication cannot suppress a final receipt or the
+			// restart/unknown outcome. Keep the newer snapshot in that case.
+			if !taskTerminal(p.State) {
+				return
+			}
+		} else {
+			cp := *p.Progress
+			cp.Text = string([]rune(cp.Text)[:min(len([]rune(cp.Text)), 4096)])
+			cp.Activity = string([]rune(cp.Activity)[:min(len([]rune(cp.Activity)), 120)])
+			t.Progress = &cp
+		}
+	}
 	old := t.State
 	t.State = p.State
 	t.Detail = p.Detail
@@ -345,6 +391,8 @@ func (s *Server) dispatchContinuation(ctx context.Context, id string) {
 		// Waiting responses precede spawning and have no receipt, so reuse their attempt.
 		if t.Attempt == 0 || old == "queued" || t.Retry {
 			t.Attempt++
+			t.Progress = nil
+			t.Output = ""
 		}
 		t.Retry = false
 		t.State = "dispatching"
@@ -383,6 +431,7 @@ func (s *Server) dispatchContinuation(ctx context.Context, id string) {
 	s.applyTaskState(ctx, ac, response)
 }
 func (s *Server) startTaskLoop(ctx context.Context) {
+	s.startWorkflowLoop(ctx)
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import ts from 'typescript'
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, nextTick } from 'vue'
 
 const url = s => `data:text/javascript;base64,${Buffer.from(s).toString('base64')}`
 let list
@@ -11,12 +11,14 @@ const drafts = reactive({ owner: 'fixture', get: key => saved.get(key) ?? '', se
 const blocked = { id: 'blocked', state: 'needs_review', mode: 'live_quota', session_id: 'session' }
 const cancelled = { ...blocked, state: 'cancelled' }
 globalThis.document = { hidden: false }
-globalThis.__continuationTest = { ref, computed, watch, drafts, api: {
+globalThis.__continuationTest = { ref, computed, watch, nextTick, drafts, api: {
   continuations: () => list,
   cancelContinuation: async () => cancelled,
+  deleteContinuation: async () => ({...cancelled,deleted_at:1}),
+  restoreContinuation: async () => cancelled,
 } }
 const shim = url(`const t=globalThis.__continuationTest;
-export const {ref,computed,watch,api}=t;
+export const {ref,computed,watch,nextTick,api}=t;
 export const defineComponent=x=>x,onMounted=()=>{},onBeforeUnmount=()=>{};
 export const useDraftsStore=()=>t.drafts,useConnStore=()=>({}),nativeCLI=()=> 'codex';
 export const continuationLabels={},absoluteTime=x=>String(x),humanizeError=e=>e.message;
@@ -30,23 +32,33 @@ const setup = () => component.setup({ deviceId: 'device', source: null, compact:
 const ctx = setup()
 list = Promise.resolve({ tasks: [blocked] })
 await ctx.load()
+ctx.filter.value='review'
 assert.equal(ctx.visibleRows.value[0].state, 'needs_review')
 let finishOldList
 list = new Promise(resolve => { finishOldList = resolve })
 const oldLoad = ctx.load()
 await ctx.cancel(blocked)
+ctx.filter.value='history'
 assert.equal(ctx.visibleRows.value[0].state, 'cancelled')
 finishOldList({ tasks: [blocked] })
 await oldLoad
 assert.equal(ctx.visibleRows.value[0].state, 'cancelled', 'late old list must not undo cancellation')
-ctx.dismiss(cancelled)
+await ctx.remove(cancelled)
 assert.equal(ctx.visibleRows.value.length, 0)
 const refreshed = setup()
-list = Promise.resolve({ tasks: [cancelled] })
+list = Promise.resolve({ tasks: [] })
 await refreshed.load()
-assert.equal(refreshed.visibleRows.value.length, 0, 'hidden history survives page recreation')
-refreshed.showDismissed()
-assert.equal(refreshed.visibleRows.value.length, 1)
-ctx.dismiss({ ...blocked, state: 'running' })
-assert.equal(saved.get('continuations:hidden:device'), '', 'running task cannot be hidden')
-console.log('PASS 取消立即显示，旧响应不覆盖，已结束记录可收起恢复，运行中任务不隐藏')
+assert.equal(refreshed.visibleRows.value.length, 0, 'deleted history stays absent after recreation')
+await ctx.undoRemove()
+assert.equal(ctx.visibleRows.value.length,1,'undo restores original history')
+await ctx.remove({ ...blocked, state: 'running' })
+assert.equal(ctx.visibleRows.value.length,1,'running task cannot be deleted')
+let resolveBeforeDelete
+list=new Promise(resolve=>{resolveBeforeDelete=resolve})
+const oldDeleteList=ctx.load()
+await ctx.remove(cancelled)
+resolveBeforeDelete({tasks:[cancelled]});await oldDeleteList
+assert.equal(ctx.visibleRows.value.length,0,'late list cannot resurrect deletion')
+list=Promise.reject(Error('offline'));await ctx.load()
+assert.match(ctx.listError.value,/offline/)
+console.log('PASS 取消/删除旧响应保护、服务端删除与撤销、活动任务防误删、离线保留')

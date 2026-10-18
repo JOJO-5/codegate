@@ -28,6 +28,8 @@ import (
 // 「Agent 到底认哪些指令」，而这个集合应该是**可枚举且短**的。
 func (a *Agent) handleMessage(env *protocol.Envelope) {
 	switch env.Type {
+	case protocol.TypeWorkflowControl:
+		go a.onWorkflowControl(env)
 	case protocol.TypeAgentUpdateControl:
 		go a.onUpdateControl(env)
 	case protocol.TypeTaskRun:
@@ -325,6 +327,9 @@ func (a *Agent) createSessionLocked(req protocol.SessionCreatePayload) (*session
 	if err == nil && marker != "" {
 		go a.watchConversation(sess, marker)
 	}
+	if err == nil && nativeEnvValue(childEnv, "CODEGATE_OPENCODE_V2_URL") != "" {
+		a.trackOpenCodeV2Session(sess, childEnv)
+	}
 	return sess, err
 }
 
@@ -459,6 +464,12 @@ func (a *Agent) onSessionClose(env *protocol.Envelope) {
 	}
 
 	reason := "user_requested"
+	if sess, ok := a.mgr.Get(sid); ok {
+		if err := a.closeOpenCodeV2Session(sess.Summary()); err != nil {
+			a.replyError(env, protocol.NewError(protocol.CodeInvalidPayload, err.Error()))
+			return
+		}
+	}
 	if err := a.mgr.Close(sid, reason); err != nil {
 		a.replyError(env, err)
 		return

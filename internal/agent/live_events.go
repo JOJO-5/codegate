@@ -53,6 +53,23 @@ func (a *Agent) openLiveControl(ctx context.Context, s protocol.SessionSummary, 
 	if tool == "codex" {
 		return openCodexControl(ctx, codexHome(env))
 	}
+	if tool == "opencode" {
+		_, cmd, err := a.recoveryCommand(s)
+		if err != nil {
+			return nil, err
+		}
+		v2, err := isOpenCodeV2(ctx, cmd, env, s.Cwd)
+		if err != nil {
+			return nil, err
+		}
+		if v2 {
+			client, err := connectOpenCodeV2(ctx, cmd, env, s.Cwd)
+			if err != nil {
+				return nil, err
+			}
+			return &openCodeV2Control{client: client, ctx: ctx, a: a, p: p}, nil
+		}
+	}
 	if tool == "" {
 		tool = nativeTool(ResolvedCommand{Command: s.Command, Args: s.Args})
 	}

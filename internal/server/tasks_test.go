@@ -10,6 +10,85 @@ import (
 	"time"
 )
 
+func TestContinuationDeletionPersistsAndPreservesNonce(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "delete-tasks@example.com", "correct-horse-battery")
+	other := e.signup(t, "delete-other@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, _ := e.seedPairedDevice(t, owner)
+	task := &protocol.ContinuationTask{ID: uuid.NewString(), UserID: owner, DeviceID: device, State: "running", Attempt: 1}
+	nonce := uuid.NewString()
+	if err := e.store.InsertContinuation(t.Context(), task, nonce); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/devices/" + device + "/continuations"
+	remove := path + "/" + task.ID
+	if r := e.request(t, "DELETE", remove, other, nil); r.Status != 404 {
+		t.Fatal("other owner deletion", r.Status)
+	}
+	if r := e.request(t, "DELETE", remove, token, nil); r.Status != 409 {
+		t.Fatal("active task deletion must fail", r.Status)
+	}
+	task.State = "completed"
+	if _, err := e.store.UpdateContinuation(t.Context(), task, "running"); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.request(t, "DELETE", remove, token, nil); r.Status != 200 {
+		t.Fatal("delete", r.Status, string(r.Body))
+	}
+	for i := 0; i < 2; i++ {
+		r := e.get(t, path, token)
+		var body struct {
+			Tasks []protocol.ContinuationTask `json:"tasks"`
+		}
+		if err := json.Unmarshal(r.Body, &body); err != nil || len(body.Tasks) != 0 {
+			t.Fatal("deleted task reappeared", string(r.Body), err)
+		}
+	}
+	old, err := e.store.ContinuationByNonce(t.Context(), owner, nonce)
+	if err != nil || old.ID != task.ID {
+		t.Fatal("lost execution idempotency", err)
+	}
+	if r := e.request(t, "DELETE", remove, token, nil); r.Status != 200 {
+		t.Fatal("delete not idempotent", r.Status)
+	}
+	if r := e.post(t, remove+"/restore", token, nil); r.Status != 200 {
+		t.Fatal("restore", r.Status)
+	}
+	rows, err := e.store.Continuations(t.Context(), owner, device)
+	if err != nil || len(rows) != 1 || rows[0].State != "completed" {
+		t.Fatal("restore changed execution", rows, err)
+	}
+}
+
+func TestContinuationProgressRejectsLateSnapshots(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "progress-tasks@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, _ := e.seedPairedDevice(t, owner)
+	task := &protocol.ContinuationTask{ID: uuid.NewString(), UserID: owner, DeviceID: device, State: "running", Attempt: 1}
+	if err := e.store.InsertContinuation(t.Context(), task, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	ac := &AgentConn{DeviceID: device, UserID: owner}
+	apply := func(seq int64, text string) {
+		e.srv.applyTaskState(t.Context(), ac, protocol.TaskStatePayload{TaskID: task.ID, Attempt: 1, State: "running", Progress: &protocol.TaskProgress{Sequence: seq, Text: text}})
+	}
+	apply(3, "new")
+	apply(2, "old")
+	got, err := e.store.ContinuationByID(t.Context(), task.ID)
+	if err != nil || got.Progress == nil || got.Progress.Text != "new" {
+		t.Fatal("late snapshot overwrote progress", got, err)
+	}
+	// A restarted Agent can confirm only that the previous process is unknown;
+	// that status must not be dropped merely because no new tool event exists.
+	e.srv.applyTaskState(t.Context(), ac, protocol.TaskStatePayload{TaskID: task.ID, Attempt: 1, State: "needs_review", Detail: "Agent restarted", Progress: &protocol.TaskProgress{Sequence: 3, Text: "new"}})
+	got, err = e.store.ContinuationByID(t.Context(), task.ID)
+	if err != nil || got.State != "needs_review" {
+		t.Fatal("restart outcome hidden by snapshot deduplication", got, err)
+	}
+}
+
 func TestContinuationAuthorizationPersistenceAndOffline(t *testing.T) {
 	e := newTestEnv(t)
 	alice := e.signup(t, "tasks-alice@example.com", "correct-horse-battery")

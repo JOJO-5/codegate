@@ -222,10 +222,39 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		return
 	}
 	env := BuildEnv(a.cfg, 80, 24)
-	history, err := a.nativeHistory(quotaProvider(c.Command, c.Args), cwd, env, p.Source.Recovery.StoreKey, p.Source.Recovery.NativeID)
+	history, err := a.nativeCommandHistory(c, cwd, env, p.Source.Recovery.StoreKey, p.Source.Recovery.NativeID)
 	if err != nil || len(history) != 1 || history[0].ID != p.Source.Recovery.NativeID {
 		fail("原生对话不存在，不能创建新对话代替续跑")
 		return
+	}
+	var openCode *openCodeV2Client
+	if nativeTool(c) == "opencode" {
+		checkCtx, stopCheck := context.WithTimeout(context.Background(), 30*time.Second)
+		v2, checkErr := isOpenCodeV2(checkCtx, c, env, cwd)
+		if checkErr == nil && v2 {
+			openCode, checkErr = connectOpenCodeV2(checkCtx, c, env, cwd)
+		}
+		if checkErr == nil && openCode != nil {
+			_, turn, _, e := openCode.readTurn(checkCtx, p.Source.Recovery.NativeID)
+			queued := false
+			if e == nil {
+				queued, e = openCode.queued(checkCtx, p.Source.Recovery.NativeID)
+			}
+			checkErr = e
+			if e == nil && (turn.Status == "inProgress" || queued) {
+				stopCheck()
+				result.State = "waiting_idle"
+				result.DueAt = time.Now().Add(time.Minute).UnixMilli()
+				result.Detail = "OpenCode 原对话仍在后台执行，等待空闲"
+				a.reply(req, protocol.TypeTaskState, result)
+				return
+			}
+		}
+		stopCheck()
+		if checkErr != nil {
+			fail("无法核对 OpenCode 后台执行状态，未提交指令")
+			return
+		}
 	}
 	if p.Mode == "quota" {
 		if !continuationQuotaEligible(c) {
@@ -297,6 +326,10 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		fail("不能保存幂等回执，未启动模型")
 		return
 	}
+	if openCode != nil {
+		a.startOpenCodeV2Task(req, p, receipt, run, key, openCode, ctx, cancel, finish)
+		return
+	}
 	cmd := exec.Command(c.Command, args...)
 	processutil.Background(cmd)
 	cmd.Dir = cwd
@@ -320,6 +353,7 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		return
 	}
 	receipt.Result.State = "running"
+	receipt.Result.Progress = &protocol.TaskProgress{Sequence: 1, StartedAt: time.Now().UnixMilli(), ObservedAt: time.Now().UnixMilli(), Activity: "CLI 已启动，等待模型活动"}
 	a.tasksMu.Lock()
 	run.receipt = receipt
 	a.tasksMu.Unlock()
@@ -332,6 +366,21 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		defer finish()
 		defer cancel()
 		stopped := make(chan struct{})
+		progressDone := make(chan struct{})
+		go func() {
+			defer close(progressDone)
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopped:
+					return
+				case <-ticker.C:
+					text, activity, at := output.Snapshot()
+					a.updateTaskProgress(run, text, activity, at)
+				}
+			}
+		}()
 		go func() {
 			select {
 			case <-ctx.Done():
@@ -341,6 +390,7 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		}()
 		err := cmd.Wait()
 		close(stopped)
+		<-progressDone
 		_ = tree.Stop()
 		receipt.Result.Output = output.Text()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -349,6 +399,9 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		} else if ctx.Err() != nil {
 			receipt.Result.State = "cancelled"
 			receipt.Result.Detail = "已取消或达到运行时间上限"
+		} else if output.EnvironmentBlocked() {
+			receipt.Result.State = "needs_review"
+			receipt.Result.Detail = "CLI 工具报告 Codex 沙箱初始化失败，尚未确认恢复；请检查本机执行环境后重新安排"
 		} else if err != nil {
 			receipt.Result.State = "failed"
 			receipt.Result.Detail = "CLI执行失败，请查看原生对话；未自动重发指令"
@@ -374,11 +427,44 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 			receipt.Result.Detail = "本次后台执行结束；请检查结果"
 		}
 		a.tasksMu.Lock()
+		receipt.Result.Progress = run.receipt.Result.Progress
+		if receipt.Result.Progress != nil {
+			cp := *receipt.Result.Progress
+			cp.Sequence++
+			cp.ObservedAt = time.Now().UnixMilli()
+			receipt.Result.Progress = &cp
+		}
 		run.receipt = receipt
 		a.publishTask(receipt)
 		delete(a.tasks, key)
 		a.tasksMu.Unlock()
 	}()
+}
+
+func (a *Agent) updateTaskProgress(run *backgroundRun, text, activity string, at int64) {
+	a.tasksMu.Lock()
+	defer a.tasksMu.Unlock()
+	previous := run.receipt.Result.Progress
+	p := protocol.TaskProgress{StartedAt: time.Now().UnixMilli()}
+	if previous != nil {
+		p = *previous
+	}
+	p.Sequence++
+	p.ObservedAt = time.Now().UnixMilli()
+	if activity != "" {
+		p.Activity = activity
+		p.ActivityAt = at
+	}
+	p.Text = workflowClip(text, 4096)
+	run.receipt.Result.Progress = &p
+	// A transient snapshot write failure must not declare a running process
+	// finished or remove it from cancellation/inspection tracking.
+	if err := a.saveTaskReceipt(run.receipt); err != nil {
+		return
+	}
+	if env, err := protocol.NewEnvelope(protocol.TypeTaskState, run.receipt.Result); err == nil {
+		_ = a.sendControl(env)
+	}
 }
 func (a *Agent) stopBackgroundTasks() {
 	a.tasksMu.Lock()
@@ -389,15 +475,21 @@ func (a *Agent) stopBackgroundTasks() {
 	for _, run := range a.liveRuns {
 		run.cancel()
 	}
+	for _, run := range a.workflowRuns {
+		run.cancel()
+	}
 	a.tasksMu.Unlock()
 	a.tasksWG.Wait()
 }
 
 // Keep only model text, never tool/debug events or stderr containing credentials.
 type taskOutput struct {
-	mu   sync.Mutex
-	line []byte
-	text string
+	mu                 sync.Mutex
+	line               []byte
+	text               string
+	environmentBlocked bool
+	activity           string
+	activityAt         int64
 }
 
 func (o *taskOutput) Write(p []byte) (int, error) {
@@ -418,8 +510,10 @@ func (o *taskOutput) consume() {
 		Type   string `json:"type"`
 		Result string `json:"result"`
 		Item   struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			ExitCode *int   `json:"exit_code"`
+			Output   string `json:"aggregated_output"`
 		} `json:"item"`
 		Part struct {
 			Type string `json:"type"`
@@ -428,6 +522,29 @@ func (o *taskOutput) consume() {
 	}
 	if json.Unmarshal(o.line, &v) != nil {
 		return
+	}
+	activity := ""
+	if v.Type == "item.started" || v.Type == "item.completed" {
+		switch v.Item.Type {
+		case "command_execution":
+			activity = "正在执行命令"
+		case "file_change":
+			activity = "正在修改文件"
+		case "mcp_tool_call", "web_search":
+			activity = "正在调用工具"
+		}
+		if activity != "" && v.Type == "item.completed" {
+			activity = "工具执行已返回"
+		}
+	}
+	// Only structured failed command results report execution infrastructure
+	// failure. Ordinary model text and failing application tests cannot set it.
+	if v.Type == "item.completed" && v.Item.Type == "command_execution" && v.Item.ExitCode != nil {
+		if *v.Item.ExitCode == 0 {
+			o.environmentBlocked = false
+		} else if strings.Contains(v.Item.Output, "helper_unknown_error") && strings.Contains(v.Item.Output, "setup refresh had errors") {
+			o.environmentBlocked = true
+		}
 	}
 	text := ""
 	if v.Type == "item.completed" && v.Item.Type == "agent_message" {
@@ -440,6 +557,7 @@ func (o *taskOutput) consume() {
 		text = v.Result
 	}
 	if text != "" {
+		activity = "收到模型回复"
 		if len(text) > 16<<10 {
 			text = text[:16<<10]
 			for !utf8.ValidString(text) {
@@ -448,6 +566,17 @@ func (o *taskOutput) consume() {
 		}
 		o.text = text
 	}
+	if activity != "" {
+		o.activity = activity
+		o.activityAt = time.Now().UnixMilli()
+	}
+}
+
+// Snapshot does not consume an incomplete JSON line while the CLI is writing.
+func (o *taskOutput) Snapshot() (string, string, int64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.text, o.activity, o.activityAt
 }
 func (o *taskOutput) Text() string {
 	o.mu.Lock()
@@ -457,6 +586,16 @@ func (o *taskOutput) Text() string {
 		o.line = nil
 	}
 	return o.text
+}
+
+func (o *taskOutput) EnvironmentBlocked() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if len(o.line) > 0 {
+		o.consume()
+		o.line = nil
+	}
+	return o.environmentBlocked
 }
 
 // Unknown or unavailable usage is never interpreted as permission to retry.
@@ -488,6 +627,12 @@ func (a *Agent) backgroundWorkspaceSessions() []protocol.SessionSummary {
 		source := run.receipt.Source
 		source.Status = "running"
 		out = append(out, source)
+	}
+	for _, run := range a.workflowRuns {
+		w := run.receipt.Workflow
+		if w.Worktree != "" {
+			out = append(out, protocol.SessionSummary{SessionID: w.ID, DeviceID: w.DeviceID, Cwd: w.Worktree, Command: "workflow", Status: "running"})
+		}
 	}
 	return out
 }

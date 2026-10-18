@@ -170,6 +170,11 @@ type AuditLog struct {
 //
 // 方法按域分组，顺序与 migrations/0001_init.sql 一致，便于对照。
 type Store interface {
+	InsertWorkflow(context.Context,*protocol.Workflow,string) error
+	Workflow(context.Context,string)(*protocol.Workflow,error)
+	WorkflowByNonce(context.Context,string,string)(*protocol.Workflow,error)
+	Workflows(context.Context,string,string)([]*protocol.Workflow,error)
+	UpdateWorkflow(context.Context,*protocol.Workflow,int64)(bool,error)
 	ActiveContinuationCount(context.Context, string, string) (int, error)
 	InsertContinuation(context.Context, *protocol.ContinuationTask, string) error
 	ContinuationByID(context.Context, string) (*protocol.ContinuationTask, error)

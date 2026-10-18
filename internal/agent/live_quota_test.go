@@ -344,3 +344,37 @@ func TestLocalLiveRunLimitWorksWithoutServer(t *testing.T) {
 		t.Fatal(r.Result, f.interruptCount())
 	}
 }
+
+func TestLiveQuotaControlReconnectArmsWithoutSubmittingAndCanCancelOffline(t *testing.T) {
+	a, _, p, f := liveFixture(t)
+	goodHome := a.cfg.Env["CODEX_HOME"]
+	a.cfg.Env["CODEX_HOME"] = t.TempDir()
+	r := liveRun(t, a, p)
+	if r.Result.State != "waiting_retry" || r.Live.TurnID != "" || f.startCount() != 0 {
+		t.Fatal("unavailable control was made terminal or submitted work", r.Result)
+	}
+	a.cfg.Env["CODEX_HOME"] = goodHome
+	r = liveRun(t, a, p)
+	if r.Result.State != "waiting_wall" || r.Live.TurnID == "" || f.startCount() != 0 {
+		t.Fatal("reconnect did not safely arm original turn", r.Result)
+	}
+	a.cfg.Env["CODEX_HOME"] = t.TempDir()
+	req, _ := protocol.NewRequest(uuid.NewString(), protocol.TypeTaskCancel, "", p)
+	a.onTaskInspect(req, true)
+	r, _ = a.taskReceipt(p.TaskID, p.Attempt, p.UserID)
+	if r.Result.State != "cancelled" || f.startCount() != 0 || f.interruptCount() != 0 {
+		t.Fatal("offline cancellation of monitoring failed", r.Result)
+	}
+}
+
+func TestLiveQuotaControlReconnectIsBounded(t *testing.T) {
+	a, _, p, f := liveFixture(t)
+	a.cfg.Env["CODEX_HOME"] = t.TempDir()
+	r := liveRun(t, a, p)
+	for i := 0; i < 3; i++ {
+		r = liveRun(t, a, p)
+	}
+	if r.Result.State != "needs_review" || f.startCount() != 0 {
+		t.Fatal("unbounded control retry", r.Result)
+	}
+}

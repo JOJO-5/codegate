@@ -518,6 +518,9 @@ func (s *agentSession) handlePairBegin(env *protocol.Envelope) error {
 // ---------------------------------------------------------------------------
 
 func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
+	if (env.Type == protocol.TypeWorkflowState || env.Type == protocol.TypeError) && s.srv.acceptWorkflowReply(s.ac, env) {
+		return nil
+	}
 	if (env.Type == protocol.TypeTaskState || env.Type == protocol.TypeError) && s.srv.acceptTaskReply(s.ac, env) {
 		return nil
 	}

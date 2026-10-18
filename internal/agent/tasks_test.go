@@ -2,8 +2,10 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/jojo/codegate/internal/protocol"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +13,84 @@ import (
 	"testing"
 	"time"
 )
+
+func TestContinuationProgressProcessHelper(t *testing.T) {
+	if os.Getenv("CODEGATE_PROGRESS_HELPER") != "1" {
+		return
+	}
+	_, _ = io.ReadAll(os.Stdin)
+	fmt.Println(`{"type":"item.started","item":{"type":"command_execution","command":"SECRET_COMMAND"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"live reply before exit"}}`)
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
+}
+
+func TestContinuationPublishesBeforeExitAndRetainsOnCancel(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, state := t.TempDir(), t.TempDir()
+	native := uuid.NewString()
+	if err := os.MkdirAll(filepath.Join(home, "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	header, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": native, "cwd": root}})
+	if err := os.WriteFile(filepath.Join(home, "sessions", "rollout.jsonl"), append(header, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	executable := filepath.Join(root, name)
+	if err := os.WriteFile(executable, binary, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := validConfig(t)
+	cfg.StateDir = state
+	cfg.AllowedRoots = []string{root}
+	args := []string{"-test.run=^TestContinuationProgressProcessHelper$", "--"}
+	cfg.AllowedCommands = []CommandSpec{{ID: "codex", Command: executable, Args: args, Kind: KindTUI}}
+	cfg.Env = map[string]string{"CODEX_HOME": home, "CODEGATE_PROGRESS_HELPER": "1"}
+	a, err := New(cfg, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.stopBackgroundTasks()
+	p := protocol.TaskRunPayload{TaskID: uuid.NewString(), UserID: "alice", Attempt: 1, Mode: "time", Prompt: "continue", MaxRunMinutes: 1, Source: protocol.SessionSummary{SessionID: uuid.NewString(), Command: executable, Args: args, Cwd: root, Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: native}}}
+	req, _ := protocol.NewRequest(uuid.NewString(), protocol.TypeTaskRun, "", p)
+	a.onTaskRun(req)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		r, e := a.taskReceipt(p.TaskID, 1, p.UserID)
+		if e == nil && r.Result.Progress != nil && r.Result.Progress.Text == "live reply before exit" {
+			if r.Result.State != "running" || r.Result.Progress.Sequence < 2 {
+				t.Fatal("progress was only published after exit", r.Result)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no live progress before exit", r.Result, e)
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	cancel, _ := protocol.NewRequest(uuid.NewString(), protocol.TypeTaskCancel, "", p)
+	a.onTaskInspect(cancel, true)
+	a.tasksWG.Wait()
+	r, err := a.taskReceipt(p.TaskID, 1, p.UserID)
+	if err != nil || r.Result.State != "cancelled" || r.Result.Progress.Text != "live reply before exit" || strings.Contains(r.Result.Progress.Activity, "SECRET") {
+		t.Fatal("cancel lost safe live evidence", r.Result, err)
+	}
+}
 
 func TestContinuationArgumentsAndInputIsolation(t *testing.T) {
 	id := uuid.NewString()
@@ -70,6 +150,43 @@ func TestContinuationOutputKeepsOnlyFinalModelText(t *testing.T) {
 	text := o.Text()
 	if len(text) > 16<<10 || strings.Contains(text, "secret") || !strings.HasPrefix(text, "中文") || !json.Valid([]byte(`"`+text+`"`)) {
 		t.Fatal("output invalid")
+	}
+}
+
+func TestContinuationProgressUsesSafeActivitiesAndCompleteLines(t *testing.T) {
+	o := &taskOutput{}
+	o.Write([]byte(`{"type":"item.started","item":{"type":"command_execution","command":"SECRET_COMMAND","aggregated_output":"SECRET_OUTPUT"}}` + "\n"))
+	text, activity, _ := o.Snapshot()
+	if text != "" || activity != "正在执行命令" {
+		t.Fatal("missing safe activity", text, activity)
+	}
+	o.Write([]byte(`{"type":"item.completed","item":{"type":"agent_message","text":"working"}}`))
+	text, _, _ = o.Snapshot()
+	if text != "" {
+		t.Fatal("partial line consumed")
+	}
+	o.Write([]byte("\n"))
+	text, activity, at := o.Snapshot()
+	if text != "working" || activity != "收到模型回复" || at == 0 {
+		t.Fatal("missing live reply", text, activity, at)
+	}
+}
+
+func TestContinuationSeparatesReportedSandboxFailureFromNormalExit(t *testing.T) {
+	o := &taskOutput{}
+	o.Write([]byte(`{"type":"item.completed","item":{"type":"command_execution","exit_code":-1,"aggregated_output":"helper_unknown_error: setup refresh had errors"}}` + "\n"))
+	o.Write([]byte(`{"type":"item.completed","item":{"type":"agent_message","text":"The environment is blocked."}}` + "\n"))
+	if !o.EnvironmentBlocked() || o.Text() != "The environment is blocked." {
+		t.Fatal("reported execution infrastructure failure was lost")
+	}
+	o.Write([]byte(`{"type":"item.completed","item":{"type":"command_execution","exit_code":0,"aggregated_output":"OK"}}` + "\n"))
+	if o.EnvironmentBlocked() {
+		t.Fatal("successful command did not acknowledge restored execution")
+	}
+	plain := &taskOutput{}
+	plain.Write([]byte(`{"type":"item.completed","item":{"type":"agent_message","text":"Explain helper_unknown_error: setup refresh had errors"}}` + "\n"))
+	if plain.EnvironmentBlocked() {
+		t.Fatal("plain model text became authoritative execution status")
 	}
 }
 func TestContinuationWaitsForAllExhaustedWindows(t *testing.T) {

@@ -141,6 +141,7 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
+	WorkflowV1 bool `json:"workflow_v1,omitempty"`
 	LiveContinueProviders []string `json:"live_continue_providers,omitempty"`
 	CodexLiveContinue     bool     `json:"codex_live_continue,omitempty"`
 	BackgroundContinue    bool     `json:"background_continue,omitempty"`

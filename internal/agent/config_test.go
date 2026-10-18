@@ -27,6 +27,37 @@ func validConfig(t *testing.T) Config {
 	return c
 }
 
+func TestPrepareMigratesMissingOpenCodeV1PackageOnly(t *testing.T) {
+	root := t.TempDir()
+	old := filepath.Join(root, "node_modules", "opencode-ai", "bin", "opencode.exe")
+	newPath := filepath.Join(root, "node_modules", "@opencode", "cli", "bin", "opencode.exe")
+	if err := os.MkdirAll(filepath.Dir(newPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newPath, []byte("fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := validConfig(t)
+	cfg.AllowedCommands = []CommandSpec{{ID: "opencode", Command: old, Kind: KindTUI}}
+	prepared, err := cfg.Prepare()
+	if err != nil || prepared.AllowedCommands[0].Command != newPath {
+		t.Fatal("missing upgraded binary", prepared.AllowedCommands, err)
+	}
+	if cfg.AllowedCommands[0].Command != old {
+		t.Fatal("mutated source config")
+	}
+	if err := os.MkdirAll(filepath.Dir(old), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(old, []byte("old explicit installation"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err = cfg.Prepare()
+	if err != nil || prepared.AllowedCommands[0].Command != old {
+		t.Fatal("replaced existing user binary")
+	}
+}
+
 func TestValidateAcceptsMinimal(t *testing.T) {
 	if err := validConfig(t).Validate(); err != nil {
 		t.Fatalf("最小可用配置没有通过校验: %v", err)
