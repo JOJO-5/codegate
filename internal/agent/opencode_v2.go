@@ -200,13 +200,18 @@ func (c *openCodeV2Client) session(ctx context.Context, id string) (openCodeV2Se
 		return result.Data, err
 	}
 	dir, e := filepath.EvalSymlinks(result.Data.Location.Directory)
-	if e != nil || result.Data.ID != id || !sameDirectory(c.cwd, dir) {
+	expected, expectedErr := filepath.EvalSymlinks(c.cwd)
+	if e != nil || expectedErr != nil || result.Data.ID != id || !sameDirectory(expected, dir) {
 		return result.Data, errors.New("OpenCode 对话身份或工作目录不一致")
 	}
 	return result.Data, nil
 }
 
 func (c *openCodeV2Client) history(ctx context.Context, cwd, target string) ([]protocol.NativeConversation, error) {
+	expected, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, errors.New("无法核对 OpenCode 工作目录")
+	}
 	var sessions []openCodeV2Session
 	if target != "" {
 		s, err := c.session(ctx, target)
@@ -247,7 +252,7 @@ func (c *openCodeV2Client) history(ctx context.Context, cwd, target string) ([]p
 	out := []protocol.NativeConversation{}
 	for _, s := range sessions {
 		dir, err := filepath.EvalSymlinks(s.Location.Directory)
-		if err != nil || !sameDirectory(cwd, dir) || s.ParentID != "" || s.Time.Archived != 0 || !nativeIDPattern.MatchString(s.ID) {
+		if err != nil || !sameDirectory(expected, dir) || s.ParentID != "" || s.Time.Archived != 0 || !nativeIDPattern.MatchString(s.ID) {
 			continue
 		}
 		out = append(out, protocol.NativeConversation{ID: s.ID, Title: shortTitle(s.Title), CreatedAt: s.Time.Created, UpdatedAt: s.Time.Updated})

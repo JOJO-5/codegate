@@ -154,6 +154,34 @@ func TestOpenCodeV2HistoryPaginationAndScope(t *testing.T) {
 	}
 }
 
+func TestOpenCodeV2DirectoryAliasPreservesScope(t *testing.T) {
+	real := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("directory symlink unavailable: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s := openCodeV2Session{ID: "ses_exact", Location: openCodeV2Location{Directory: real}}
+		if r.URL.Path == "/api/session" {
+			json.NewEncoder(w).Encode(map[string]any{"data": []openCodeV2Session{s}})
+		} else {
+			json.NewEncoder(w).Encode(map[string]any{"data": s})
+		}
+	}))
+	defer server.Close()
+	client := testOpenCodeV2(t, server.URL, alias)
+	if _, err := client.session(t.Context(), "ses_exact"); err != nil {
+		t.Fatal("same physical directory rejected", err)
+	}
+	if rows, err := client.history(t.Context(), alias, ""); err != nil || len(rows) != 1 {
+		t.Fatal("aliased history missing", rows, err)
+	}
+	client.cwd = t.TempDir()
+	if _, err := client.session(t.Context(), "ses_exact"); err == nil {
+		t.Fatal("another physical directory accepted")
+	}
+}
+
 func TestOpenCodeV2UsesServerGeneratedSessionIdentity(t *testing.T) {
 	cwd := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
