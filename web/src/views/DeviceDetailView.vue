@@ -359,8 +359,7 @@ onMounted(async () => {
   // 否则每次新建会话都要手打一个 Windows 长路径。
   if (cwd.value.trim() === '') cwd.value = allowedRoots.value[0] ?? ''
   if (route.query.create === 'session') {
-    document.getElementById('create-session-heading')?.scrollIntoView({ block: 'start' })
-    document.getElementById('create-session-heading')?.focus()
+    showCreateForm()
   }
   updateTimer = setInterval(() => { void loadUpdateStatus(); if (device.value?.online) void repositories.load(props.id) }, 5000)
 
@@ -490,7 +489,14 @@ function openSession(s: SessionSummary): void {
 
 /** 会话是否还活着（可进入）。 */
 function canOpen(s: SessionSummary): boolean {
-  return isLiveStatus(s.status) && device.value?.online === true
+  return isLiveStatus(s.status) && device.value?.online === true && conn.isOpen && sessions.sources[props.id] === 'live'
+}
+function showCreateForm(): void {
+  const panel = document.getElementById('device-create') as HTMLDetailsElement | null
+  if (panel) panel.open = true
+  const heading = document.getElementById('create-session-heading')
+  heading?.focus({ preventScroll: true })
+  heading?.scrollIntoView({ block: 'start' })
 }
 </script>
 
@@ -503,22 +509,94 @@ function canOpen(s: SessionSummary): boolean {
         <RouterLink class="btn btn--ghost btn--sm" :to="{ name: 'devices' }">‹ 设备</RouterLink>
         <h1 style="margin: 0">{{ device?.name ?? '设备' }}</h1>
       </div>
+      <div class="row device-heading__actions"><button class="btn btn--primary" type="button" @click="showCreateForm">新建对话</button>
       <button class="btn btn--sm" type="button" :disabled="sessions.loading" @click="sessions.load(id, true)">
         <span v-if="sessions.loading" class="spinner" />
         刷新
       </button>
       </div>
+      </div>
       <p class="device-heading__summary"><span class="health__dot" :style="{ background: device?.online ? 'var(--ok)' : 'var(--fg-faint)' }" />{{ device?.online ? '设备在线' : '设备离线' }}<span v-if="device">· {{ platformLabel(device.platform) }} · Agent {{ device.agent_version || '—' }}</span></p>
     </div>
 
-    <ContinuationPanel :key="id" :device-id="id" :source="continuingSession" @close="continuingSession = null" />
-    <WorkflowPanel :key="`workflow:${id}`" :device-id="id" />
     <div v-if="preferences.error" class="notice notice--err">偏好同步失败：{{ preferences.error }} <button class="btn btn--sm" type="button" @click="preferences.load(true)">重试</button></div>
     <div v-if="hasLegacyPreferences" class="notice notice--info">此浏览器有旧版置顶或启动组合。<button class="btn btn--sm" type="button" :disabled="importingPreferences || preferences.saving" @click="importLegacyPreferences">{{ importingPreferences ? '正在导入…' : '导入到当前账号' }}</button></div>
     <div v-if="preferenceNotice" class="notice notice--info" role="status">{{ preferenceNotice }}</div>
+    <nav class="section-nav" aria-label="设备功能">
+      <a href="#device-sessions">会话</a><a href="#device-tasks">后台任务</a><a href="#device-tools-heading">工具与设置</a>
+    </nav>
+    <NewProjectDialog v-if="newProjectOpen" :device-id="id" :roots="allowedRoots" :commands="selectableCommands" :default-command="presetId" :default-parent="cwd" @close="newProjectOpen = false" @ready="projectReady" />
     <div class="device-workspace">
-    <!-- ---- 新建会话 ---- -->
-    <div class="card device-create">
+    <div class="device-main">
+    <div id="device-sessions" class="card device-sessions">
+      <div class="card__title">
+        <h2>会话</h2>
+        <span v-if="sessions.source !== null" class="badge" :class="sessions.source === 'live' ? 'badge--ok' : 'badge--idle'">
+          {{ sessions.source === 'live' ? '实时' : '缓存快照' }}
+        </span>
+      </div>
+
+
+
+      <div v-if="sessions.error" class="notice notice--err" style="margin-bottom: 12px">
+        {{ sessions.error }}
+      </div>
+
+      <div v-if="sessionActionError" class="notice notice--err" style="margin-bottom: 12px">{{ sessionActionError }}</div>
+
+      <div class="row session-filters">
+        <button class="btn btn--sm" :class="!showArchived ? 'btn--primary' : ''" type="button" :aria-pressed="!showArchived" @click="showArchived = false">最近会话</button>
+        <button class="btn btn--sm" :class="showArchived ? 'btn--primary' : ''" type="button" :aria-pressed="showArchived" @click="showArchived = true">归档 {{ archivedCount }}</button>
+      </div>
+      <div class="field"><label for="session-query">查找会话</label><input id="session-query" v-model="sessionQuery" type="search" placeholder="按名称、命令或工作目录搜索" /></div>
+
+      <p class="dim small session-help">离开终端后会话继续运行，可直接接回。结束进程后，可用“恢复原对话”重新启动 CLI 并加载已保存的原生历史。</p>
+
+      <div v-if="!visibleSessions.length && sessions.loading" class="empty" role="status">正在读取会话…</div>
+      <div v-else-if="!visibleSessions.length && sessions.error" class="empty">暂时无法确认会话列表，请重试刷新。</div>
+      <div v-else-if="visibleSessions.length === 0" class="empty">{{ sessionQuery.trim() ? '没有匹配的会话。' : showArchived ? '暂无归档会话。' : '还没有会话，选择“新建对话”开始。' }}</div>
+
+      <div v-else class="list">
+        <div
+          v-for="s in visibleSessions"
+          :key="s.session_id"
+          class="item"
+        >
+          <span class="item__main">
+            <span class="item__title">
+              {{ s.name || s.command || '会话' }}
+              <span class="badge" :class="`badge--${statusKind(s.status)}`">
+                {{ statusLabel(s.status) }}
+              </span>
+            </span>
+            <span class="item__meta" :title="describeSession(s)">{{ s.command || '命令' }} · {{ s.cwd || '工作目录未知' }}</span>
+          </span>
+          <div class="item__actions">
+            <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
+            <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : !device?.online ? '设备离线，重新上线后可接回' : !conn.isOpen ? '连接正在恢复，请稍候' : '当前为缓存快照，请刷新确认会话状态'" @click="openSession(s)">{{ canOpen(s) ? '接回' : !device?.online ? '设备离线' : !conn.isOpen ? '连接恢复中' : '状态待确认' }}</button>
+            <button v-if="!isLiveStatus(s.status) && canRecoverConversation(s)" class="btn btn--primary btn--sm" type="button" :disabled="!device?.online || !conn.isOpen" @click="recoveringSession = s">恢复原对话</button>
+<button v-if="s.recovery && (['codex','claude','opencode'].includes(nativeCLI(s.command, s.args) ?? '') || nativeCLI(s.command,s.args)==='dsh' && isLiveStatus(s.status))" class="btn btn--sm" type="button" @click="continuingSession = s">安排继续</button>
+            <details class="session-menu"><summary>更多操作</summary><div class="row">
+            <button class="btn btn--ghost btn--sm" type="button" :aria-label="pinnedIds.includes(s.session_id) ? '取消置顶会话' : '置顶会话'" :aria-pressed="pinnedIds.includes(s.session_id)" @click="togglePin(s.session_id)">{{ pinnedIds.includes(s.session_id) ? '★ 已置顶' : '☆ 置顶' }}</button>
+            <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
+            <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
+              {{ deletingSession === s.session_id ? '确认删除该对话记录' : '删除记录' }}
+            </button>
+            </div></details>
+            <span v-if="isLiveStatus(s.status) && !canOpen(s)" class="small dim session-reconnect-reason">{{ !device?.online ? '设备离线，上线后可接回' : !conn.isOpen ? '连接恢复中，请稍候' : '缓存快照，刷新确认后可接回' }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section id="device-tasks" class="device-tasks" aria-label="后台任务">
+    <ContinuationPanel :key="id" :device-id="id" :source="continuingSession" @close="continuingSession = null" />
+    <WorkflowPanel :key="`workflow:${id}`" :device-id="id" />
+    </section>
+    </div>
+    <aside class="device-sidebar" aria-label="启动与设备管理">
+    <details id="device-create" class="card device-create">
+      <summary>新建对话 <span class="small dim">选择工具与目录</span></summary>
       <div class="card__title">
         <h2 id="create-session-heading" tabindex="-1">新建对话</h2><button class="btn btn--sm" type="button" :disabled="!conn.isOpen || !device?.online || !allowedRoots.length" @click="newProjectOpen = true">新建项目 / 文件</button>
         <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
@@ -639,65 +717,7 @@ function canOpen(s: SessionSummary): boolean {
           <button class="btn btn--sm" type="button" :disabled="!selectedPreset || !cwd.trim() || preferences.saving" @click="saveShortcut">{{ preferences.saving ? '保存中…' : '保存为项目' }}</button>
         </div>
       </form>
-    </div>
-
-    <!-- ---- 会话列表 ---- -->
-    <NewProjectDialog v-if="newProjectOpen" :device-id="id" :roots="allowedRoots" :commands="selectableCommands" :default-command="presetId" :default-parent="cwd" @close="newProjectOpen = false" @ready="projectReady" />
-    <div class="card device-sessions">
-      <div class="card__title">
-        <h2>会话</h2>
-        <span v-if="sessions.source !== null" class="badge" :class="sessions.source === 'live' ? 'badge--ok' : 'badge--idle'">
-          {{ sessions.source === 'live' ? '实时' : '缓存快照' }}
-        </span>
-      </div>
-
-
-
-      <div v-if="sessions.error" class="notice notice--err" style="margin-bottom: 12px">
-        {{ sessions.error }}
-      </div>
-
-      <div v-if="sessionActionError" class="notice notice--err" style="margin-bottom: 12px">{{ sessionActionError }}</div>
-
-      <div class="row session-filters">
-        <button class="btn btn--sm" :class="!showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = false">最近会话</button>
-        <button class="btn btn--sm" :class="showArchived ? 'btn--primary' : ''" type="button" @click="showArchived = true">归档 {{ archivedCount }}</button>
-      </div>
-      <div class="field"><label for="session-query">查找会话</label><input id="session-query" v-model="sessionQuery" type="search" placeholder="按名称、命令或工作目录搜索" /></div>
-
-      <p class="dim small session-help">离开终端后会话继续运行，可直接接回。结束进程后，可用“恢复原对话”重新启动 CLI 并加载已保存的原生历史。</p>
-
-      <div v-if="visibleSessions.length === 0" class="empty">{{ sessionQuery.trim() ? '没有匹配的会话。' : showArchived ? '暂无归档会话。' : '还没有会话，创建一个新的工作空间吧。' }}</div>
-
-      <div v-else class="list">
-        <div
-          v-for="s in visibleSessions"
-          :key="s.session_id"
-          class="item"
-        >
-          <span class="item__main">
-            <span class="item__title">
-              {{ s.name || s.command || '会话' }}
-              <span class="badge" :class="`badge--${statusKind(s.status)}`">
-                {{ statusLabel(s.status) }}
-              </span>
-            </span>
-            <span class="item__meta" :title="describeSession(s)">{{ s.command || '命令' }} · {{ s.cwd || '工作目录未知' }}</span>
-          </span>
-          <span class="item__actions">
-            <span class="faint small nowrap session-time">{{ createdText(s) }}</span>
-            <button class="btn btn--ghost btn--sm" type="button" :aria-label="pinnedIds.includes(s.session_id) ? '取消置顶会话' : '置顶会话'" :aria-pressed="pinnedIds.includes(s.session_id)" @click="togglePin(s.session_id)">{{ pinnedIds.includes(s.session_id) ? '★ 已置顶' : '☆ 置顶' }}</button>
-            <button v-if="isLiveStatus(s.status)" class="btn btn--primary btn--sm" type="button" :disabled="!canOpen(s)" :title="canOpen(s) ? '接回原会话' : '设备离线，重新上线后可接回'" @click="openSession(s)">{{ canOpen(s) ? '接回' : '离线，暂不可接回' }}</button>
-            <button v-if="!isLiveStatus(s.status) && canRecoverConversation(s)" class="btn btn--primary btn--sm" type="button" :disabled="!device?.online || !conn.isOpen" @click="recoveringSession = s">恢复原对话</button>
-<button v-if="s.recovery && (['codex','claude','opencode'].includes(nativeCLI(s.command, s.args) ?? '') || nativeCLI(s.command,s.args)==='dsh' && isLiveStatus(s.status))" class="btn btn--sm" type="button" @click="continuingSession = s">安排继续</button>
-            <button class="btn btn--sm" type="button" @click="toggleArchive(s)">{{ s.archived ? '移出归档' : '归档' }}</button>
-            <button v-if="!isLiveStatus(s.status)" class="btn btn--danger btn--sm" type="button" @click="deleteRecord(s)">
-              {{ deletingSession === s.session_id ? '确认删除该对话记录' : '删除记录' }}
-            </button>
-          </span>
-        </div>
-      </div>
-    </div>
+    </details>
     <section class="card device-tools" aria-labelledby="device-tools-heading">
       <div class="card__title"><h2 id="device-tools-heading">本机工具</h2><span class="faint small">由 Agent 扫描</span></div>
       <p class="dim small">Agent 扫描本机工具；授权后即可从网页新建会话，随时可关闭授权。</p>
@@ -716,7 +736,8 @@ function canOpen(s: SessionSummary): boolean {
     </section>
 
     <!-- DSH Web is a separate browser experience, independent of TUI sessions. -->
-    <section class="card device-dsh" aria-labelledby="dsh-web-heading">
+    <details class="card device-dsh" aria-labelledby="dsh-web-heading">
+      <summary>DSH Web <span class="badge">{{ dshOpenError ? '启动需处理' : updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></summary>
       <div class="card__title"><h2 id="dsh-web-heading">DSH Web</h2><span class="badge" :class="updateInfo?.web_proxy_enabled ? 'badge--ok' : 'badge--idle'">{{ updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></div>
       <p class="dim small">在目标电脑启动 DSH Web，通过 CodeGate 的独立 HTTPS 地址打开。</p>
       <ol class="device-dsh__checklist">
@@ -744,7 +765,7 @@ function canOpen(s: SessionSummary): boolean {
       </div>
       <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">浏览器阻止了新窗口，点此打开 DSH Web ↗</a>
       <div v-if="dshOpenError" class="notice notice--err small">{{ dshOpenError }}</div>
-    </section>
+    </details>
 
     <!-- ---- 设备信息 ---- -->
     <details class="card device-admin"><summary>设备设置 <span class="faint small">改名、设备信息与解绑</span></summary>
@@ -787,7 +808,7 @@ function canOpen(s: SessionSummary): boolean {
         </table>
 
         <div v-if="renaming" class="row" style="margin-top: 12px">
-          <input v-model="nameDraft" type="text" :disabled="devices.loading" />
+          <input v-model="nameDraft" aria-label="设备名称" type="text" :disabled="devices.loading" />
           <button class="btn btn--primary btn--sm" type="button" @click="doRename">保存</button>
         </div>
 
@@ -847,6 +868,7 @@ function canOpen(s: SessionSummary): boolean {
       </p>
     </details>
 
+    </aside>
     </div>
   </main>
 </template>

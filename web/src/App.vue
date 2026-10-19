@@ -62,12 +62,13 @@ async function onLogout(): Promise<void> {
 
 <template>
   <div :class="showChrome ? 'shell' : ''">
+    <a v-if="showChrome" class="skip-link" href="#main-content">跳到主要内容</a>
     <header v-if="showChrome" class="topbar">
       <RouterLink to="/projects" class="brand">CodeGate</RouterLink>
 
-      <nav class="nav">
+      <nav class="nav" aria-label="主要导航">
         <RouterLink to="/projects">项目</RouterLink>
-        <RouterLink to="/devices">设备</RouterLink>
+        <RouterLink to="/devices" :class="{ 'nav-current': route.path.startsWith('/devices') }">设备</RouterLink>
         <RouterLink to="/settings">设置</RouterLink>
       </nav>
 
@@ -85,6 +86,7 @@ async function onLogout(): Promise<void> {
     </header>
 
     <div v-if="showChrome && auth.isLoggedIn && notifications.events.length" class="process-notice row" role="status"><span>{{ notifications.events[0]?.label }}：{{ notifications.events[0]?.detail }}</span><button class="btn btn--ghost btn--sm" @click="notifications.clear">清除退出提醒</button></div>
-    <RouterView :key="route.fullPath" />
+    <div v-if="showChrome" id="main-content" class="shell-content" tabindex="-1"><RouterView :key="route.fullPath" /></div>
+    <RouterView v-else :key="route.fullPath" />
   </div>
 </template>

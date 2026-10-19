@@ -257,7 +257,7 @@ onUnmounted(clearPreview)
     </div>
     <div class="card" style="margin-top: 14px">
       <h2>上传到当前目录</h2>
-      <input ref="picker" type="file" @change="selected = ($event.target as HTMLInputElement).files?.[0] ?? null" />
+      <input ref="picker" type="file" aria-label="选择要上传的文件" @change="selected = ($event.target as HTMLInputElement).files?.[0] ?? null" />
       <label class="row small"><input v-model="overwrite" type="checkbox" /> 覆盖同名文件</label>
       <button class="btn btn--primary" type="button" :disabled="!selected || uploading || !conn.isOpen" @click="upload">
         {{ uploading ? '正在上传…' : '上传' }}

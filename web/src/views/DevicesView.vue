@@ -146,7 +146,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
       </div>
     </div>
 
-    <div v-if="devices.error" class="notice notice--err" style="margin-bottom: 14px">
+    <div v-if="devices.error" class="notice notice--err" role="alert" style="margin-bottom: 14px">
       {{ devices.error }}
     </div>
 
@@ -155,6 +155,7 @@ function lastSeenText(d: { online: boolean; last_seen_at?: string }): string {
       <span class="spinner" />
     </div>
 
+    <div v-else-if="devices.error && devices.items.length === 0" class="empty">暂时无法确认设备列表，请重试刷新。</div>
     <div v-else-if="devices.items.length === 0" class="empty">
       <div>还没有绑定任何设备。</div>
       <div class="small" style="margin-top: 6px">

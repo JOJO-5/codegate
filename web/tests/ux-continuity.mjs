@@ -60,6 +60,7 @@ const checks = [
     })
     assert.ok(html.includes('文件列表读取失败'))
     assert.ok(!html.includes('目录为空'))
+    assert.ok(html.includes('aria-label="选择要上传的文件"'), 'upload file picker has an accessible name')
   }],
   ['真实空续跑列表给出入口说明', async () => {
     const html = await render('../src/components/ContinuationPanel.vue', {

@@ -46,8 +46,12 @@ async function launch(): Promise<void> {
 </script>
 <template>
   <section class="card stack task-launch" aria-labelledby="launch-title">
-    <div class="row row--between"><h2 id="launch-title">新建任务 · {{ label }}</h2><button class="btn btn--ghost" :disabled="busy" @click="emit('close')">取消新建</button></div>
-    <label class="field">执行方式<select v-model="mode" :disabled="busy" aria-label="执行方式"><option value="terminal">打开 CLI，由我对话</option><option value="workflow">主 Agent 自主调度</option></select></label>
+    <div class="row row--between"><h2 id="launch-title" tabindex="-1">新建任务 · {{ label }}</h2><button class="btn btn--ghost" :disabled="busy" @click="emit('close')">取消新建</button></div>
+    <fieldset class="launch-modes" :disabled="busy">
+      <legend>执行方式</legend>
+      <label class="launch-mode"><input v-model="mode" type="radio" name="task-execution" value="terminal" /><span><strong>打开 CLI，由我对话</strong><small>自己与编程工具交流、控制每一步。</small></span></label>
+      <label class="launch-mode"><input v-model="mode" type="radio" name="task-execution" value="workflow" /><span><strong>主 Agent 自主调度</strong><small>交给它目标，由它分工、检查与返工。</small></span></label>
+    </fieldset>
     <WorkflowPanel v-if="mode === 'workflow'" :key="deviceId + cwd" :device-id="deviceId" :cwd="cwd" :label="label" />
     <form v-else class="stack" @submit.prevent="launch">
       <div class="field"><label for="launch-cli">编程工具</label><select id="launch-cli" v-model="command" :disabled="busy"><option value="">选择已授权工具</option><option v-for="tool in tools" :key="tool.id" :value="tool.id">{{ tool.label }}</option></select></div>

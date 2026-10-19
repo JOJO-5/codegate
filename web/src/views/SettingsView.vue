@@ -242,11 +242,13 @@ function actionLabel(action: string): string {
         </button>
       </div>
 
-      <div v-if="auditError" class="notice notice--err" style="margin-bottom: 12px">
+      <div v-if="auditError" class="notice notice--err" role="alert" style="margin-bottom: 12px">
         {{ auditError }}
       </div>
 
-      <div v-if="auditItems.length === 0 && !auditLoading" class="empty">还没有记录。</div>
+      <div v-if="!auditItems.length && auditLoading" class="empty" role="status">正在读取审计记录…</div>
+      <div v-else-if="!auditItems.length && auditError" class="empty">暂时无法确认审计记录，请重试刷新。</div>
+      <div v-else-if="auditItems.length === 0" class="empty">还没有记录。</div>
 
       <div v-else class="table-scroll" role="region" aria-label="审计日志，可横向滚动" tabindex="0"><table class="table">
         <thead>
