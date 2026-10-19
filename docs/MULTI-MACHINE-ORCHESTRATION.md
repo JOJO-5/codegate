@@ -2,6 +2,8 @@
 
 状态：本机第一版已实现，使用方式及当前限制见 [主 Agent 自主调度](MASTER-AGENT-V1.md)。本文保留后续多机、并行和策略设计；这些扩展尚未实现。沿用现有 Go Server、SQLite 和 Agent 出站 WebSocket 架构。
 
+2026-10-18 补充：[本机 CLI 统一调度调研与实施规划](CLI-ORCHESTRATION-ROADMAP.md)明确 Codex/OpenCode 适配层迁移、Claude Code 与 DSH ACP 的接入顺序、能力门控、权限/费用及验收条件；属于后续计划，尚未实现。
+
 2026-10-17 的交互决定：用户选择一个主 Agent（CLI / 模型）、项目和目标，主 Agent 自己决定拆分、工作 CLI / 模型、验证与返工。第一版没有要求用户逐一选择规划者、执行者和评审者；高级运行上限和工作模型费用策略折叠展示。
 
 ## 1. 总体结构
