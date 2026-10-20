@@ -43,6 +43,7 @@ import SessionAttachments from '../components/SessionAttachments.vue'
 import TerminalTextReader from '../components/TerminalTextReader.vue'
 import { terminalTextSnapshot, type TerminalTextSnapshot } from '../lib/terminalText'
 import { workspaceFilePath, type UploadedAttachment } from '../lib/uploads'
+import { captureImagePaste } from '../lib/clipboardImages'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
@@ -147,6 +148,20 @@ watch(() => drafts.owner, () => { mobileDraft.value = drafts.get(draftKey) }, { 
 const composer = ref<HTMLTextAreaElement | null>(null)
 const shortcutInput = ref(false)
 const attachmentsOpen = ref(false)
+const attachments = ref<InstanceType<typeof SessionAttachments> | null>(null)
+function onImagePaste(event: ClipboardEvent): void {
+  const target = event.target
+  // Do not intercept paste in file search, session settings or the output reader.
+  if (!(target instanceof Element) || !target.closest('.xterm, .term__composer, .term__attachments, #paste-preview')) return
+  captureImagePaste(event, files => {
+    if (!summary.value || role.value !== 'controller' || !isLive.value || !conn.isOpen) {
+      clipboardStatus.value = '图片尚未添加。连接恢复且拥有运行中会话的控制权后，请重新粘贴。'
+      return
+    }
+    attachmentsOpen.value = true
+    attachments.value?.addFiles(files)
+  })
+}
 const nativeImages = computed(() => !isShell.value && /(?:^|[\\/\s])opencode(?:\.exe)?(?:\s|$)/i.test(summary.value?.command ?? ''))
 function referenceAttachments(files: UploadedAttachment[]): void {
   if (!summary.value || role.value !== 'controller' || !conn.isOpen || !isLive.value) return
@@ -923,6 +938,9 @@ onMounted(async () => {
   //   自己重写一遍只会写错。
   t.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
     if (ev.type !== 'keydown') return true
+    // Let the browser emit a paste event. xterm otherwise encodes Ctrl+V as
+    // 0x16 and cancels the default action, so clipboard images never arrive.
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === 'v') return false
     if (!ev.ctrlKey || !ev.shiftKey) return true
 
     switch (ev.key.toLowerCase()) {
@@ -988,7 +1006,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="term" :style="{ height: termHeight }">
+  <div class="term" :style="{ height: termHeight }" @paste.capture="onImagePaste">
     <ContinuationPanel v-if="sessionDevice" :key="sessionId" :device-id="sessionDevice" :session-id="sessionId" compact :source="continuing ? summary : null" @close="continuing = false" />
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
@@ -1151,7 +1169,7 @@ onUnmounted(() => {
           <option value="">任务模板…</option><option v-for="task in TASK_TEMPLATES" :key="task.id" :value="task.id">{{ task.label }}</option>
         </select><span class="small dim">仅填入输入框，确认后发送</span>
       </div>
-      <SessionAttachments v-if="summary" v-show="attachmentsOpen" :key="sessionId" :session-id="sessionId" :enabled="role === 'controller' && isLive && conn.isOpen" :native-images="nativeImages" @close="attachmentsOpen = false" @reference="referenceAttachments" @native="pasteNativeAttachment" />
+      <SessionAttachments v-if="summary" v-show="attachmentsOpen" ref="attachments" :key="sessionId" :session-id="sessionId" :enabled="role === 'controller' && isLive && conn.isOpen" :native-images="nativeImages" @close="attachmentsOpen = false" @reference="referenceAttachments" @native="pasteNativeAttachment" />
       <div class="term__composer" v-if="role === 'controller' && isLive">
         <button class="btn btn--sm term__attach-button" type="button" aria-label="添加图片或文件" :aria-expanded="attachmentsOpen" :disabled="!conn.isOpen" @click="attachmentsOpen = !attachmentsOpen">附件</button>
         <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" :inputmode="shortcutInput ? 'none' : 'text'" autocapitalize="none" autocorrect="off" spellcheck="false" @pointerdown="enableSoftKeyboard" @keydown="onComposerKeydown" />

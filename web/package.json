@@ -10,7 +10,7 @@
     "build-only": "vite build",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "preview": "vite preview",
-    "test:transfer": "node tests/transfer.mjs",
+    "test:transfer": "node tests/transfer.mjs && node tests/clipboard-images.mjs",
     "test:conversations": "node tests/conversations.mjs",
     "test:ux": "node tests/ux-continuity.mjs && node tests/drafts.mjs && node tests/errors.mjs && node tests/continuation-controls.mjs && node tests/reconnect.mjs && node tests/workflows.mjs && node tests/layout-navigation.mjs"
   },
