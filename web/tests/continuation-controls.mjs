@@ -62,3 +62,30 @@ assert.equal(ctx.visibleRows.value.length,0,'late list cannot resurrect deletion
 list=Promise.reject(Error('offline'));await ctx.load()
 assert.match(ctx.listError.value,/offline/)
 console.log('PASS 取消/删除旧响应保护、服务端删除与撤销、活动任务防误删、离线保留')
+
+const sourceSession={session_id:'source',status:'running',command:'codex',recovery:{native_id:'native'}}
+const createProps=reactive({deviceId:'device',source:sourceSession,compact:false})
+const emitted=[]
+const createCtx=component.setup(createProps,{expose:()=>{},emit:name=>emitted.push(name)})
+createCtx.prompt.value='保留我的续跑说明'
+let createCalls=0,finishCreate
+globalThis.__continuationTest.api.createContinuation=()=>{createCalls++;return new Promise(resolve=>{finishCreate=resolve})}
+const pendingCreate=createCtx.create()
+const duplicateCreate=createCtx.create()
+assert.equal(createCalls,1,'duplicate clicks during preflight cannot issue another create')
+await duplicateCreate
+createProps.source={...sourceSession,session_id:'new-source',recovery:{native_id:'new-native'}}
+await nextTick()
+finishCreate({...blocked,id:'old-create',state:'queued'})
+await pendingCreate
+assert.equal(emitted.length,0,'late preflight response cannot close a different conversation dialog')
+assert.equal(createCtx.busy.value,false,'switching source releases obsolete preflight busy state')
+const nonces=[]
+globalThis.__continuationTest.api.createContinuation=async(_,body)=>{nonces.push(body.nonce);throw Error('控制服务不可用，尚未开启')}
+await createCtx.create()
+assert.equal(createCtx.prompt.value,'保留我的续跑说明','failed preflight preserves user input')
+assert.match(createCtx.error.value,/尚未开启/)
+assert.equal(createCtx.busy.value,false)
+await createCtx.create()
+assert.equal(nonces[0],nonces[1],'retry retains idempotency nonce')
+console.log('PASS 开启前检查防重复、失败保留输入与重试标识、旧会话检查回包隔离')

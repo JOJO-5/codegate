@@ -52,7 +52,7 @@ type codexControl struct {
 
 type codexControlUnavailable struct{ cause error }
 
-func (e *codexControlUnavailable) Error() string { return "Codex 本机守护进程暂时不可连接" }
+func (e *codexControlUnavailable) Error() string { return "Codex 本机控制服务暂时不可连接" }
 func (e *codexControlUnavailable) Unwrap() error { return e.cause }
 
 func openCodexControl(ctx context.Context, home string) (*codexControl, error) {
@@ -130,6 +130,9 @@ func (c *codexControl) readThread(id string) (nativeThread, nativeTurn, error) {
 	e := c.call("thread/read", map[string]any{"threadId": id, "includeTurns": false}, &read)
 	if e != nil {
 		return read.Thread, nativeTurn{}, e
+	}
+	if read.Thread.Status.Type == "notLoaded" {
+		return read.Thread, nativeTurn{}, nil
 	}
 	var turns struct {
 		Data []nativeTurn `json:"data"`

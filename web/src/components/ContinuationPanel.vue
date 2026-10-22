@@ -11,7 +11,7 @@ import { humanizeError, absoluteTime } from '../lib/format'
 const props = defineProps<{ deviceId: string; source?: SessionSummary | null; compact?: boolean; sessionId?: string }>()
 const emit = defineEmits<{ close: [] }>()
 const conn = useConnStore()
-const rows = ref<ContinuationTask[]>([]), error = ref(''), busy = ref(false)
+const rows = ref<ContinuationTask[]>([]), error = ref(''), busy = ref(false), creating = ref(false)
 const listError = ref(''), loading = ref(false), loaded = ref(false)
 const prompt = ref('请继续之前尚未完成的任务，先检查当前进度，避免重复已完成的操作。')
 const canLive = computed(() => !!props.source?.recovery?.native_id && ['codex','claude','opencode','dsh'].includes(nativeCLI(props.source.command, props.source.args)) && ['running','starting','detached'].includes(props.source.status))
@@ -61,13 +61,13 @@ async function load(): Promise<void> {
 }
 watch(()=>props.source, async source=>{
  mode.value = canLive.value ? 'live_quota' : 'time';due.value = localDate(Date.now() + (canLive.value ? 0 : 5*3600000))
- const g=++generation;nonce=crypto.randomUUID();error.value='';choices.value=[];selected.value=source?.recovery?.native_id??''
+ const g=++generation;nonce=crypto.randomUUID();error.value='';busy.value=false;creating.value=false;choices.value=[];selected.value=source?.recovery?.native_id??''
  if(source && !selected.value) {busy.value=true;try {const env=await conn.request<{conversations:{id:string;title:string}[]}>(MessageType.ConversationList,{session_id:source.session_id},source.session_id);if(!disposed && g===generation) choices.value=env.payload?.conversations??[]} catch(e){if(!disposed && g===generation) error.value=humanizeError(e)} finally{if(g===generation) busy.value=false}}
 },{immediate:true})
 async function create():Promise<void>{
- if(!props.source)return;busy.value=true;error.value=''
- try {const saved=await api.createContinuation(props.deviceId,{session_id:props.source.session_id,native_id:selected.value,prompt:prompt.value,mode:mode.value,due_at:mode.value === 'live_quota' ? Date.now() : new Date(due.value).getTime(),max_run_minutes:minutes.value,nonce,max_retries:maxRetries.value,retry_errors:mode.value==='live_quota' && retryErrors.value,quota_wait_minutes:quotaWaitMinutes.value});if(disposed)return;rows.value=[saved,...rows.value.filter(t=>t.id!==saved.id)];emit('close');await load()}
- catch(e){if(!disposed)error.value=humanizeError(e)} finally{busy.value=false}
+ if(!props.source || busy.value)return;const g=generation;busy.value=true;creating.value=true;error.value=''
+ try {const saved=await api.createContinuation(props.deviceId,{session_id:props.source.session_id,native_id:selected.value,prompt:prompt.value,mode:mode.value,due_at:mode.value === 'live_quota' ? Date.now() : new Date(due.value).getTime(),max_run_minutes:minutes.value,nonce,max_retries:maxRetries.value,retry_errors:mode.value==='live_quota' && retryErrors.value,quota_wait_minutes:quotaWaitMinutes.value});if(disposed || g!==generation)return;rows.value=[saved,...rows.value.filter(t=>t.id!==saved.id)];emit('close');await load()}
+ catch(e){if(!disposed && g===generation)error.value=humanizeError(e)} finally{if(g===generation){busy.value=false;creating.value=false}}
 }
 async function cancel(t:ContinuationTask):Promise<void>{
  if (busy.value) return
@@ -94,7 +94,7 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
    <label v-if="!source.recovery?.native_id">原生对话<select v-model="selected" required aria-label="原生对话"><option value="">核对历史后选择</option><option v-for="item in choices" :key="item.id" :value="item.id">{{item.title}} · {{item.id}}</option></select></label>
    <label>继续方式<select v-model="mode" aria-label="继续方式"><option v-if="canLive" value="live_quota">撞额度墙后在原终端自动继续</option><option v-if="source && nativeCLI(source.command,source.args)!=='dsh'" value="time">按时间继续</option><option v-if="source && nativeCLI(source.command,source.args)!=='dsh'" value="quota">到时检查额度，耗尽则等待重置</option></select></label>
    <p v-if="mode==='quota'" class="dim small">仅支持可可靠查询额度的默认 CLI 配置；查询失败不会启动模型，请改用按时间继续。</p>
-   <p v-if="mode==='live_quota'" class="small">立即监测当前编程回合；订阅额度耗尽后等待恢复，再在同一原生对话继续。不需关闭终端。Codex 使用本机守护进程，其他CLI使用原生事件桥；旧终端需要恢复原对话启动一次新版终端。手动输入、新回合或原终端结束会关闭自动续跑。按设置的次数限制自动继续，不购买额度或切换账号、模型。</p>
+   <p v-if="mode==='live_quota'" class="small">监测当前编程回合；订阅额度耗尽后等待恢复，再在同一原生对话继续。Codex 开启前会核对控制通道和原会话，无法监测时保留输入并提示恢复方法。其他CLI使用原生事件桥。开启后请保留原终端；手动输入、新回合或原终端结束会关闭自动续跑。按设置的次数限制自动继续，不购买额度或切换账号、模型。</p>
    <label v-if="mode!=='live_quota'">最早继续时间<input v-model="due" type="datetime-local" required aria-label="最早继续时间"></label>
    <label>继续执行的任务<textarea v-model="prompt" rows="4" required aria-label="继续执行的任务"></textarea></label>
    <label v-if="mode==='live_quota' && source && nativeCLI(source.command,source.args)!=='codex'">无查询接口时的额度等待（分钟）<input v-model.number="quotaWaitMinutes" type="number" min="1" max="10080" required aria-label="额度等待分钟"></label>
@@ -103,7 +103,8 @@ onBeforeUnmount(()=>{disposed=true;generation++;if(timer)clearInterval(timer)})
    <label v-if="mode==='live_quota'"><span><input v-model="retryErrors" type="checkbox"> 同时重试临时网络、限流和服务端故障</span></label>
    <label>本次运行上限（分钟）<input v-model.number="minutes" type="number" min="1" max="360" required aria-label="本次运行上限"></label>
    <p v-if="error" class="error" role="alert">{{error}}</p>
-   <div class="row"><button class="btn" type="button" :disabled="busy" @click="emit('close')">返回</button><button class="btn btn--primary" :disabled="busy || !selected" type="submit">{{ mode==='live_quota' ? '开启自动续跑' : '保存后台任务' }}</button></div>
+   <p v-if="creating && mode==='live_quota'" class="dim small" role="status">正在核对原会话，收到确认后才会开启监测。</p>
+   <div class="row"><button class="btn" type="button" :disabled="busy" @click="emit('close')">返回</button><button class="btn btn--primary" :disabled="busy || !selected" type="submit">{{ creating ? mode==='live_quota' ? '正在核对，请稍候…' : '正在保存…' : mode==='live_quota' ? '开启自动续跑' : '保存后台任务' }}</button></div>
   </form>
  </ModalDialog>
  <section v-if="!compact || visibleRows.length || listError || removed.length" class="card continuation-list" :class="{ 'continuation-list--compact': compact }">

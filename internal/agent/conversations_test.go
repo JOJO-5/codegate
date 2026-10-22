@@ -117,10 +117,10 @@ func TestCodexSQLiteHistoryFiltersAndDoesNotMigrate(t *testing.T) {
 	}
 }
 func TestCodexResumeRetainsProviderOverrides(t *testing.T) {
-	a := &Agent{cfg: Config{StateDir: t.TempDir()}}
+	a, _, _, _ := liveFixture(t)
 	id := uuid.NewString()
 	cmd := ResolvedCommand{Command: "codex", Args: []string{"-c", "model_provider=fixture"}}
-	_, _, _, err := a.prepareConversation(&cmd, nil, t.TempDir(), "codex", &protocol.ConversationBinding{CommandID: "codex", NativeID: id})
+	_, _, _, err := a.prepareConversation(&cmd, BuildEnv(a.cfg, 80, 24), t.TempDir(), "codex", &protocol.ConversationBinding{CommandID: "codex", NativeID: id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,5 +129,17 @@ func TestCodexResumeRetainsProviderOverrides(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(cmd.Args[:len(cmd.Args)-2], " "), "model_provider=fixture") {
 		t.Fatal("dropped approved provider config")
+	}
+}
+
+func TestCodexTerminalExplicitlyUsesVerifiedControlService(t *testing.T) {
+	a, _, _, _ := liveFixture(t)
+	cmd := ResolvedCommand{Command: "codex", Args: []string{"-c", "model_provider=fixture"}}
+	_, _, _, err := a.prepareConversation(&cmd, BuildEnv(a.cfg, 80, 24), t.TempDir(), "codex", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(cmd.Args, " "), "--remote unix://") {
+		t.Fatal("terminal can fall back to an embedded server invisible to continuation", cmd.Args)
 	}
 }

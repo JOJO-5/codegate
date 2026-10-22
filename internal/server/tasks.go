@@ -86,8 +86,6 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_payload", "任务提交标识无效")
 		return
 	}
-	s.tasksMu.Lock()
-	defer s.tasksMu.Unlock()
 	if old, err := s.store.ContinuationByNonce(r.Context(), user, p.Nonce); err == nil {
 		if old.DeviceID != device {
 			writeProtoError(w, errNoAccess())
@@ -147,7 +145,54 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "agent_upgrade_required", "请更新并连接支持此CLI自动续跑的 Agent")
 			return
 		}
+		// Fast feedback for an already armed monitor; repeat under the insert
+		// lock after preflight to prevent concurrent creates of the same thread.
+		rows, e := s.store.Continuations(r.Context(), user, device)
+		if e != nil {
+			writeProtoError(w, e)
+			return
+		}
+		for _, row := range rows {
+			if row.Mode == "live_quota" && !taskTerminal(row.State) && row.Source.Recovery != nil && row.Source.Recovery.NativeID == binding.NativeID {
+				writeError(w, 409, "already_watching", "此原生对话已开启自动撞墙续跑，请先取消原任务")
+				return
+			}
+		}
+		if provider == "codex" {
+			if !ac.Caps().LiveContinueCheck {
+				writeError(w, 409, "agent_upgrade_required", "请更新 Agent 后重试；旧版无法核对 Codex 控制通道，尚未开启自动续跑")
+				return
+			}
+			// Never hold the task lock while waiting on a device: cancellation and
+			// other task feedback must remain available during this read-only check.
+			check, checkErr := s.taskRPC(r.Context(), ac, protocol.TypeTaskCheck, protocol.TaskRunPayload{UserID: user, Source: source, Mode: p.Mode})
+			if checkErr != nil {
+				writeError(w, 503, "live_check_unavailable", "无法核对原会话，尚未开启自动续跑；请检查电脑与 Agent 连接后重试")
+				return
+			}
+			if check.State != "ready" {
+				detail := check.Detail
+				if detail == "" {
+					detail = "原会话尚不能监测，未开启自动续跑；请恢复原对话后重试"
+				}
+				writeError(w, 409, "live_control_unavailable", detail)
+				return
+			}
+		}
 		p.DueAt = now
+	}
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+	// Concurrent requests may have completed the same nonce during preflight.
+	if old, err := s.store.ContinuationByNonce(r.Context(), user, p.Nonce); err == nil {
+		if old.DeviceID != device {
+			writeProtoError(w, errNoAccess())
+			return
+		}
+		writeJSON(w, 200, old)
+		return
+	}
+	if p.Mode == "live_quota" {
 		rows, e := s.store.Continuations(r.Context(), user, device)
 		if e != nil {
 			writeProtoError(w, e)

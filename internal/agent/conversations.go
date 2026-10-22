@@ -464,6 +464,11 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 	if binding.NativeID != "" && !nativeIDPattern.MatchString(binding.NativeID) {
 		return nil, nil, "", errors.New("无效的原生对话 ID")
 	}
+	if tool == "codex" {
+		if err := a.prepareCodexDaemon(cmd, env, cwd); err != nil {
+			return nil, nil, "", err
+		}
+	}
 	if tool == "opencode" {
 		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 		defer cancel()

@@ -10,6 +10,110 @@ import (
 	"time"
 )
 
+func TestLiveContinuationRequiresControlPreflightCapability(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "live-preflight-old@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, priv := e.seedPairedDevice(t, owner)
+	e.agentHandshake(t, device, priv, protocol.AgentCaps{BackgroundContinue: true, CodexLiveContinue: true})
+	meta := &storage.SessionMeta{ID: uuid.NewString(), UserID: owner, DeviceID: device, Command: "codex", Cwd: "/owned/work", Status: "running", Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: uuid.NewString()}, CreatedAt: e.clock.Now()}
+	if err := e.store.UpsertSession(t.Context(), meta); err != nil {
+		t.Fatal(err)
+	}
+	r := e.post(t, "/api/v1/devices/"+device+"/continuations", token, map[string]any{"session_id": meta.ID, "prompt": "continue", "mode": "live_quota", "due_at": e.clock.Now().UnixMilli(), "nonce": uuid.NewString()})
+	if r.Status != 409 {
+		t.Fatalf("unverified control service accepted: %d %s", r.Status, r.Body)
+	}
+	rows, err := e.store.Continuations(t.Context(), owner, device)
+	if err != nil || len(rows) != 0 {
+		t.Fatal("failed preflight created a task", rows, err)
+	}
+}
+
+func TestCodexLiveContinuationPreflightRejectsThenRecoversWithoutCreatingFailures(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "live-preflight@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, priv := e.seedPairedDevice(t, owner)
+	agent := e.agentHandshake(t, device, priv, protocol.AgentCaps{CodexLiveContinue: true, LiveContinueCheck: true})
+	meta := &storage.SessionMeta{ID: uuid.NewString(), UserID: owner, DeviceID: device, Command: "codex", Cwd: "/owned/work", Status: "running", Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: uuid.NewString()}, CreatedAt: e.clock.Now()}
+	if err := e.store.UpsertSession(t.Context(), meta); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/devices/" + device + "/continuations"
+	nonce := uuid.NewString()
+	body := map[string]any{"session_id": meta.ID, "prompt": "keep my draft", "mode": "live_quota", "due_at": e.clock.Now().UnixMilli(), "nonce": nonce}
+	for _, state := range []string{"needs_review", "ready"} {
+		response := make(chan *apiResponse, 1)
+		go func() { response <- e.post(t, path, token, body) }()
+		req := agentRecv(t, agent)
+		if req.Type != protocol.TypeTaskCheck {
+			t.Fatal("not a read-only preflight", req.Type)
+		}
+		p, err := protocol.DecodePayload[protocol.TaskRunPayload](req)
+		if err != nil || p.Source.Recovery.NativeID != meta.Recovery.NativeID || p.Source.Cwd != meta.Cwd || p.UserID != owner || p.Prompt != "" || p.TaskID != "" {
+			t.Fatal("preflight did not use owned source or carried execution", p, err)
+		}
+		// Preflight must not block unrelated task cancellation behind tasksMu.
+		lockReady := make(chan struct{})
+		go func() { e.srv.tasksMu.Lock(); e.srv.tasksMu.Unlock(); close(lockReady) }()
+		select {
+		case <-lockReady:
+		case <-time.After(time.Second):
+			t.Fatal("preflight blocked task cancellation")
+		}
+		agentReply(t, agent, req, protocol.TypeTaskState, protocol.TaskStatePayload{State: state, Detail: "restore original conversation"})
+		r := <-response
+		rows, err := e.store.Continuations(t.Context(), owner, device)
+		if state == "needs_review" {
+			if r.Status != 409 || err != nil || len(rows) != 0 {
+				t.Fatal("failed preflight created a task", r.Status, rows, err)
+			}
+		} else {
+			if r.Status != 201 || err != nil || len(rows) != 1 || rows[0].Prompt != "keep my draft" {
+				t.Fatal("retry could not recover", r.Status, rows, err)
+			}
+			// Same nonce remains idempotent and does not send another check/run.
+			if duplicate := e.post(t, path, token, body); duplicate.Status != 200 {
+				t.Fatal("nonce replay", duplicate.Status)
+			}
+		}
+	}
+}
+
+func TestConcurrentCodexPreflightsCreateOnlyOneMonitor(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "live-concurrent@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, priv := e.seedPairedDevice(t, owner)
+	agent := e.agentHandshake(t, device, priv, protocol.AgentCaps{CodexLiveContinue: true, LiveContinueCheck: true})
+	meta := &storage.SessionMeta{ID: uuid.NewString(), UserID: owner, DeviceID: device, Command: "codex", Cwd: "/owned/work", Status: "running", Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: uuid.NewString()}, CreatedAt: e.clock.Now()}
+	if err := e.store.UpsertSession(t.Context(), meta); err != nil {
+		t.Fatal(err)
+	}
+	responses := make(chan *apiResponse, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			responses <- e.post(t, "/api/v1/devices/"+device+"/continuations", token, map[string]any{"session_id": meta.ID, "prompt": "continue", "mode": "live_quota", "due_at": e.clock.Now().UnixMilli(), "nonce": uuid.NewString()})
+		}()
+	}
+	first, second := agentRecv(t, agent), agentRecv(t, agent)
+	for _, req := range []*protocol.Envelope{first, second} {
+		if req.Type != protocol.TypeTaskCheck {
+			t.Fatal(req.Type)
+		}
+		agentReply(t, agent, req, protocol.TypeTaskState, protocol.TaskStatePayload{State: "ready"})
+	}
+	a, b := <-responses, <-responses
+	if !(a.Status == 201 && b.Status == 409 || a.Status == 409 && b.Status == 201) {
+		t.Fatal("concurrent duplicate monitors", a.Status, b.Status)
+	}
+	rows, err := e.store.Continuations(t.Context(), owner, device)
+	if err != nil || len(rows) != 1 {
+		t.Fatal(rows, err)
+	}
+}
+
 func TestContinuationDeletionPersistsAndPreservesNonce(t *testing.T) {
 	e := newTestEnv(t)
 	token := e.signup(t, "delete-tasks@example.com", "correct-horse-battery")
@@ -289,7 +393,7 @@ func TestLiveContinuationProviderPolicyAndDuplicateMonitor(t *testing.T) {
 	token := e.signup(t, "live-policy@example.com", "correct-horse-battery")
 	owner := e.meUserID(t, token)
 	device, priv := e.seedPairedDevice(t, owner)
-	agent := e.agentHandshake(t, device, priv, protocol.AgentCaps{BackgroundContinue: true, CodexLiveContinue: true, LiveContinueProviders: []string{"codex", "claude", "opencode", "dsh"}})
+	agent := e.agentHandshake(t, device, priv, protocol.AgentCaps{BackgroundContinue: true, CodexLiveContinue: true, LiveContinueCheck: true, LiveContinueProviders: []string{"codex", "claude", "opencode", "dsh"}})
 	path := "/api/v1/devices/" + device + "/continuations"
 	for _, cli := range []string{"codex", "claude", "opencode", "dsh"} {
 		meta := &storage.SessionMeta{ID: uuid.NewString(), UserID: owner, DeviceID: device, Command: cli, Cwd: "/owned/work", Status: "running", Recovery: &protocol.ConversationBinding{CommandID: cli, NativeID: uuid.NewString()}, CreatedAt: e.clock.Now()}
@@ -297,6 +401,15 @@ func TestLiveContinuationProviderPolicyAndDuplicateMonitor(t *testing.T) {
 			t.Fatal(err)
 		}
 		body := map[string]any{"session_id": meta.ID, "prompt": "continue original task", "mode": "live_quota", "due_at": e.clock.Now().UnixMilli(), "nonce": uuid.NewString(), "max_retries": 2, "retry_errors": true, "quota_wait_minutes": 300}
+		if cli == "codex" {
+			go func() {
+				req := agentRecv(t, agent)
+				if req.Type != protocol.TypeTaskCheck {
+					t.Error("missing read-only preflight", req.Type)
+				}
+				agentReply(t, agent, req, protocol.TypeTaskState, protocol.TaskStatePayload{State: "ready"})
+			}()
+		}
 		response := e.post(t, path, token, body)
 		if response.Status != 201 {
 			t.Fatalf("%s: %d %s", cli, response.Status, response.Body)
