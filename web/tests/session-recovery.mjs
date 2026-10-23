@@ -120,4 +120,23 @@ await panel.restore('chosen')
 assert.match(panel.error.value,/device offline/)
 assert.equal(panel.busy.value,false,'failed recovery releases UI for retry/close')
 assert.ok(panel.conversations.value.length,'failed restore keeps history options available')
+
+// The session metadata request may discover its native binding after the
+// recovery dialog has already begun reading legacy history for the same ID.
+mounted=[]
+let finishLegacyList,finishBoundRestore,boundRestoreCalls=0
+conn.request=async type=>type==='conversation.list'
+ ? new Promise(resolve=>{finishLegacyList=resolve})
+ : (boundRestoreCalls++,new Promise(resolve=>{finishBoundRestore=resolve}))
+const lateProps=reactive({source:{...ended,session_id:'late-binding',recovery:undefined}})
+const latePanel=recovery.setup(lateProps,{expose:()=>{},emit:()=>{}})
+mounted.forEach(fn=>fn());await nextTick()
+lateProps.source={...lateProps.source,recovery:{command_id:'codex',native_id:'native-late'}}
+await nextTick();await nextTick()
+assert.equal(boundRestoreCalls,1,'late binding for the same source must advance recovery instead of hiding all actions')
+finishLegacyList({payload:{conversations:[{id:'obsolete',title:'Old history'}]}})
+await nextTick();await nextTick()
+assert.equal(latePanel.conversations.value.length,0,'old legacy history cannot overwrite the newly bound recovery')
+finishBoundRestore({payload:{session:active}});await nextTick();await nextTick()
+assert.ok(routes.some(r=>r.params?.id===active.session_id),'late binding recovery reaches the resumed conversation')
 console.log('PASS closed-session context, cold refresh, switching, stale live status, recovery duplicate/stale/error guards')

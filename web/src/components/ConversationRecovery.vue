@@ -53,7 +53,7 @@ function initialize(): void {
   if (bound.value) void restore()
   else void loadConversations()
 }
-watch(() => props.source.session_id, () => {
+watch([() => props.source.session_id, () => props.source.recovery?.native_id], () => {
   generation++; busy.value = false; error.value = ''; conversations.value = []; selected.value = ''
   initialize()
 })
