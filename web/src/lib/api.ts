@@ -470,6 +470,11 @@ export const api = {
     await request<void>('DELETE', `/devices/${encodeURIComponent(id)}`)
   },
 
+  /** 会话缓存元数据，终端结束或设备离线后仍可读取。 */
+  session(id: string): Promise<SessionSummary> {
+    return request<SessionSummary>('GET', `/sessions/${encodeURIComponent(id)}`)
+  },
+
   /** 设备详情页的会话缓存（Agent 上报过的历史会话）。 */
   async deviceSessions(id: string): Promise<SessionSummary[]> {
     const r = await request<{ sessions: SessionSummary[] }>(

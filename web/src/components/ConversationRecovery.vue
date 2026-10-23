@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import ModalDialog from './ModalDialog.vue'
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConnStore } from '../stores/conn'
 import { useSessionsStore } from '../stores/sessions'
@@ -11,35 +11,53 @@ import { absoluteTime, humanizeError } from '../lib/format'
 const props = defineProps<{ source: SessionSummary }>()
 const emit = defineEmits<{ close: [] }>()
 const router = useRouter(), conn = useConnStore(), sessions = useSessionsStore()
-const busy = ref(true), error = ref('')
+const busy = ref(false), error = ref('')
+const phase = ref<'list' | 'restore'>('list')
 const conversations = ref<{id: string; title: string; created_at: number; updated_at: number}[]>([])
 const selected = ref('')
 let cancelled = false
-onBeforeUnmount(() => { cancelled = true })
+let generation = 0
+const bound = computed(() => !!props.source.recovery?.native_id)
+onBeforeUnmount(() => { cancelled = true; generation++ })
 async function restore(id = ''): Promise<void> {
-  busy.value = true; error.value = ''
+  if (busy.value || cancelled) return
+  const current = generation, source = props.source
+  busy.value = true; phase.value = 'restore'; error.value = ''
   try {
     const size = estimateTerminalSize()
     const env = await conn.request<SessionCreatedPayload>(MessageType.ConversationRestore,
-      { session_id: props.source.session_id, native_id: id, ...size }, props.source.session_id)
-    if (cancelled) return
+      { session_id: source.session_id, native_id: id, ...size }, source.session_id)
+    if (cancelled || current !== generation) return
     const session = env.payload?.session
     if (!session) throw new Error('未收到恢复后的会话')
-    await sessions.load(props.source.device_id, true)
+    const device = source.device_id.replace(/-/g, '')
+    sessions.setFor(device, [session, ...(sessions.byDevice[device] ?? []).filter(s => s.session_id !== session.session_id)])
+    void sessions.load(device, true)
     emit('close')
     await router.push({ name: 'session', params: { id: session.session_id } })
-  } catch (e) { if (!cancelled) error.value = humanizeError(e) }
-  finally { busy.value = false }
+  } catch (e) { if (!cancelled && current === generation) error.value = humanizeError(e) }
+  finally { if (!cancelled && current === generation) busy.value = false }
 }
-onMounted(async () => {
-  if (props.source.recovery?.native_id) { await restore(); return }
+async function loadConversations(): Promise<void> {
+  if (busy.value || cancelled) return
+  const current = generation, source = props.source
+  busy.value = true; phase.value = 'list'; error.value = ''
   try {
     const env = await conn.request<{conversations: typeof conversations.value}>(MessageType.ConversationList,
-      { session_id: props.source.session_id }, props.source.session_id)
-    if (!cancelled) conversations.value = env.payload?.conversations ?? []
-  } catch (e) { if (!cancelled) error.value = humanizeError(e) }
-  finally { busy.value = false }
+      { session_id: source.session_id }, source.session_id)
+    if (!cancelled && current === generation) conversations.value = env.payload?.conversations ?? []
+  } catch (e) { if (!cancelled && current === generation) error.value = humanizeError(e) }
+  finally { if (!cancelled && current === generation) busy.value = false }
+}
+function initialize(): void {
+  if (bound.value) void restore()
+  else void loadConversations()
+}
+watch(() => props.source.session_id, () => {
+  generation++; busy.value = false; error.value = ''; conversations.value = []; selected.value = ''
+  initialize()
 })
+onMounted(initialize)
 </script>
 
 <template>
@@ -47,11 +65,12 @@ onMounted(async () => {
     <section class="recovery-panel card" >
       <h2 id="recovery-title">恢复原对话</h2>
       <p class="dim small">{{ source.name }} · {{ source.cwd }}</p>
-      <p v-if="busy" role="status">正在读取或恢复原生对话…</p>
+      <p v-if="busy" role="status">{{ phase === 'list' ? '正在读取原生对话历史…' : '正在恢复原对话，请等待设备回执…' }}</p>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
-      <template v-if="!source.recovery?.native_id && !busy && !error">
+      <p v-if="error && phase === 'restore'" class="small dim">尚未确认恢复成功。请检查设备连接后重试；原生对话历史保留。</p>
+      <template v-if="!bound && !busy">
         <p class="small">这条记录尚未绑定原生对话，请核对标题、时间和 ID 后选择。选定后会记住关联。</p>
-        <p v-if="!conversations.length" class="dim">该目录没有可恢复的原生历史。CLI 必须已保存对话；被删除的历史无法恢复。</p>
+        <p v-if="!conversations.length && !error" class="dim">该目录没有可恢复的原生历史。CLI 必须已保存对话；被删除的历史无法恢复。</p>
         <div class="recovery-options">
           <label v-for="item in conversations" :key="item.id" class="recovery-option">
             <input v-model="selected" type="radio" name="native-conversation" :value="item.id">
@@ -60,8 +79,9 @@ onMounted(async () => {
         </div>
       </template>
       <div class="recovery-actions">
-        <button class="btn" type="button" :disabled="busy" @click="emit('close')">返回会话列表</button>
-        <button v-if="!source.recovery?.native_id" class="btn btn--primary" type="button" :disabled="busy || !selected" @click="restore(selected)">恢复选定对话</button>
+        <button class="btn" type="button" :disabled="busy" @click="emit('close')">返回会话</button>
+        <button v-if="!bound && error && phase === 'list'" class="btn" type="button" :disabled="busy" @click="loadConversations">重试读取历史</button>
+        <button v-if="!bound" class="btn btn--primary" type="button" :disabled="busy || !selected" @click="restore(selected)">恢复选定对话</button>
         <button v-else-if="error" class="btn btn--primary" type="button" :disabled="busy" @click="restore()">重试</button>
       </div>
     </section>

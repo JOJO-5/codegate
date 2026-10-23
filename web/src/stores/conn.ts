@@ -50,13 +50,22 @@ export const useConnStore = defineStore('conn', () => {
     terminalQueue = result.then(() => {}, () => {})
     return result
   }
+  async function releaseTerminal(id: string): Promise<void> {
+    try {
+      await request(ControlType.SessionDetach, { session_id: id, reason: 'client_close' }, id)
+    } catch (error) {
+      // A terminated/removed PTY has nothing left to detach. Other failures are
+      // still uncertain and must not silently release a possibly active view.
+      if (!(error && typeof error === 'object' && 'code' in error && error.code === 'session_not_found')) throw error
+    }
+  }
   function attachTerminal<T>(id: string, payload: unknown): Promise<Envelope<T>> {
     const epoch = terminalEpoch
     return terminalOperation(async () => {
       if (!isOpen.value || epoch !== terminalEpoch) throw new Error('连接已变化，请重试连接')
       if (terminalSession && terminalSession !== id) {
         const previous = terminalSession
-        await request(ControlType.SessionDetach, { session_id: previous, reason: 'client_close' }, previous)
+        await releaseTerminal(previous)
         if (epoch !== terminalEpoch) throw new Error('连接已变化，请重试连接')
         terminalSession = null
       }
@@ -69,7 +78,7 @@ export const useConnStore = defineStore('conn', () => {
     const epoch = terminalEpoch
     return terminalOperation(async () => {
       if (!isOpen.value || epoch !== terminalEpoch || terminalSession !== id) return
-      await request(ControlType.SessionDetach, { session_id: id, reason: 'client_close' }, id)
+      await releaseTerminal(id)
       if (epoch === terminalEpoch && terminalSession === id) terminalSession = null
     })
   }

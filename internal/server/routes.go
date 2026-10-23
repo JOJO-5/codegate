@@ -95,6 +95,7 @@ func (s *Server) buildRouter() http.Handler {
 	mux.Handle("PATCH /api/v1/devices/{id}", authed(s.handleDeviceRename))
 	mux.Handle("DELETE /api/v1/devices/{id}", authed(s.handleDeviceDelete))
 	mux.Handle("GET /api/v1/devices/{id}/sessions", authed(s.handleDeviceSessions))
+	mux.Handle("GET /api/v1/sessions/{session}", authed(s.handleSessionMetadata))
 	mux.Handle("PATCH /api/v1/devices/{id}/sessions/{session}", authed(s.handleSessionArchive))
 	mux.Handle("DELETE /api/v1/devices/{id}/sessions/{session}", authed(s.handleSessionDelete))
 	mux.Handle("POST /api/v1/devices/{id}/git", authed(s.handleDeviceGit))

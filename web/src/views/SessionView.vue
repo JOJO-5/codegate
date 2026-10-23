@@ -37,6 +37,8 @@ import { api } from '../lib/api'
 import { TASK_TEMPLATES } from '../lib/tasks'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import ContinuationPanel from '../components/ContinuationPanel.vue'
+import ConversationRecovery from '../components/ConversationRecovery.vue'
+import { canRecoverConversation, liveSession } from '../lib/conversationSessions'
 import { nativeCLI, sessionQuotaProvider } from '../lib/sessionQuota'
 import FilesView from './FilesView.vue'
 import SessionAttachments from '../components/SessionAttachments.vue'
@@ -85,7 +87,35 @@ const hostEl = ref<HTMLDivElement | null>(null)
 const mountedSessionId = props.id
 const sessionId = computed(() => props.id)
 
-const summary = ref<SessionSummary | null>(null)
+// Navigation and recovery cannot depend on successfully attaching a live PTY.
+const summary = ref<SessionSummary | null>(Object.values(sessions.byDevice).flat().find(s => s.session_id === props.id) ?? null)
+const contextReady = ref(summary.value !== null)
+const contextBusy = ref(false)
+const contextError = ref('')
+let contextEpoch = 0
+let statusRevision = 0
+let disposed = false
+const recovering = ref(false)
+const canRestore = computed(() => !!summary.value && !liveSession(summary.value) && canRecoverConversation(summary.value))
+const recoveryUnavailable = computed(() => !devices.byId(sessionDevice.value)?.online ? '设备离线，上线后可恢复原对话。' : !conn.isOpen ? '连接恢复中，请稍候。' : '')
+async function loadContext(): Promise<void> {
+  if (contextBusy.value || disposed) return
+  const epoch = ++contextEpoch
+  const revision = statusRevision
+  contextBusy.value = true
+  contextError.value = ''
+  try {
+    const record = await api.session(mountedSessionId)
+    if (disposed || epoch !== contextEpoch) return
+    if (revision === statusRevision || !summary.value) summary.value = record
+    contextReady.value = true
+    void sessions.load(record.device_id.replace(/-/g, ''))
+  } catch (e) {
+    if (!disposed && epoch === contextEpoch) contextError.value = humanizeError(e)
+  } finally {
+    if (!disposed && epoch === contextEpoch) contextBusy.value = false
+  }
+}
 const continuing = ref(false)
 const workspaceBranch = ref('')
 const workspaceError = ref('')
@@ -190,6 +220,18 @@ function pasteNativeAttachment(file: UploadedAttachment): void {
   clipboardStatus.value = '附件已粘贴到 OpenCode，请检查 CLI 中的预览后确认发送。'
 }
 const showSessionPanel = ref(false)
+const switcher = ref<HTMLElement | null>(null)
+let switcherOpener: HTMLElement | null = null
+function closeSwitcher(): void {
+  showSessionPanel.value = false
+  switcherOpener?.focus()
+}
+function openSwitcher(): void {
+  if (showSessionPanel.value) { closeSwitcher(); return }
+  switcherOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  showSessionPanel.value = true
+  void nextTick(() => switcher.value?.querySelector<HTMLElement>('.term__session-link--active, .term__session-link')?.focus())
+}
 const showExtraKeys = ref(false)
 const pasteOpen = ref(false)
 const pasteDraft = ref('')
@@ -628,6 +670,8 @@ function onControl(env: Envelope): void {
 
   switch (env.type) {
     case MessageType.SessionExit: {
+      statusRevision++
+      replaying.value = false
       const e = env.payload as SessionExitPayload
       exitInfo.value = e
       if (summary.value) summary.value = { ...summary.value, status: 'exited' }
@@ -638,6 +682,8 @@ function onControl(env: Envelope): void {
       break
     }
     case MessageType.SessionClosed:
+      statusRevision++
+      replaying.value = false
       exitInfo.value = { session_id: sessionId.value, exit_code: -1, reason: 'terminated' }
       if (summary.value) summary.value = { ...summary.value, status: 'terminated' }
       sessions.patch(sessionId.value, { status: 'terminated' })
@@ -678,12 +724,13 @@ function onControl(env: Envelope): void {
 // ---------------------------------------------------------------------------
 
 async function attach(since: number, queueFullReplay = false): Promise<void> {
-  if (!terminalReady.value || !conn.isOpen) return
+  if (!terminalReady.value || !conn.isOpen || !contextReady.value || !isLive.value) return
   if (attaching.value) {
     if (queueFullReplay) fullReplayQueued = true
     return
   }
   const epoch = attachmentEpoch
+  const revision = statusRevision
   attaching.value = true
   attachmentReady.value = false
   role.value = 'viewer'
@@ -702,11 +749,13 @@ async function attach(since: number, queueFullReplay = false): Promise<void> {
     // A closed socket or an unmounted page must not finish an old recovery
     // attempt over a newer connection's state.
     if (epoch !== attachmentEpoch || !terminalReady.value || !conn.isOpen) return
+    if (revision !== statusRevision && summary.value && !liveSession(summary.value)) return
     const p = env.payload
     if (p === undefined) {
       throw new Error('服务端未返回会话信息')
     }
 
+    statusRevision++
     summary.value = p.session
     const draft = sessions.takeDraft(p.session.session_id)
     if (draft && !mobileDraft.value) mobileDraft.value = draft
@@ -733,7 +782,11 @@ async function attach(since: number, queueFullReplay = false): Promise<void> {
   } catch (e) {
     if (epoch === attachmentEpoch && terminalReady.value && conn.isOpen) {
       replaying.value = false
-      errorText.value = humanizeError(e)
+      if (summary.value && e && typeof e === 'object' && 'code' in e && e.code === 'session_not_found') {
+        summary.value = { ...summary.value, status: 'exited' }
+        sessions.patch(sessionId.value, { status: 'exited' })
+        errorText.value = null
+      } else errorText.value = humanizeError(e)
     }
   } finally {
     if (epoch === attachmentEpoch) {
@@ -800,14 +853,14 @@ function goBack(): void {
 // Cold refresh has no reconnectCount increment. Wait for BOTH the first
 // socket and the terminal subscriptions, regardless of which is ready first.
 // The same path restores this exact session on subsequent connections.
-watch([() => conn.isOpen, terminalReady], ([open, ready]) => {
+watch([() => conn.isOpen, terminalReady, contextReady, isLive], ([open, ready, known, live]) => {
   attachmentEpoch++
   fullReplayQueued = false
   attaching.value = false
   attachmentReady.value = false
   role.value = 'viewer'
   replaying.value = false
-  if (open && ready) void attach(lastSeq)
+  if (open && ready && known && live) void attach(lastSeq)
 }, { flush: 'sync' })
 
 // ---------------------------------------------------------------------------
@@ -840,6 +893,7 @@ function findPrev(): void {
 // ---------------------------------------------------------------------------
 
 onMounted(async () => {
+  void loadContext()
   syncViewport()
   window.visualViewport?.addEventListener('resize', syncViewport)
   window.addEventListener('resize', syncViewport)
@@ -973,6 +1027,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  contextEpoch++
   cancelTerminalTouch()
   terminalReady.value = false
   attachmentEpoch++
@@ -1007,15 +1063,17 @@ onUnmounted(() => {
 
 <template>
   <div class="term" :style="{ height: termHeight }" @paste.capture="onImagePaste">
+    <ConversationRecovery v-if="recovering && summary" :key="sessionId" :source="summary" @close="recovering = false" />
     <ContinuationPanel v-if="sessionDevice" :key="sessionId" :device-id="sessionDevice" :session-id="sessionId" compact :source="continuing ? summary : null" @close="continuing = false" />
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
       <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 会话</button>
-      <button class="btn btn--ghost btn--sm term__panel-button" type="button" @click="showSessionPanel = !showSessionPanel">☰ 切换</button>
+      <button class="btn btn--ghost btn--sm term__panel-button" type="button" :aria-expanded="showSessionPanel" aria-controls="session-switcher" @click="openSwitcher">☰ 切换</button>
       <button class="btn btn--sm" type="button" @click="openFiles">文件</button>
 
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-git', params: { id: sessionId } })">Git</button>
       <button v-if="summary?.recovery && summary && ['codex','claude','opencode','dsh'].includes(nativeCLI(summary.command,summary.args))" class="btn btn--sm" type="button" @click="continuing = true">{{ isLive ? '自动续跑' : '安排继续' }}</button>
+      <button v-if="canRestore" class="btn btn--primary btn--sm" type="button" :disabled="!!recoveryUnavailable" @click="recovering = true">恢复原对话</button>
       <span class="term__title" :title="summary?.name ?? sessionId">
         {{ summary?.name || summary?.command || sessionId }}
       </span>
@@ -1060,9 +1118,9 @@ onUnmounted(() => {
     </details>
     <!-- ---- 终端 ---- -->
     <div class="term__workspace">
-      <aside class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区">
+      <aside id="session-switcher" ref="switcher" class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区" @keydown.esc.stop.prevent="closeSwitcher">
         <div class="term__sidebar-heading">工作区</div>
-        <button class="btn btn--primary" type="button" @click="router.push({ name: 'device', params: { id: sessionDevice }, query: { create: 'session', cwd: summary?.cwd } })">＋ 新对话</button>
+        <button class="btn btn--primary" type="button" :disabled="!sessionDevice" @click="router.push({ name: 'device', params: { id: sessionDevice }, query: { create: 'session', cwd: summary?.cwd } })">＋ 新对话</button>
         <div class="term__recent">
         <div class="term__sidebar-heading">最近会话</div>
         <button v-for="item in siblingSessions" :key="item.session_id" class="term__session-link" :class="{ 'term__session-link--active': item.session_id === sessionId }" type="button" @click="router.push({ name: 'session', params: { id: item.session_id } })">
@@ -1074,7 +1132,22 @@ onUnmounted(() => {
         <QuotaPanel v-if="currentQuotaProvider" :key="sessionId + currentQuotaProvider" :session-id="sessionId" :provider="currentQuotaProvider" />
       </aside>
       <div ref="hostEl" class="term__host" :class="{ 'term__host--viewer': role === 'viewer' }" @pointerdown="onTerminalPointerDown" @touchstart.capture.passive="onTerminalTouchStart" @touchmove.capture="onTerminalTouchMove" @touchend.capture="onTerminalTouchEnd" @touchcancel="cancelTerminalTouch" @click.capture="onTerminalClick" @contextmenu.capture="onTerminalContextMenu">
-      <div v-if="attaching" class="term__overlay" role="status">
+      <div v-if="!contextReady" class="term__overlay" :role="contextError ? 'alert' : 'status'">
+        <span class="small dim">{{ contextError || '正在读取会话信息…' }}</span>
+        <button v-if="contextError" class="btn btn--sm" type="button" :disabled="contextBusy" @click="loadContext">重试读取</button>
+        <button v-if="contextError" class="btn btn--ghost btn--sm" type="button" @click="goBack">返回会话列表</button>
+      </div>
+
+      <div v-else-if="summary && !isLive" class="term__overlay" role="status">
+        <div>{{ statusLabel(summary.status) }}<template v-if="exitInfo && exitInfo.exit_code >= 0">（退出码 {{ exitInfo.exit_code }}）</template></div>
+        <p class="small dim">{{ canRestore ? '终端进程已结束。恢复原对话会重新启动 CLI，并加载已保存的对话历史。' : '终端进程已结束。这个命令不支持恢复原生对话，可切换其他会话或新建终端。' }}</p>
+        <button v-if="canRestore" class="btn btn--primary" type="button" :disabled="!!recoveryUnavailable" @click="recovering = true">恢复原对话</button>
+        <p v-if="canRestore && recoveryUnavailable" class="small dim">{{ recoveryUnavailable }}</p>
+        <button class="btn btn--sm" type="button" @click="openSwitcher">切换其他会话</button>
+        <button class="btn btn--ghost btn--sm" type="button" @click="goBack">返回设备</button>
+      </div>
+
+      <div v-else-if="attaching" class="term__overlay" role="status">
         <span class="spinner" />
         <span class="small dim">正在接回原会话…</span>
       </div>
@@ -1096,14 +1169,6 @@ onUnmounted(() => {
         <button v-if="errorText" class="btn btn--ghost btn--sm" type="button" @click="goBack">返回设备</button>
       </div>
 
-      <div v-else-if="exitInfo !== null" class="term__overlay">
-        <div>
-          {{ exitInfo.reason === 'terminated' ? '会话已终止' : '进程已退出' }}
-          <template v-if="exitInfo.exit_code >= 0">（退出码 {{ exitInfo.exit_code }}）</template>
-        </div>
-        <div class="small faint">上面的输出是它留下的最后内容</div>
-        <button class="btn btn--sm" type="button" @click="goBack">返回设备</button>
-      </div>
       </div>
       <aside v-if="filesOpen" class="term__files" aria-label="工作区文件面板">
         <button class="btn btn--sm term__files-close" type="button" @click="filesOpen = false">关闭文件面板</button>

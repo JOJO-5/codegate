@@ -204,6 +204,18 @@ func (s *Server) handleDeviceSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
 }
 
+// Metadata remains available after the terminal is gone or the Agent is offline.
+// It is a stored snapshot, never proof that a process is currently running.
+func (s *Server) handleSessionMetadata(w http.ResponseWriter, r *http.Request) {
+	userID, _ := userIDFromContext(r.Context())
+	m, err := s.authorizeSession(r.Context(), userID, r.PathValue("session"))
+	if err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionSummary(m))
+}
+
 func (s *Server) sessionForDevice(w http.ResponseWriter, r *http.Request) *storage.SessionMeta {
 	userID, _ := userIDFromContext(r.Context())
 	deviceID := r.PathValue("id")
