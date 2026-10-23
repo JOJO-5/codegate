@@ -532,7 +532,7 @@ async function measureNetwork(): Promise<void> {
 watch(sessionId, () => { networkResult.value = null; networkError.value = '' })
 watch(() => conn.isOpen, open => { if (!open) networkResult.value = null })
 
-const currentQuotaProvider = computed(() => summary.value ? sessionQuotaProvider(summary.value.command, summary.value.args) : '')
+const currentQuotaProvider = computed(() => summary.value && liveSession(summary.value) ? sessionQuotaProvider(summary.value.command, summary.value.args) : '')
 
 // ---- 搜索（Ctrl+Shift+F，规格 §5.3 要求拦这个组合键）----
 const searchOpen = ref(false)

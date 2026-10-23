@@ -23,7 +23,7 @@ globalThis.__sessionRecovery={ref,computed,watch,nextTick,conn,sessions,
 const shim=url(`const t=globalThis.__sessionRecovery;export const {ref,computed,watch,nextTick,onMounted,onUnmounted}=t;
 export const onBeforeUnmount=t.onUnmounted,defineComponent=x=>x;
 export const api=t.api,useConnStore=()=>t.conn,useSessionsStore=()=>t.sessions,useDevicesStore=()=>t.devices,usePreferencesStore=()=>t.preferences,useDraftsStore=()=>t.drafts,useRouter=()=>t.router;
-export const humanizeError=e=>e.message,statusKind=()=>'',statusLabel=s=>s,classifyCommand=()=> 'tui',nativeCLI=()=> 'codex',sessionQuotaProvider=()=>'',canRecoverConversation=s=>s.command==='codex',liveSession=s=>['starting','running','detached'].includes(s.status);
+export const humanizeError=e=>e.message,statusKind=()=>'',statusLabel=s=>s,classifyCommand=()=> 'tui',nativeCLI=()=> 'codex',sessionQuotaProvider=s=>s==='codex'?'codex':'',canRecoverConversation=s=>s.command==='codex',liveSession=s=>['starting','running','detached'].includes(s.status);
 export const MessageType={ConversationList:'conversation.list',ConversationRestore:'conversation.restore',SessionExit:'session.exit',SessionClosed:'session.closed'},FrameFlag={},FrameType={},TASK_TEMPLATES=[],RouterLink={};
 export const estimateTerminalSize=()=>({cols:80,rows:24}),absoluteTime=String,workspaceFilePath=()=>'',terminalTextSnapshot=()=>{},captureImagePaste=()=>{};
 export class Terminal{};export class FitAddon{};export class WebLinksAddon{};export class SearchAddon{};export class Unicode11Addon{};export class WebglAddon{};export default {};`)
@@ -37,6 +37,7 @@ const view=await component('../src/views/SessionView.vue')
 const ctx=view.setup({id:'ended'},{expose:()=>{},emit:()=>{}})
 assert.equal(ctx.summary.value?.session_id,'ended','closed record supplies context before any successful attach')
 assert.equal(ctx.siblingSessions.value.length,2,'failed/closed terminal must retain the switcher')
+assert.equal(ctx.currentQuotaProvider.value,'','closed terminal cannot poll a session-scoped quota endpoint')
 assert.equal(typeof ctx.loadContext,'function','cold refresh loads metadata without attaching a dead terminal')
 await ctx.loadContext()
 ctx.terminalReady.value=true
@@ -80,6 +81,7 @@ const cachedView=view.setup({id:'cached-live'},{expose:()=>{},emit:()=>{}})
 const pendingSnapshot=cachedView.loadContext();cachedView.terminalReady.value=true
 await nextTick();await nextTick()
 assert.equal(cachedView.attachmentReady.value,true,'known live context can attach while metadata is slow')
+assert.equal(cachedView.currentQuotaProvider.value,'codex','live terminal retains its quota panel')
 finishMetadata({...cachedLive,status:'terminated'});await pendingSnapshot
 assert.equal(cachedView.isLive.value,true,'late cache snapshot cannot overwrite confirmed live attachment')
 
