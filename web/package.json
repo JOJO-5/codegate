@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "test:transfer": "node tests/transfer.mjs && node tests/clipboard-images.mjs",
     "test:conversations": "node tests/conversations.mjs && node tests/session-recovery.mjs && node tests/terminal-switching.mjs",
-    "test:ux": "node tests/ux-continuity.mjs && node tests/drafts.mjs && node tests/errors.mjs && node tests/continuation-controls.mjs && node tests/reconnect.mjs && node tests/workflows.mjs && node tests/layout-navigation.mjs"
+    "test:ux": "node tests/ux-continuity.mjs && node tests/drafts.mjs && node tests/errors.mjs && node tests/dsh-launch.mjs && node tests/continuation-controls.mjs && node tests/reconnect.mjs && node tests/workflows.mjs && node tests/layout-navigation.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

@@ -156,6 +156,17 @@ export function humanizeError(e: unknown): string {
     if (e.code === 'device_offline') return '设备离线，请确认电脑开机且 Agent 在线后重试'
     if (e.code === 'agent_timeout') return 'Agent 响应超时，请检查设备连接后重试'
     if (e.code === 'live_check_unavailable') return '无法核对原会话，尚未开启自动续跑；请检查电脑与 Agent 连接后重试'
+    if (e.code === 'dsh_port_in_use') return '电脑的 3080 端口已被其他程序占用。请确认没有运行任务后在电脑上停止它，再重新连接；不会自动结束外部进程。'
+    if (e.code === 'dsh_restart_required') return '现有 DSH Web 的地址与当前配置不同，不会自动重启。确认没有任务后，请显式停止 DSH Web，再打开。'
+    if (e.code === 'dsh_unhealthy') return '现有 DSH Web 未通过连接检查，不会自动重启。请先核对电脑上的任务，再选择停止并重新打开。'
+    if (e.code === 'dsh_not_installed') return 'Agent 服务账户未找到 dsh，请在目标电脑安装并确认服务账户可访问。'
+    if (e.code === 'dsh_start_failed') return 'DSH Web 未完成启动或本机认证，请在电脑检查 DSH 安装、配置和端口后重试。'
+    if (e.code === 'dsh_cleanup_failed') return '本次 DSH 启动失败，停止结果尚未确认，请在电脑核对该实例。'
+    if (e.code === 'dsh_timeout') return 'DSH 操作结果尚未确认，请核对状态后重新连接；不会自动重启。'
+    if (e.code === 'dsh_busy') return 'DSH Web 正在核对启动或停止结果，请等待后重新连接。'
+    if (e.code === 'dsh_in_use') return '简化转发正在服务另一台设备，请先停止该设备的 DSH Web。'
+    if (e.code === 'dsh_unavailable') return 'DSH Web 启动失败；旧版 Agent 未提供具体原因，请检查电脑上的 DSH 安装与端口。'
+    if (e.code === 'dsh_upgrade_required') return '安全重连需要更新 Agent。请先结束需要保留的运行任务，等待 Agent 空闲升级后再打开 DSH；不会自动重启旧实例。'
     if (e.status >= 500) return '服务端出错了，请稍后重试'
     return e.message || `请求失败 (HTTP ${e.status})`
   }

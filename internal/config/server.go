@@ -34,7 +34,8 @@ type Config struct {
 	// Each device uses <32 hex device id>.dsh.example.com. Empty disables Web proxy.
 	DSHProxyDomain string
 	// DSHProxyURL provides a separate HTTPS origin without wildcard DNS.
-	DSHProxyURL string
+	DSHProxyURL        string
+	DisableDSHMobileUI bool
 
 	TLS TLSConfig
 
@@ -120,6 +121,13 @@ func Load() (*Config, error) {
 
 // applyEnv 把环境变量合并进配置。getenv 参数化是为了可测。
 func (c *Config) applyEnv(getenv func(string) string) error {
+	if v := getenv("CODEGATE_DSH_MOBILE_UI"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("CODEGATE_DSH_MOBILE_UI must be true or false")
+		}
+		c.DisableDSHMobileUI = !enabled
+	}
 	if v := getenv("CODEGATE_LISTEN"); v != "" {
 		c.Listen = v
 	}

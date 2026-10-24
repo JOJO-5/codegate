@@ -113,6 +113,7 @@ func (s *Server) buildRouter() http.Handler {
 	mux.Handle("POST /api/v1/devices/{id}/update", authed(s.handleDeviceUpdateControl))
 	mux.Handle("PUT /api/v1/devices/{id}/tools/{tool}", authed(s.handleDeviceToolSet))
 	mux.Handle("POST /api/v1/devices/{id}/dsh-web/start", authed(s.handleDSHWebStart))
+	mux.Handle("GET /api/v1/devices/{id}/dsh-web/status", authed(s.handleDSHWebStatus))
 	mux.Handle("POST /api/v1/devices/{id}/dsh-web/stop", authed(s.handleDSHWebStop))
 
 	mux.Handle("GET /api/v1/audit", authed(s.handleAuditLogs))

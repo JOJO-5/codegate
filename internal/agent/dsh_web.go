@@ -59,31 +59,37 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 		}
 		a.webMu.Lock()
 		defer a.webMu.Unlock()
-		if a.webProcess != nil && a.webHost == p.Host && a.webCookie != "" {
+		if a.webProcess != nil {
+			if err := checkManagedDSH(dshLoopback, a.webHost, a.webCookie, p.Host); err != nil {
+				a.replyError(req, err)
+				return
+			}
 			a.reply(req, protocol.TypeWebStarted, protocol.WebStartedPayload{Cookie: a.webCookie})
 			return
 		}
-		if err := a.stopWebProcessLocked(); err != nil {
-			a.replyError(req, errors.New("previous DSH Web process tree could not be stopped"))
+		// An external listener has no proven ownership. Do not authenticate,
+		// adopt or terminate it, including when it happens to be another DSH.
+		if dshPortInUse("127.0.0.1:3080", "[::1]:3080") {
+			a.replyError(req, protocol.DSHStartError(protocol.CodeDSHPortInUse))
 			return
 		}
 		a.closeWebStreams()
 		binary, err := exec.LookPath("dsh")
 		if err != nil {
-			a.replyError(req, errors.New("dsh is not installed for the Agent service account"))
+			a.replyError(req, protocol.DSHStartError(protocol.CodeDSHNotInstalled))
 			return
 		}
 		cmd := dshWebCommand(binary, p.Host)
 		cmd.Env = BuildEnv(a.cfg, 80, 24)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			a.replyError(req, err)
+			a.replyError(req, protocol.DSHStartError(protocol.CodeDSHStartFailed))
 			return
 		}
 		cmd.Stderr = io.Discard // DSH may print credentials; never copy them into Agent logs.
 		tree, err := processutil.StartTree(cmd)
 		if err != nil {
-			a.replyError(req, err)
+			a.replyError(req, protocol.DSHStartError(protocol.CodeDSHStartFailed))
 			return
 		}
 		exited := make(chan struct{})
@@ -126,15 +132,15 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 		cookie, err := bootstrapDSH(launchURL, p.Host)
 		if err != nil {
 			if stopErr := a.stopWebProcessLocked(); stopErr != nil {
-				a.replyError(req, errors.New("DSH Web startup failed and process tree cleanup failed"))
+				a.replyError(req, protocol.DSHStartError(protocol.CodeDSHCleanupFailed))
 				return
 			}
-			a.replyError(req, errors.New("DSH Web did not start or browser authentication failed"))
+			a.replyError(req, protocol.DSHStartError(protocol.CodeDSHStartFailed))
 			return
 		}
 		select {
 		case <-exited:
-			a.replyError(req, errors.New("DSH Web exited during browser authentication"))
+			a.replyError(req, protocol.DSHStartError(protocol.CodeDSHStartFailed))
 			return
 		default:
 		}
@@ -144,6 +150,40 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 	}()
 }
 
+func dshPortInUse(addresses ...string) bool {
+	for _, address := range addresses {
+		if conn, err := net.DialTimeout("tcp", address, 300*time.Millisecond); err == nil {
+			_ = conn.Close()
+			return true
+		}
+	}
+	return false
+}
+
+func checkManagedDSH(address, host, cookie, requestedHost string) error {
+	if host != requestedHost {
+		return protocol.DSHStartError(protocol.CodeDSHRestartRequired)
+	}
+	if cookie == "" {
+		return protocol.DSHStartError(protocol.CodeDSHUnhealthy)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "http://"+address+"/", nil)
+	req.Host = host
+	req.Header.Set("Cookie", cookie)
+	transport := &http.Transport{DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Do(req)
+	if err != nil {
+		return protocol.DSHStartError(protocol.CodeDSHUnhealthy)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return protocol.DSHStartError(protocol.CodeDSHUnhealthy)
+	}
+	return nil
+}
+
 // bootstrapDSH exchanges DSH's process token locally. The returned signed
 // cookie stays on the Server-Agent channel and is never sent to the browser.
 func bootstrapDSH(rawURL, host string) (string, error) {
@@ -151,6 +191,11 @@ func bootstrapDSH(rawURL, host string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return exchangeDSHBrowserToken(u, host)
+}
+
+// Production callers validate the fixed loopback URL before reaching here.
+func exchangeDSHBrowserToken(u *url.URL, host string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)

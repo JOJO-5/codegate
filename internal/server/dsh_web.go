@@ -28,16 +28,25 @@ type webGrant struct {
 	expires          time.Time
 }
 type webUpstream struct {
-	agent  *AgentConn
-	cookie string
+	agent    *AgentConn
+	cookie   string
+	mobileUI string
 }
 type webStartReply struct {
 	cookie string
 	err    error
 }
 type webStartWait struct {
-	agent *AgentConn
-	reply chan webStartReply
+	agent    *AgentConn
+	reply    chan webStartReply
+	expected protocol.Type
+}
+
+type webOperation struct {
+	agent  *AgentConn
+	kind   protocol.Type
+	done   chan struct{}
+	result webStartReply
 }
 type toolWait struct {
 	expected protocol.Type
@@ -56,7 +65,8 @@ type proxyStream struct {
 type webGateway struct {
 	mu           sync.Mutex
 	simpleDevice string // URL mode serves one device until explicitly stopped.
-	simpleStarts int
+	operations   map[string]*webOperation
+	uncertain    map[string]*AgentConn
 	tickets      map[string]webGrant
 	sessions     map[string]webGrant
 	upstreams    map[string]webUpstream
@@ -69,7 +79,8 @@ func newWebGateway() *webGateway {
 	return &webGateway{
 		tickets: make(map[string]webGrant), sessions: make(map[string]webGrant),
 		upstreams: make(map[string]webUpstream), pending: make(map[string]webStartWait), toolPending: make(map[string]toolWait),
-		streams: make(map[uuid.UUID]*proxyStream),
+		streams:    make(map[uuid.UUID]*proxyStream),
+		operations: make(map[string]*webOperation), uncertain: make(map[string]*AgentConn),
 	}
 }
 
@@ -156,76 +167,19 @@ func (s *Server) handleDSHWebStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "device_offline", "设备离线")
 		return
 	}
-	if s.cfg.DSHProxyURL != "" {
-		s.web.mu.Lock()
-		// Disconnected devices cannot retain the sole simple-mode reservation.
-		if old := s.web.upstreams[s.web.simpleDevice]; old.agent != nil {
-			select {
-			case <-old.agent.Done():
-				delete(s.web.upstreams, s.web.simpleDevice)
-				s.web.simpleDevice = ""
-			default:
-			}
-		}
-		if s.web.simpleDevice != "" && s.web.simpleDevice != deviceID {
-			s.web.mu.Unlock()
-			writeError(w, http.StatusConflict, "dsh_in_use", "简化转发正在服务另一台设备，请先停止该设备的 DSH Web；多设备同时使用可配置通配域名")
-			return
-		}
-		s.web.simpleDevice = deviceID
-		s.web.simpleStarts++
-		s.web.mu.Unlock()
-		defer func() {
-			s.web.mu.Lock()
-			defer s.web.mu.Unlock()
-			s.web.simpleStarts--
-			if _, ok := s.web.upstreams[deviceID]; !ok && s.web.simpleDevice == deviceID && s.web.simpleStarts == 0 {
-				s.web.simpleDevice = ""
-			}
-		}()
-	}
-	reqID := uuid.NewString()
-	reply := make(chan webStartReply, 1)
-	s.web.mu.Lock()
-	s.web.pending[reqID] = webStartWait{agent: ac, reply: reply}
-	s.web.mu.Unlock()
-	defer func() {
-		s.web.mu.Lock()
-		delete(s.web.pending, reqID)
-		s.web.mu.Unlock()
-	}()
-	env, err := protocol.NewRequest(reqID, protocol.TypeWebStart, "", protocol.WebStartPayload{Host: s.dshDeviceHost(deviceID)})
+	op, err := s.beginWebOperation(ac, deviceID, protocol.TypeWebStart)
 	if err != nil {
-		writeProtoError(w, err)
+		writeDSHStartError(w, err)
 		return
 	}
-	raw, err := protocol.Encode(env)
-	if err != nil {
-		writeProtoError(w, err)
-		return
-	}
-	if err := ac.TrySendText(raw); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "agent_busy", "Agent 忙碌")
-		return
-	}
-	timer := time.NewTimer(45 * time.Second)
-	defer timer.Stop()
 	select {
-	case started := <-reply:
-		if started.err != nil || started.cookie == "" {
-			writeError(w, http.StatusServiceUnavailable, "dsh_unavailable", "DSH Web 启动失败：请检查 Agent 配置、dsh 安装与本机端口")
+	case <-op.done:
+		if op.result.err != nil {
+			writeDSHStartError(w, op.result.err)
 			return
 		}
-		s.web.mu.Lock()
-		s.web.upstreams[deviceID] = webUpstream{agent: ac, cookie: started.cookie}
-		s.web.mu.Unlock()
 	case <-r.Context().Done():
-		return
-	case <-ac.Done():
-		writeError(w, http.StatusServiceUnavailable, "device_offline", "Agent 已断开")
-		return
-	case <-timer.C:
-		writeError(w, http.StatusGatewayTimeout, "dsh_timeout", "等待 DSH Web 启动超时")
+		// The bounded operation keeps the Agent receipt even after this browser leaves.
 		return
 	}
 	token, err := randomWebToken()
@@ -254,82 +208,205 @@ func (s *Server) handleDSHWebStop(w http.ResponseWriter, r *http.Request) {
 		writeDeviceError(w, err)
 		return
 	}
-	s.web.mu.Lock()
-	starting := s.cfg.DSHProxyURL != "" && s.web.simpleDevice == deviceID && s.web.simpleStarts > 0
-	s.web.mu.Unlock()
-	if starting {
-		writeError(w, http.StatusConflict, "dsh_starting", "DSH Web 正在启动，请完成后再停止")
-		return
-	}
-	reqID := uuid.NewString()
-	reply := make(chan webStartReply, 1)
-	s.web.mu.Lock()
-	s.web.pending[reqID] = webStartWait{agent: ac, reply: reply}
-	s.web.mu.Unlock()
-	defer func() {
-		s.web.mu.Lock()
-		delete(s.web.pending, reqID)
-		s.web.mu.Unlock()
-	}()
-	env, err := protocol.NewRequest(reqID, protocol.TypeWebStop, "", nil)
+	op, err := s.beginWebOperation(ac, deviceID, protocol.TypeWebStop)
 	if err != nil {
-		writeProtoError(w, err)
+		writeDSHStartError(w, err)
 		return
 	}
-	raw, err := protocol.Encode(env)
-	if err != nil {
-		writeProtoError(w, err)
-		return
-	}
-	if err := ac.TrySendText(raw); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "agent_busy", "Agent 忙碌")
-		return
-	}
-	timer := time.NewTimer(10 * time.Second)
-	defer timer.Stop()
 	select {
-	case result := <-reply:
-		if result.err != nil {
-			writeError(w, http.StatusServiceUnavailable, "dsh_stop_failed", "DSH Web 未能停止")
+	case <-op.done:
+		if op.result.err != nil {
+			writeDSHStartError(w, op.result.err)
 			return
 		}
-	case <-timer.C:
-		writeError(w, http.StatusGatewayTimeout, "dsh_timeout", "等待 DSH Web 停止超时")
-		return
-	case <-ac.Done():
-		writeError(w, http.StatusServiceUnavailable, "device_offline", "Agent 已断开")
-		return
+		writeJSON(w, http.StatusOK, map[string]bool{"stopped": true})
 	case <-r.Context().Done():
-		return
+	}
+}
+
+// One operation per device. Concurrent callers share its receipt; cancellation
+// of an HTTP waiter never loses ownership of a possibly running process.
+func (s *Server) beginWebOperation(ac *AgentConn, deviceID string, kind protocol.Type) (*webOperation, error) {
+	s.web.mu.Lock()
+	defer s.web.mu.Unlock()
+	if op := s.web.operations[deviceID]; op != nil {
+		if op.agent == ac && op.kind == kind {
+			return op, nil
+		}
+		return nil, protocol.NewError("dsh_busy", "DSH Web 正在核对启动或停止结果，请等待后重新连接。")
+	}
+	if kind == protocol.TypeWebStart && !ac.Caps().DSHWebLifecycle {
+		return nil, protocol.NewError("dsh_upgrade_required", "安全重连需要新版 Agent。请先让当前会话空闲并更新 Agent；不会为了打开 DSH 自动重启旧实例。")
+	}
+	if kind == protocol.TypeWebStart && s.cfg.DSHProxyURL != "" {
+		if old := s.web.upstreams[s.web.simpleDevice]; old.agent != nil {
+			select {
+			case <-old.agent.Done():
+				delete(s.web.upstreams, s.web.simpleDevice)
+				s.web.simpleDevice = ""
+			default:
+			}
+		}
+		if s.web.simpleDevice != "" && s.web.simpleDevice != deviceID {
+			return nil, protocol.NewError("dsh_in_use", "简化转发正在服务另一台设备，请先停止该设备的 DSH Web。")
+		}
+		s.web.simpleDevice = deviceID
+	}
+	op := &webOperation{agent: ac, kind: kind, done: make(chan struct{})}
+	s.web.operations[deviceID] = op
+	go s.runWebOperation(deviceID, op)
+	return op, nil
+}
+
+func (s *Server) runWebOperation(deviceID string, op *webOperation) {
+	reqID := uuid.NewString()
+	reply := make(chan webStartReply, 1)
+	expected := protocol.TypeWebStarted
+	if op.kind == protocol.TypeWebStop {
+		expected = protocol.TypeWebStopped
 	}
 	s.web.mu.Lock()
-	if u := s.web.upstreams[deviceID]; u.agent == ac {
-		delete(s.web.upstreams, deviceID)
+	s.web.pending[reqID] = webStartWait{agent: op.agent, reply: reply, expected: expected}
+	s.web.mu.Unlock()
+	payload := any(nil)
+	if op.kind == protocol.TypeWebStart {
+		payload = protocol.WebStartPayload{Host: s.dshDeviceHost(deviceID)}
 	}
-	if s.web.simpleDevice == deviceID {
-		s.web.simpleDevice = ""
+	env, err := protocol.NewRequest(reqID, op.kind, "", payload)
+	var raw []byte
+	if err == nil {
+		raw, err = protocol.Encode(env)
 	}
-	for token, g := range s.web.tickets {
-		if g.deviceID == deviceID {
-			delete(s.web.tickets, token)
+	sent := false
+	if err == nil {
+		err = op.agent.TrySendText(raw)
+		sent = err == nil
+	}
+	result := webStartReply{err: err}
+	if err == nil {
+		timeout := 45 * time.Second
+		if op.kind == protocol.TypeWebStop {
+			timeout = 10 * time.Second
 		}
-	}
-	for token, g := range s.web.sessions {
-		if g.deviceID == deviceID {
-			delete(s.web.sessions, token)
+		timer := time.NewTimer(timeout)
+		select {
+		case result = <-reply:
+			if op.kind == protocol.TypeWebStart && result.err == nil && result.cookie == "" {
+				result.err = protocol.DSHStartError(protocol.CodeInternal)
+			}
+		case <-op.agent.Done():
+			result.err = protocol.NewError(protocol.CodeDeviceOffline, "Agent 已断开，DSH 状态需要重新核对。")
+		case <-timer.C:
+			result.err = protocol.NewError("dsh_timeout", "DSH 操作结果尚未确认，请重新连接核对；不会自动重启。")
 		}
+		timer.Stop()
+	}
+	current, online := s.reg.Agent(deviceID)
+	if !online || current != op.agent {
+		result = webStartReply{err: protocol.NewError(protocol.CodeDeviceOffline, "Agent 已断开，请重新连接核对。")}
 	}
 	var streams []uuid.UUID
-	for id, stream := range s.web.streams {
-		if stream.agent == ac {
-			streams = append(streams, id)
+	s.web.mu.Lock()
+	delete(s.web.pending, reqID)
+	delete(s.web.operations, deviceID)
+	if result.err == nil {
+		delete(s.web.uncertain, deviceID)
+		if op.kind == protocol.TypeWebStart {
+			compat := "unknown"
+			if previous := s.web.upstreams[deviceID]; previous.agent == op.agent && previous.cookie == result.cookie {
+				compat = previous.mobileUI
+			}
+			s.web.upstreams[deviceID] = webUpstream{agent: op.agent, cookie: result.cookie, mobileUI: compat}
+		} else {
+			delete(s.web.upstreams, deviceID)
+			if s.web.simpleDevice == deviceID {
+				s.web.simpleDevice = ""
+			}
+			for token, g := range s.web.tickets {
+				if g.deviceID == deviceID {
+					delete(s.web.tickets, token)
+				}
+			}
+			for token, g := range s.web.sessions {
+				if g.deviceID == deviceID {
+					delete(s.web.sessions, token)
+				}
+			}
+			for id, stream := range s.web.streams {
+				if stream.agent == op.agent {
+					streams = append(streams, id)
+				}
+			}
 		}
+	} else if sent && (protocol.ErrorCodeOf(result.err) == "dsh_timeout" || protocol.ErrorCodeOf(result.err) == protocol.CodeDeviceOffline || protocol.ErrorCodeOf(result.err) == protocol.CodeDSHCleanupFailed || protocol.ErrorCodeOf(result.err) == protocol.CodeInternal) {
+		s.web.uncertain[deviceID] = op.agent
+	} else {
+		delete(s.web.uncertain, deviceID)
 	}
+	// Do not release a simple-mode reservation after an ambiguous dispatch: the
+	// other device must not silently replace a potentially running instance.
+	if result.err != nil && s.web.uncertain[deviceID] == nil && s.web.simpleDevice == deviceID && s.web.upstreams[deviceID].agent == nil {
+		s.web.simpleDevice = ""
+	}
+	op.result = result
 	s.web.mu.Unlock()
 	for _, id := range streams {
 		s.closeWebStream(id, false)
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"stopped": true})
+	close(op.done)
+}
+
+func writeDSHStartError(w http.ResponseWriter, err error) {
+	code := protocol.ErrorCodeOf(err)
+	status := http.StatusServiceUnavailable
+	switch code {
+	case protocol.CodeDSHPortInUse, protocol.CodeDSHRestartRequired, "dsh_busy", "dsh_in_use", "dsh_upgrade_required":
+		status = http.StatusConflict
+	case "dsh_timeout":
+		status = http.StatusGatewayTimeout
+	}
+	var cause *protocol.CodeError
+	if code == protocol.CodeInternal {
+		writeError(w, status, "dsh_unavailable", protocol.DSHStartError(code).Message)
+		return
+	}
+	if errors.As(err, &cause) {
+		writeError(w, status, string(cause.Code), cause.Message)
+		return
+	}
+	writeError(w, status, "dsh_unavailable", protocol.DSHStartError(protocol.CodeInternal).Message)
+}
+
+func (s *Server) handleDSHWebStatus(w http.ResponseWriter, r *http.Request) {
+	userID, _ := userIDFromContext(r.Context())
+	deviceID := r.PathValue("id")
+	if _, err := s.authorizeDevice(r.Context(), userID, deviceID); err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	ac, online := s.reg.Agent(deviceID)
+	state := "not_open"
+	compat := "unknown"
+	s.web.mu.Lock()
+	if upstream := s.web.upstreams[deviceID]; upstream.agent == ac && ac != nil {
+		compat = upstream.mobileUI
+	}
+	if op := s.web.operations[deviceID]; op != nil {
+		if op.kind == protocol.TypeWebStart {
+			state = "starting"
+		} else {
+			state = "stopping"
+		}
+	} else if s.web.uncertain[deviceID] == ac && ac != nil {
+		state = "unknown"
+	} else if upstream := s.web.upstreams[deviceID]; upstream.agent == ac && ac != nil {
+		state = "forwarding"
+	}
+	s.web.mu.Unlock()
+	if !online {
+		state = "offline"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"online": online, "state": state, "mobile_ui": compat})
 }
 
 func (s *Server) acceptWebReply(ac *AgentConn, env *protocol.Envelope) bool {
@@ -342,12 +419,17 @@ func (s *Server) acceptWebReply(ac *AgentConn, env *protocol.Envelope) bool {
 	if wait.reply == nil || wait.agent != ac {
 		return false
 	}
+	if env.Type != protocol.TypeError && wait.expected != "" && env.Type != wait.expected {
+		wait.reply <- webStartReply{err: protocol.DSHStartError(protocol.CodeInternal)}
+		return true
+	}
 	if env.Type == protocol.TypeWebStopped {
 		wait.reply <- webStartReply{}
 		return true
 	}
 	if env.Type != protocol.TypeWebStarted {
-		wait.reply <- webStartReply{err: errors.New("DSH Web refused start")}
+		p, _ := protocol.DecodePayload[protocol.ErrorPayload](env)
+		wait.reply <- webStartReply{err: protocol.DSHStartError(p.Code)}
 		return true
 	}
 	p, err := protocol.DecodePayload[protocol.WebStartedPayload](env)
@@ -396,7 +478,7 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 		delete(s.web.tickets, token)
 		s.web.mu.Unlock()
 		if !ok || grant.deviceID != deviceID || !s.now().Before(grant.expires) {
-			http.Error(w, "ticket expired", http.StatusUnauthorized)
+			s.dshFailure(w, r, http.StatusUnauthorized, deviceID, "打开链接已过期或已使用，请从 CodeGate 获取新链接。")
 			return
 		}
 		session, err := randomWebToken()
@@ -414,14 +496,14 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie, err := r.Cookie(webCookieName)
 	if err != nil {
-		http.Error(w, "login required", http.StatusUnauthorized)
+		s.dshFailure(w, r, http.StatusUnauthorized, deviceID, "此浏览器尚未获得 DSH Web 访问授权，或授权已过期。")
 		return
 	}
 	s.web.mu.Lock()
 	grant, ok := s.web.sessions[cookie.Value]
 	s.web.mu.Unlock()
 	if !ok || grant.deviceID != deviceID || !s.now().Before(grant.expires) {
-		http.Error(w, "session expired", http.StatusUnauthorized)
+		s.dshFailure(w, r, http.StatusUnauthorized, deviceID, "DSH Web 访问授权已过期，请返回 CodeGate 重新核对。")
 		return
 	}
 	user, err := s.store.UserByID(r.Context(), grant.userID)
@@ -430,15 +512,22 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.requireAgent(r.Context(), grant.userID, deviceID); err != nil {
+		if protocol.ErrorCodeOf(err) == protocol.CodeDeviceOffline {
+			s.dshFailure(w, r, http.StatusServiceUnavailable, deviceID, "设备离线，请确认电脑与 Agent 在线后返回 CodeGate 重新连接。")
+			return
+		}
 		http.Error(w, "access revoked", http.StatusForbidden)
 		return
 	}
 	ac, connected := s.reg.Agent(deviceID)
+	if s.serveDSHMobileAsset(w, r) {
+		return
+	}
 	s.web.mu.Lock()
 	upstream, started := s.web.upstreams[deviceID]
 	s.web.mu.Unlock()
 	if !connected || !started || upstream.agent != ac {
-		http.Error(w, "DSH Web is offline; reopen it from CodeGate", http.StatusServiceUnavailable)
+		s.dshFailure(w, r, http.StatusServiceUnavailable, deviceID, "设备已断开或转发状态已失效，请返回 CodeGate 核对。")
 		return
 	}
 	target := &url.URL{Scheme: "http", Host: webLoopback}
@@ -452,6 +541,9 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 			pr.Out.Header.Set("Cookie", upstream.cookie)
 			pr.Out.Header.Del("Authorization")
 			pr.Out.Header.Del("Proxy-Authorization")
+			if pr.In.Method == http.MethodGet && pr.In.URL.Path == "/" && !s.cfg.DisableDSHMobileUI {
+				pr.Out.Header.Set("Accept-Encoding", "identity")
+			}
 			pr.SetXForwarded()
 		},
 		ModifyResponse: func(res *http.Response) error {
@@ -459,10 +551,21 @@ func (s *Server) serveDSH(w http.ResponseWriter, r *http.Request) {
 			if location := res.Header.Get("Location"); location != "" {
 				res.Header.Set("Location", rewriteDSHLocation(location, s.dshDeviceHost(deviceID)))
 			}
+			if r.Method == http.MethodGet && r.URL.Path == "/" {
+				if err := s.adaptDSHMobile(res); err != nil {
+					return err
+				}
+				s.web.mu.Lock()
+				if current := s.web.upstreams[deviceID]; current.agent == ac && current.cookie == upstream.cookie {
+					current.mobileUI = res.Header.Get("X-CodeGate-DSH-Mobile")
+					s.web.upstreams[deviceID] = current
+				}
+				s.web.mu.Unlock()
+			}
 			return nil
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-			http.Error(w, "DSH Web tunnel unavailable", http.StatusBadGateway)
+		ErrorHandler: func(w http.ResponseWriter, request *http.Request, _ error) {
+			s.dshFailure(w, request, http.StatusBadGateway, deviceID, "DSH Web 转发连接不可用，请返回 CodeGate 重新核对。")
 		},
 		FlushInterval: -1,
 	}

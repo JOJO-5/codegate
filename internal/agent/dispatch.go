@@ -662,6 +662,12 @@ func (a *Agent) replyError(req *protocol.Envelope, err error) {
 // 那些信息对远程界面没有价值，但对攻击者是免费的侦察情报。
 // 所以只有明确知道"这条消息是给用户看的"时才带上原文。
 func toCodeError(err error) *protocol.CodeError {
+	var diagnostic *protocol.CodeError
+	if errors.As(err, &diagnostic) {
+		if safe := protocol.DSHStartError(diagnostic.Code); safe.Code != protocol.CodeInternal {
+			return safe
+		}
+	}
 	switch {
 	case err == nil:
 		return protocol.NewError(protocol.CodeInternal, "internal error")

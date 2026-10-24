@@ -148,6 +148,7 @@ type AgentCaps struct {
 	BackgroundContinue    bool     `json:"background_continue,omitempty"`
 	ProjectCreate         bool     `json:"project_create,omitempty"`
 	DSHWebApproval        bool     `json:"dsh_web_approval,omitempty"`
+	DSHWebLifecycle       bool     `json:"dsh_web_lifecycle,omitempty"`
 	TerminalViews         bool     `json:"terminal_views,omitempty"`
 	QuotaRead             bool     `json:"quota_read,omitempty"`
 	ConversationRecovery  bool     `json:"conversation_recovery,omitempty"`

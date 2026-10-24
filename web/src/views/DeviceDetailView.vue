@@ -12,7 +12,7 @@ import ContinuationPanel from '../components/ContinuationPanel.vue'
 import WorkflowPanel from '../components/WorkflowPanel.vue'
 import ConversationRecovery from '../components/ConversationRecovery.vue'
 import NewProjectDialog from '../components/NewProjectDialog.vue'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { useAuthStore } from '../stores/auth'
@@ -273,40 +273,37 @@ const selectedWebURL = computed(() => reportedCommands.value?.find(c => c.id ===
 const dshCommand = computed(() => reportedCommands.value?.find(c => c.id === 'dsh'))
 const dshInstallCommand = 'dsh plugin --profile tui add github:deepseek-harness/turtle-ui'
 const dshCopyStatus = ref('')
-const dshOpening = ref(false)
 const dshStopping = ref(false)
+const dshNotice = ref('')
 const dshOpenError = ref<string | null>(null)
 const dshOpenURL = ref<string | null>(null)
-async function openDSHWeb(): Promise<void> {
+function openDSHWeb(): void {
   dshOpenError.value = null
-  dshOpenURL.value = null
-  // Open on the user gesture so mobile popup blockers permit the new tab.
-  const tab = window.open('', '_blank')
+  dshNotice.value = ''
+  const path = router.resolve({name:'dsh-launch',params:{id:props.id}}).href
+  dshOpenURL.value = path
+  const tab = window.open(path, '_blank')
   if (tab) tab.opener = null
-  dshOpening.value = true
-  try {
-    const result = await api.startDSHWeb(props.id)
-    if (tab) tab.location.href = result.url
-    else dshOpenURL.value = result.url
-  } catch (e) {
-    if (tab) tab.close()
-    dshOpenError.value = humanizeError(e)
-  } finally {
-    dshOpening.value = false
-  }
 }
 async function stopDSHWeb(): Promise<void> {
+  if (dshStopping.value || !window.confirm('停止 DSH Web 会中断该实例正在运行的任务；已保存的对话保留。确认已没有需要继续的任务？')) return
+  const deviceID = props.id
   dshOpenError.value = null
+  dshNotice.value = ''
   dshStopping.value = true
   try {
-    await api.stopDSHWeb(props.id)
+    await api.stopDSHWeb(deviceID)
+    if (props.id !== deviceID) return
     dshOpenURL.value = null
+    dshOpenError.value = null
+    dshNotice.value = '电脑已确认停止 DSH Web，已保存的对话保留。'
   } catch (e) {
-    dshOpenError.value = humanizeError(e)
+    if (props.id === deviceID) dshOpenError.value = humanizeError(e)
   } finally {
     dshStopping.value = false
   }
 }
+watch(() => props.id, () => { dshOpenURL.value = null; dshOpenError.value = null; dshNotice.value = '' })
 async function copyDshInstallCommand(): Promise<void> {
   try {
     await navigator.clipboard.writeText(dshInstallCommand)
@@ -339,10 +336,17 @@ const manageError = ref<string | null>(null)
 const confirmDelete = ref(false)
 
 let unsubscribeControl: (() => void) | null = null
+let dshPageActive = true
 
 onMounted(async () => {
   await preferences.load(true)
   await devices.load()
+  if (dshPageActive && route.query.dsh === 'reconnect') {
+    await nextTick()
+    const heading = document.getElementById('dsh-web-heading')
+    heading?.focus({ preventScroll: true })
+    heading?.scrollIntoView({ block: 'start' })
+  }
   if (device.value !== undefined) {
     nameDraft.value = device.value.name
   }
@@ -387,6 +391,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  dshPageActive = false
   unsubscribeControl?.()
   unsubscribeControl = null
   if (updateTimer !== null) clearInterval(updateTimer)
@@ -736,9 +741,9 @@ function showCreateForm(): void {
     </section>
 
     <!-- DSH Web is a separate browser experience, independent of TUI sessions. -->
-    <details class="card device-dsh" aria-labelledby="dsh-web-heading">
-      <summary>DSH Web <span class="badge">{{ dshOpenError ? '启动需处理' : updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></summary>
-      <div class="card__title"><h2 id="dsh-web-heading">DSH Web</h2><span class="badge" :class="updateInfo?.web_proxy_enabled ? 'badge--ok' : 'badge--idle'">{{ updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></div>
+    <details class="card device-dsh" aria-labelledby="dsh-web-heading" :open="route.query.dsh === 'reconnect'">
+      <summary id="dsh-web-heading" style="scroll-margin-top:6rem">DSH Web <span class="badge">{{ dshOpenError ? '启动需处理' : updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></summary>
+      <div class="card__title"><h2>DSH Web</h2><span class="badge" :class="updateInfo?.web_proxy_enabled ? 'badge--ok' : 'badge--idle'">{{ updateInfo?.web_proxy_enabled ? '转发已配置' : '待配置' }}</span></div>
       <p class="dim small">在目标电脑启动 DSH Web，通过 CodeGate 的独立 HTTPS 地址打开。</p>
       <ol class="device-dsh__checklist">
         <li :class="updateInfo?.web_proxy_enabled ? 'device-dsh__ready' : ''">
@@ -760,11 +765,12 @@ function showCreateForm(): void {
       <div v-if="toolError" class="notice notice--err small">{{ toolError }}</div>
       <div class="row device-dsh__actions">
         <button v-if="!updateInfo?.dsh_web_enabled" class="btn btn--sm" type="button" :disabled="!!toolBusy || !updateInfo?.online || !dshCommand?.installed" @click="setTool('dsh-web',true)">{{ toolBusy==='dsh-web' ? '正在授权…' : '允许 Agent 启动 DSH Web' }}</button>
-        <button class="btn btn--primary btn--sm" type="button" :disabled="dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled || !dshCommand?.installed || updateInfo?.dsh_web_enabled === false" @click="openDSHWeb">{{ dshOpening ? '正在启动…' : '启动并打开 Web ↗' }}</button>
-        <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || dshOpening || !updateInfo?.online || !updateInfo?.web_proxy_enabled" @click="stopDSHWeb">{{ dshStopping ? '正在停止…' : '停止' }}</button>
+        <button class="btn btn--primary btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online || !updateInfo?.web_proxy_enabled || !dshCommand?.installed || updateInfo?.dsh_web_enabled === false" @click="openDSHWeb">打开 DSH Web ↗</button>
+        <button class="btn btn--ghost btn--sm" type="button" :disabled="dshStopping || !updateInfo?.online || !updateInfo?.web_proxy_enabled" @click="stopDSHWeb">{{ dshStopping ? '正在停止…' : '停止 DSH Web' }}</button>
       </div>
-      <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">浏览器阻止了新窗口，点此打开 DSH Web ↗</a>
+      <a v-if="dshOpenURL" :href="dshOpenURL" target="_blank" rel="noopener noreferrer">在新页面打开 DSH（若窗口未弹出，点此继续）↗</a>
       <div v-if="dshOpenError" class="notice notice--err small">{{ dshOpenError }}</div>
+      <p v-if="dshNotice" class="notice small" role="status">{{ dshNotice }}</p>
     </details>
 
     <!-- ---- 设备信息 ---- -->

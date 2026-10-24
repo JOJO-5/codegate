@@ -29,6 +29,7 @@
  */
 
 import type { SessionSummary } from './protocol'
+import type { DSHWebStatus } from './dsh-launch'
 
 export interface GitFile { path: string; status: string; original?: string }
 export interface WorktreeInfo { path: string; branch: string; head: string; changed: boolean; unique_commits: number; occupied: boolean; blocked_reason?: string }
@@ -452,6 +453,10 @@ export const api = {
 
   startDSHWeb(id: string): Promise<{ url: string }> {
     return request<{ url: string }>('POST', `/devices/${encodeURIComponent(id)}/dsh-web/start`)
+  },
+
+  getDSHWebStatus(id: string): Promise<DSHWebStatus> {
+    return request<DSHWebStatus>('GET', `/devices/${encodeURIComponent(id)}/dsh-web/status`)
   },
 
   stopDSHWeb(id: string): Promise<{ stopped: boolean }> {

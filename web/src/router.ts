@@ -44,6 +44,7 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '设备详情' },
   },
   { path: '/devices/:id/workspaces', name: 'workspaces', component: () => import('./views/WorkspacesView.vue'), props: true, meta: { title: '独立工作区' } },
+  { path: '/devices/:id/dsh', name: 'dsh-launch', component: () => import('./views/DSHLaunchView.vue'), props: true, meta: { title: '打开 DSH Web' } },
   {
     path: '/sessions/:id',
     name: 'session',
