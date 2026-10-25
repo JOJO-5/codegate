@@ -26,6 +26,7 @@ Agent 先检查和校验更新包，失败时保持现有工作；没有新版�
 
 - Go 测试覆盖确认/归属/旧版能力/过期实例、下载失败不停止工作、拒绝新任务、实际受管终端关闭且文件保留、原生停止确认、停止超时、旧监测不打断新外部回合、取消回执持久化与查询不覆盖，以及重复请求不重复执行。
 - 本机 Agent、Server、Session、Protocol、Supervisor 与 Processutil 包测试和 vet；Web UX 回归、类型检查与生产构建。
+- 镜像构建阶段使用构建机架构，Go Server 显式交叉编译到目标架构，避免 ARM 模拟器重复编译；最终镜像需分别核对 amd64/arm64 的架构与二进制。
 - 隔离浏览器 fixture 对真实 Vue 组件测试：320px、确认前不发送、默认取消、Escape/Enter、Tab/Shift+Tab、过期确认、实例确认载荷、防重复、刷新恢复、观察新实例和旧版门控。服务请求被受控拦截，实际 Agent 操作为 0、模型调用为 0。
 - 重跑：`npm run dev -- --host 127.0.0.1 --port 4187 --strictPort`，用 Playwright CLI 打开 `/tests/agent-restart-browser.html`，执行 `run-code --filename web/tests/agent-restart-browser.js`（文件路径应相对 CLI 工作目录解析）。
 

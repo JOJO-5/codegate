@@ -1,12 +1,13 @@
 # Build the SPA first; it is embedded into the Server binary by go:embed.
-FROM node:24-alpine AS web
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -14,7 +15,7 @@ COPY . .
 COPY --from=web /src/web/dist/ ./internal/server/webui/dist/
 RUN set -eu; version=$(cat VERSION); \
     case "$version" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "invalid VERSION: $version" >&2; exit 1;; esac; \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=$version" -o /out/codegate-server ./cmd/codegate-server; \
+    CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w -X main.version=$version" -o /out/codegate-server ./cmd/codegate-server; \
     for goos in linux darwin windows; do \
       for goarch in amd64 arm64; do \
         dir="/out/agent-updates/$goos/$goarch"; mkdir -p "$dir"; \
