@@ -514,6 +514,10 @@ func (c *openCodeV2Client) interrupt(ctx context.Context, id, expected string) e
 }
 
 func (a *Agent) closeOpenCodeV2Session(source protocol.SessionSummary) error {
+	return a.closeOpenCodeV2SessionContext(context.Background(), source)
+}
+
+func (a *Agent) closeOpenCodeV2SessionContext(parent context.Context, source protocol.SessionSummary) error {
 	if source.Recovery == nil || source.Recovery.NativeID == "" || nativeTool(ResolvedCommand{Command: source.Command, Args: source.Args}) != "opencode" {
 		return nil
 	}
@@ -522,7 +526,7 @@ func (a *Agent) closeOpenCodeV2Session(source protocol.SessionSummary) error {
 		return err
 	}
 	env := BuildEnv(a.cfg, 80, 24)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	v2, err := isOpenCodeV2(ctx, cmd, env, source.Cwd)
 	if err != nil || !v2 {

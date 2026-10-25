@@ -143,6 +143,15 @@ func cmdRun(args []string) error {
 
 	if os.Getenv("CODEGATE_AGENT_SUPERVISED") == "1" {
 		a.OnStagedUpdate = func(path, version string) error { return saveVerifiedUpdate(cfg.StateDir, path, version) }
+		a.OnImmediateRestart = func(path, version string) error {
+			if path != "" {
+				if err := saveVerifiedUpdate(cfg.StateDir, path, version); err != nil {
+					return err
+				}
+			}
+			stop() // Agent has already drained and closed admissions explicitly.
+			return nil
+		}
 		a.OnRestart = func() error {
 			if !a.FreezeForUpdate() {
 				return agent.ErrUpdateBusy

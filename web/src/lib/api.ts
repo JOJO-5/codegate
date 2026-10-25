@@ -277,7 +277,7 @@ export interface DeviceDTO {
 export interface AgentUpdateStatus {
   managed?: boolean
   enabled: boolean
-  state: 'disabled' | 'waiting' | 'checking' | 'current' | 'staged' | 'switching' | 'error'
+  state: 'disabled' | 'waiting' | 'checking' | 'current' | 'staged' | 'draining' | 'switching' | 'error'
   version?: string
   detail?: string
   checked_at?: number
@@ -285,6 +285,8 @@ export interface AgentUpdateStatus {
   next_check_at?: number
   restart_scheduled?: boolean
   can_cancel_restart?: boolean
+  can_restart_now?: boolean
+  immediate_restart?: boolean
   blocking_sessions?: number
   blocking_operations?: number
   blocking_web?: boolean
@@ -444,8 +446,8 @@ export const api = {
     return request<RepositoryListResult>('GET', `/devices/${encodeURIComponent(id)}/repositories?offset=${offset}&refresh=${refresh}`)
   },
 
-  controlAgentUpdate(id: string, action: 'check' | 'restart' | 'cancel_restart'): Promise<{ action: string }> {
-    return request('POST', `/devices/${encodeURIComponent(id)}/update`, { action })
+  controlAgentUpdate(id: string, action: 'check' | 'restart' | 'cancel_restart' | 'restart_now', confirmation?: { confirmed: boolean; instance_started_at: number }): Promise<{ action: string }> {
+    return request('POST', `/devices/${encodeURIComponent(id)}/update`, { action, ...confirmation })
   },
   getDeviceUpdateStatus(id: string): Promise<DeviceUpdateStatus> {
     return request<DeviceUpdateStatus>('GET', `/devices/${encodeURIComponent(id)}/update-status`)

@@ -229,7 +229,7 @@ func (a *Agent) onGitRequest(env *protocol.Envelope) {
 		a.replyError(env, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(a.operationContext(), 30*time.Second)
 	defer cancel()
 	var out protocol.GitResult
 	if req.Action == "worktrees" || req.Action == "worktree_remove" {

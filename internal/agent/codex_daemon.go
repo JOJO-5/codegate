@@ -32,7 +32,7 @@ func (a *Agent) prepareCodexDaemon(c *ResolvedCommand, env []string, cwd string)
 	}
 	a.codexStartMu.Lock()
 	defer a.codexStartMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(a.operationContext(), 30*time.Second)
 	defer cancel()
 	if err := ensureCodexDaemon(ctx, *c, env, cwd); err != nil {
 		return err

@@ -135,6 +135,12 @@ func (a *Agent) onFileRead(env *protocol.Envelope) {
 }
 
 func (a *Agent) onFileWrite(env *protocol.Envelope) {
+	finish, err := a.beginActivity()
+	if err != nil {
+		a.replyError(env, err)
+		return
+	}
+	defer finish()
 	req, err := protocol.DecodePayload[protocol.FileWritePayload](env)
 	if err != nil { a.replyError(env, err); return }
 	if _, err = uuid.Parse(req.UploadID); err != nil || req.Size < 0 || req.Size > fileUploadLimit || req.Offset < 0 {

@@ -1,0 +1,50 @@
+// Run with Playwright CLI run-code against the isolated Vite fixture.
+async page => {
+  const checks=[],calls=[],errors=[];
+  const assert=(value,name)=>{if(!value)throw Error(name);checks.push(name)};
+  page.on('pageerror',error=>errors.push(error.message));
+  await page.route('**/api/v1/devices/fixture-device/update',async route=>{
+    calls.push(route.request().postDataJSON());
+    await route.fulfill({status:202,json:{action:'restart_now'}});
+  });
+  await page.goto('http://127.0.0.1:4187/tests/agent-restart-browser.html');
+  await page.evaluate(()=>sessionStorage.clear());await page.reload();
+  await page.setViewportSize({width:320,height:720});
+  const opener=page.getByRole('button',{name:'立即关闭任务并重启升级',exact:true});
+  await opener.click();const dialog=page.getByRole('dialog');await dialog.waitFor();
+  assert(calls.length===0,'first click only opens confirmation');
+  assert(await dialog.innerText().then(t=>t.includes('受控测试设备')&&t.includes('2 个终端')&&t.includes('原生对话历史')),'confirmation identifies device scope and preserved history');
+  assert(await page.evaluate(()=>document.activeElement?.textContent?.includes('取消，继续工作')),'cancel receives default focus');
+  await page.keyboard.press('Shift+Tab');
+  assert(await page.evaluate(()=>document.activeElement?.textContent?.includes('确认关闭任务并重启')),'reverse Tab stays inside confirmation');
+  await page.keyboard.press('Tab');
+  assert(await page.evaluate(()=>document.activeElement?.textContent?.includes('取消，继续工作')),'Tab wraps to cancel inside confirmation');
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'320px no horizontal overflow');
+  await page.screenshot({path:'immediate-restart-320.png'});
+  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
+  assert(await opener.evaluate(e=>e===document.activeElement),'Escape closes and restores focus');
+  await page.keyboard.press('Enter');await dialog.waitFor();
+  await page.keyboard.press('Enter');await dialog.waitFor({state:'hidden'});
+  assert(calls.length===0,'default Enter cancels rather than stopping work');
+  await opener.click();await dialog.waitFor();
+  await page.evaluate(()=>{const s=window.restartFixture.status();s.update.instance_started_at=101;window.restartFixture.setStatus(s)});
+  await page.getByRole('button',{name:'确认关闭任务并重启',exact:true}).click();
+  await dialog.getByRole('alert').waitFor();
+  assert(calls.length===0,'stale confirmation sends no request');
+  await page.getByRole('button',{name:'取消，继续工作',exact:true}).click();
+  await opener.click();await dialog.waitFor();
+  await page.getByRole('button',{name:'确认关闭任务并重启',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Agent 已受理'}).waitFor();
+  assert(calls.length===1&&calls[0].confirmed===true&&calls[0].instance_started_at===101,'second confirmation sends explicit instance-bound consent');
+  assert(await opener.isDisabled(),'pending request cannot be clicked twice');
+  await page.reload();
+  await page.getByRole('status').filter({hasText:'上次立即重启结果尚未确认'}).waitFor();
+  assert(calls.length===1,'refresh restores intent without replay');
+  await page.evaluate(()=>{const s=window.restartFixture.status();s.agent_version='v0.1.44';s.update.instance_started_at=102;s.update.state='current';window.restartFixture.setStatus(s)});
+  await page.getByRole('status').filter({hasText:'Agent 已重新上线'}).waitFor();
+  assert(calls.length===1,'completion requires an observed new instance');
+  await page.evaluate(()=>{const s=window.restartFixture.status();s.update.can_restart_now=false;window.restartFixture.setStatus(s)});
+  assert(await opener.isDisabled(),'legacy Agent is gated');
+  assert(errors.length===0,'no page errors');
+  return{checks:checks.length,names:checks,requests:calls.length,realAgentActions:0,modelCalls:0};
+}

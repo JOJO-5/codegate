@@ -27,6 +27,13 @@ import (
 // 其余一律记录后忽略。它比方向校验更直接 —— 它描述的是
 // 「Agent 到底认哪些指令」，而这个集合应该是**可枚举且短**的。
 func (a *Agent) handleMessage(env *protocol.Envelope) {
+	if a.drainingForUpdate() {
+		switch env.Type {
+		case protocol.TypeSessionCreate, protocol.TypeSessionSignal, protocol.TypeSessionClaimControl, protocol.TypeFileWrite, protocol.TypeWebStart, protocol.TypeWebOpen, protocol.TypeToolSet:
+			a.replyError(env, errors.New("Agent 正在关闭任务并重启，暂不接受新操作"))
+			return
+		}
+	}
 	switch env.Type {
 	case protocol.TypeTaskCheck:
 		go a.onLiveContinuationCheck(env)
@@ -122,6 +129,9 @@ func (a *Agent) handleMessage(env *protocol.Envelope) {
 // 于是攻击者可以在别人的终端里画出任意内容。
 // protocol.CanSendFrame 定义了规则，这里执行它。
 func (a *Agent) handleFrame(data []byte) {
+	if a.drainingForUpdate() {
+		return
+	}
 	frame, err := protocol.DecodeFrame(data)
 	if err != nil {
 		a.log.Warn("收到无法解析的二进制帧", "err", err, "bytes", len(data))
@@ -275,7 +285,7 @@ func (a *Agent) createSessionLocked(req protocol.SessionCreatePayload) (*session
 		if req.Resume {
 			return nil, fmt.Errorf("%w: 独立工作区必须新建对话", protocol.ErrInvalidPayload)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(a.operationContext(), 8*time.Second)
 		cwd, rollback, err = createWorktree(ctx, a.ws, cwd)
 		cancel()
 		if err != nil {
@@ -310,7 +320,7 @@ func (a *Agent) createSessionLocked(req protocol.SessionCreatePayload) (*session
 		return nil, err
 	}
 
-	sess, err := a.mgr.Create(context.Background(), session.CreateRequest{
+	sess, err := a.mgr.Create(a.operationContext(), session.CreateRequest{
 		Recovery: binding,
 		DeviceID: a.deviceUUID(),
 		// UserID 由 Server 侧填充 —— Agent 不知道也不该知道是哪个用户在操作。
@@ -596,6 +606,14 @@ func (a *Agent) sendSessionSync() {
 
 // sendHeartbeat 上报心跳 + 会话摘要（§3.3）。
 func (a *Agent) sendHeartbeat(context.Context) error {
+	env, err := a.heartbeatEnvelope()
+	if err != nil {
+		return err
+	}
+	return a.sendControl(env)
+}
+
+func (a *Agent) heartbeatEnvelope() (*protocol.Envelope, error) {
 	a.writeManagedHealth(true)
 	summaries := a.mgr.Snapshot()
 	out := make([]protocol.HeartbeatSession, 0, len(summaries))
@@ -618,17 +636,13 @@ func (a *Agent) sendHeartbeat(context.Context) error {
 	}
 
 	dshWebEnabled := a.dshWebEnabled()
-	env, err := protocol.NewEnvelope(protocol.TypeAgentHeartbeat, protocol.HeartbeatPayload{
+	return protocol.NewEnvelope(protocol.TypeAgentHeartbeat, protocol.HeartbeatPayload{
 		Sessions:      out,
 		Update:        a.currentUpdateStatus(),
 		Commands:      a.commandInventory(),
 		DSHWebEnabled: &dshWebEnabled,
 		Roots:         a.ws.Roots(),
 	})
-	if err != nil {
-		return err
-	}
-	return a.sendControl(env)
 }
 
 // ---------------------------------------------------------------------------

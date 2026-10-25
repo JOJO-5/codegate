@@ -112,6 +112,26 @@ func (a *Agent) onTaskInspect(req *protocol.Envelope, cancel bool) {
 		a.replyError(req, err)
 		return
 	}
+	if a.drainingForUpdate() {
+		r, err := a.taskReceipt(p.TaskID, p.Attempt, p.UserID)
+		result := r.Result
+		if err != nil {
+			result = protocol.TaskStatePayload{TaskID: p.TaskID, Attempt: p.Attempt, State: "needs_review", Detail: "正在重启，尚无可核对的执行回执"}
+			if req.Type == protocol.TypeTaskRun {
+				result.State = "waiting_agent"
+				result.DueAt = time.Now().Add(time.Minute).UnixMilli()
+				result.Detail = "Agent 正在重启，本次尚未执行"
+			}
+		} else {
+			switch result.State {
+			case "running", "preparing", "waiting_wall", "waiting_quota", "waiting_retry", "waiting_idle", "waiting_agent":
+				result.State = "cancelling"
+				result.Detail = "立即重启正在停止本次执行或监测，等待真实停止回执"
+			}
+		}
+		a.reply(req, protocol.TypeTaskState, result)
+		return
+	}
 	if p.Mode == "live_quota" {
 		a.onLiveQuota(req, p, cancel, true)
 		return
@@ -157,6 +177,10 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 	fail := func(message string) { result.Detail = message; a.reply(req, protocol.TypeTaskState, result) }
 	if err != nil || p.UserID == "" || p.Source.Recovery == nil || !nativeIDPattern.MatchString(p.Source.Recovery.NativeID) || len(p.Prompt) == 0 || len(p.Prompt) > 16<<10 || p.MaxRunMinutes < 1 || p.MaxRunMinutes > 360 {
 		fail("续跑配置或原生对话身份无效")
+		return
+	}
+	if a.drainingForUpdate() {
+		a.onTaskInspect(req, false)
 		return
 	}
 	if p.Mode == "live_quota" {

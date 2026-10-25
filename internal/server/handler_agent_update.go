@@ -13,7 +13,7 @@ func (s *Server) handleDeviceUpdateControl(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if p.Action != "check" && p.Action != "restart" && p.Action != "cancel_restart" {
+	if p.Action != "check" && p.Action != "restart" && p.Action != "cancel_restart" && p.Action != "restart_now" {
 		writeError(w, http.StatusBadRequest, "invalid_action", "更新操作无效")
 		return
 	}
@@ -32,6 +32,18 @@ func (s *Server) handleDeviceUpdateControl(w http.ResponseWriter, r *http.Reques
 	if p.Action == "cancel_restart" && !status.CanCancelRestart {
 		writeError(w, http.StatusConflict, "agent_upgrade_required", "Agent 版本不支持取消，或已开始重启")
 		return
+	}
+	p.OwnerID = ""
+	if p.Action == "restart_now" {
+		if !status.CanRestartNow {
+			writeError(w, http.StatusConflict, "agent_upgrade_required", "当前 Agent 不支持立即重启，请先完成一次空闲升级")
+			return
+		}
+		if !p.Confirmed || p.InstanceStartedAt <= 0 || p.InstanceStartedAt != status.InstanceStartedAt {
+			writeError(w, http.StatusConflict, "confirmation_required", "请重新核对当前设备状态，并确认关闭任务后立即重启")
+			return
+		}
+		p.OwnerID = userID
 	}
 	reqID := uuid.NewString()
 	reply := make(chan error, 1)
@@ -75,6 +87,10 @@ func (s *Server) handleDeviceUpdateControl(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusServiceUnavailable, "device_offline", "Agent 已断开")
 		}
 	case <-timer.C:
+		if p.Action == "restart_now" {
+			writeError(w, http.StatusGatewayTimeout, "update_outcome_unknown", "重启请求结果尚未确认，请核对设备状态，不要自动重复提交")
+			return
+		}
 		writeError(w, http.StatusGatewayTimeout, "agent_timeout", "Agent 未响应；请确认 Agent 已更新")
 	case <-r.Context().Done():
 		return

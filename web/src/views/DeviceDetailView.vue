@@ -12,6 +12,7 @@ import ContinuationPanel from '../components/ContinuationPanel.vue'
 import WorkflowPanel from '../components/WorkflowPanel.vue'
 import ConversationRecovery from '../components/ConversationRecovery.vue'
 import NewProjectDialog from '../components/NewProjectDialog.vue'
+import ImmediateAgentRestart from '../components/ImmediateAgentRestart.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
@@ -196,6 +197,7 @@ const updateLabel = computed(() => {
     current: '未发现新版本',
     staged: '更新包已校验',
     switching: '正在切换版本',
+    draining: '正在关闭任务，准备重启',
     error: '检查或切换失败',
   } as Record<string, string>)[u.state] ?? '未知状态'
 })
@@ -855,11 +857,12 @@ function showCreateForm(): void {
       </div>
       <p v-if="updateInfo?.update?.managed" class="dim small">新版先下载并校验，空闲后自动升级；重启电脑或 Agent 服务也会安装已保存的更新。升级失败会恢复旧版。</p>
       <div class="row">
-        <button class="btn btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || updateInfo.update?.state === 'switching'" @click="controlUpdate('check')">{{ updateAction === 'check' ? '正在请求…' : '检查更新' }}</button>
-        <button class="btn btn--primary btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || updateInfo.update?.state === 'switching'" @click="controlUpdate('restart')">{{ updateAction === 'restart' ? '正在请求…' : '空闲时重启并升级' }}</button>
+        <button class="btn btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || ['draining', 'switching'].includes(updateInfo.update?.state ?? '') || !!(updateInfo.update?.immediate_restart && !updateInfo.update.can_cancel_restart)" @click="controlUpdate('check')">{{ updateAction === 'check' ? '正在请求…' : '检查更新' }}</button>
+        <button class="btn btn--primary btn--sm" type="button" :disabled="!!updateAction || !updateInfo?.online || !updateInfo.update?.managed || ['draining', 'switching'].includes(updateInfo.update?.state ?? '') || !!(updateInfo.update?.immediate_restart && !updateInfo.update.can_cancel_restart)" @click="controlUpdate('restart')">{{ updateAction === 'restart' ? '正在请求…' : '空闲时重启并升级' }}</button>
         <button v-if="updateInfo?.update?.restart_scheduled && updateInfo.update.can_cancel_restart" class="btn btn--sm" type="button" :disabled="!!updateAction || !updateInfo.online" @click="controlUpdate('cancel_restart')">取消手动重启安排</button>
       </div>
       <p v-if="updateInfo?.update?.state === 'waiting'" class="notice small" role="status"><template v-if="updateInfo.update.instance_started_at">等待项：{{ updateInfo.update.blocking_sessions ?? 0 }} 个终端会话、{{ updateInfo.update.blocking_operations ?? 0 }} 项操作{{ updateInfo.update.blocking_web ? '、DSH Web 运行中' : '' }}。结束工作后每 5 秒重新判断空闲。</template><template v-else>当前 Agent 未上报详细等待项，请参考下方状态说明。</template>关闭网页不等于结束终端。</p>
+      <ImmediateAgentRestart :key="`${auth.user?.id || ''}:${props.id}`" :device-id="props.id" :owner-id="auth.user?.id || ''" :device-name="device?.name || props.id" :status="updateInfo" @refresh="loadUpdateStatus" />
       <p v-if="updateInfo?.update?.next_check_at" class="small dim">下次自动检查：{{ absoluteTime(updateInfo.update.next_check_at) }}</p>
       <p v-if="updateInfo?.online && !updateInfo.update?.managed" class="dim small">此功能需要新版 Agent 使用 supervise 服务运行；旧版需先在本机升级一次。</p>
       <p v-if="updateNotice" class="notice small" role="status">{{ updateNotice }}</p>

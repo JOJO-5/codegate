@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Agent restart isolated fixture</title></head>
+<body><div id="app"></div><script type="module">
+import { createApp, h, ref } from 'vue'
+import ImmediateAgentRestart from '/src/components/ImmediateAgentRestart.vue'
+import '/src/styles.css'
+const initial={online:true,agent_version:'v0.1.43',update:{enabled:true,managed:true,can_restart_now:true,can_cancel_restart:true,instance_started_at:100,state:'waiting',version:'v0.1.44',checked_at:10,blocking_sessions:2,blocking_operations:1,blocking_web:true}}
+const status=ref(JSON.parse(sessionStorage.getItem('fixture-status')||'null')||initial)
+window.restartFixture={refreshes:0,setStatus(value){status.value=value;sessionStorage.setItem('fixture-status',JSON.stringify(value))},status:()=>JSON.parse(JSON.stringify(status.value))}
+createApp({setup(){return()=>h('main',{style:'max-width:700px;padding:12px;margin:auto'},[h('h1','立即重启受控验收'),h(ImmediateAgentRestart,{deviceId:'fixture-device',ownerId:'fixture-owner',deviceName:'受控测试设备上的开发电脑',status:status.value,onRefresh(){window.restartFixture.refreshes++}})])}}).mount('#app')
+</script></body></html>

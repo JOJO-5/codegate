@@ -258,7 +258,10 @@ type HeartbeatPayload struct {
 // AgentUpdateStatus reports only observable Agent state, never a guessed
 // install outcome from the published Server version.
 type AgentUpdateControl struct {
-	Action string `json:"action"`
+	Action            string `json:"action"`
+	Confirmed         bool   `json:"confirmed,omitempty"`
+	InstanceStartedAt int64  `json:"instance_started_at,omitempty"`
+	OwnerID           string `json:"owner_id,omitempty"` // Filled by Server after device authorization.
 }
 
 type AgentUpdateStatus struct {
@@ -272,6 +275,8 @@ type AgentUpdateStatus struct {
 	NextCheckAt        int64               `json:"next_check_at,omitempty"`
 	RestartScheduled   bool                `json:"restart_scheduled,omitempty"`
 	CanCancelRestart   bool                `json:"can_cancel_restart,omitempty"`
+	CanRestartNow      bool                `json:"can_restart_now,omitempty"`
+	ImmediateRestart   bool                `json:"immediate_restart,omitempty"`
 	BlockingSessions   int                 `json:"blocking_sessions,omitempty"`
 	BlockingOperations int                 `json:"blocking_operations,omitempty"`
 	BlockingWeb        bool                `json:"blocking_web,omitempty"`

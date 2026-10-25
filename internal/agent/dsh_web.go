@@ -128,6 +128,7 @@ func (a *Agent) onWebStart(req *protocol.Envelope) {
 		case launchURL = <-ready:
 		case <-exited:
 		case <-timer.C:
+		case <-a.operationContext().Done():
 		}
 		cookie, err := bootstrapDSH(launchURL, p.Host)
 		if err != nil {

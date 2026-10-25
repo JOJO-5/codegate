@@ -48,3 +48,51 @@ func TestOwnerUpdateControlRoutesAndAcknowledgesCurrentAgent(t *testing.T) {
 		t.Fatalf("invalid: %d", invalid.Status)
 	}
 }
+
+func TestImmediateRestartRequiresConfirmationCapabilityAndCurrentInstance(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "immediate-update@example.com", "correct-horse-battery")
+	id, key := e.seedPairedDevice(t, e.meUserID(t, token))
+	ws := e.agentHandshake(t, id, key)
+	defer ws.Close()
+	ac, _ := e.srv.reg.Agent(id)
+	path := "/api/v1/devices/" + id + "/update"
+	ac.SetUpdateStatus(protocol.AgentUpdateStatus{Managed: true, InstanceStartedAt: 100})
+	if r := e.request(t, http.MethodPost, path, "", map[string]any{"action": "restart_now", "confirmed": true, "instance_started_at": 100}); r.Status != http.StatusUnauthorized {
+		t.Fatal("unauthenticated force accepted", r.Status)
+	}
+	other := e.signup(t, "foreign-immediate@example.com", "correct-horse-battery")
+	if r := e.request(t, http.MethodPost, path, other, map[string]any{"action": "restart_now", "confirmed": true, "instance_started_at": 100}); r.Status != http.StatusNotFound && r.Status != http.StatusForbidden {
+		t.Fatal("foreign owner force accepted", r.Status)
+	}
+	for _, p := range []map[string]any{
+		{"action": "restart_now"},
+		{"action": "restart_now", "confirmed": true, "instance_started_at": 100},
+	} {
+		if r := e.request(t, http.MethodPost, path, token, p); r.Status != http.StatusConflict {
+			t.Fatal("unsupported force accepted", r.Status)
+		}
+	}
+	ac.SetUpdateStatus(protocol.AgentUpdateStatus{Managed: true, CanRestartNow: true, InstanceStartedAt: 100})
+	for _, p := range []map[string]any{
+		{"action": "restart_now", "instance_started_at": 100},
+		{"action": "restart_now", "confirmed": true, "instance_started_at": 99},
+	} {
+		if r := e.request(t, http.MethodPost, path, token, p); r.Status != http.StatusConflict {
+			t.Fatal("missing/stale consent accepted", r.Status)
+		}
+	}
+	result := make(chan int, 1)
+	go func() {
+		result <- e.request(t, http.MethodPost, path, token, map[string]any{"action": "restart_now", "confirmed": true, "instance_started_at": 100, "owner_id": "forged"}).Status
+	}()
+	req := agentRecv(t, ws)
+	p, err := protocol.DecodePayload[protocol.AgentUpdateControl](req)
+	if err != nil || !p.Confirmed || p.InstanceStartedAt != 100 || p.OwnerID != ac.UserID {
+		t.Fatal("invalid consent forwarded", p, err)
+	}
+	agentReply(t, ws, req, protocol.TypeAgentUpdateAccepted, nil)
+	if status := <-result; status != http.StatusAccepted {
+		t.Fatal("force not acknowledged", status)
+	}
+}

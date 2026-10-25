@@ -29,7 +29,7 @@ var Version = "dev"
 // 生命周期上它比任何一条 WebSocket 连接都长 —— 连接断了重连，
 // 会话不受影响（这是不变量 I1/I2 在 Agent 侧的体现）。
 type Agent struct {
-	codexStartMu sync.Mutex
+	codexStartMu  sync.Mutex
 	workflowRuns  map[string]*workflowRun // protected by tasksMu
 	liveQuotaMu   sync.Mutex
 	tasksMu       sync.Mutex
@@ -56,6 +56,9 @@ type Agent struct {
 	activities         int
 	activityGeneration uint64
 	updateFrozen       bool
+	updateDraining     bool
+	operationCtx       context.Context
+	operationCancel    context.CancelFunc
 	gitMu              sync.Mutex
 	workspaceMu        sync.Mutex
 	repositoryMu       sync.Mutex
@@ -67,6 +70,9 @@ type Agent struct {
 	OnVerifiedUpdate          func(path, version string) error
 	OnStagedUpdate            func(path, version string) error
 	OnRestart                 func() error
+	OnImmediateRestart        func(path, version string) error
+	immediateRestart          *protocol.AgentUpdateControl // updateIntentMu
+	immediateRequested        atomic.Bool
 	updateWake                chan struct{}
 	restartRequested          atomic.Bool
 	updateIntentMu            sync.Mutex

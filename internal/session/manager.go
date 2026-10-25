@@ -254,6 +254,34 @@ func (m *Manager) FreezeIfEmpty() bool {
 	return true
 }
 
+// Freeze prevents new sessions without closing existing native control bridges.
+func (m *Manager) Freeze() {
+	m.mu.Lock()
+	m.closed = true
+	m.mu.Unlock()
+}
+
+// Preserve failed handles so a retry cannot silently forget an unclosed task.
+func (m *Manager) CloseForRestart(reason string) (failed int) {
+	m.Freeze()
+	m.mu.RLock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.RUnlock()
+	for _, s := range sessions {
+		if err := s.Close(reason); err != nil {
+			failed++
+			continue
+		}
+		m.mu.Lock()
+		delete(m.sessions, s.ID)
+		m.mu.Unlock()
+	}
+	return failed
+}
+
 // CloseAll 关闭全部会话。用于 Agent 优雅退出。
 //
 // 返回出错的数量：单个会话关不掉不应该阻断整个关闭流程，

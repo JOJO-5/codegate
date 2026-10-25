@@ -470,7 +470,7 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 		}
 	}
 	if tool == "opencode" {
-		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		ctx, cancel := context.WithTimeout(a.operationContext(), 40*time.Second)
 		defer cancel()
 		v2, err := isOpenCodeV2(ctx, *cmd, env, cwd)
 		if err != nil {

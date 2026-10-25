@@ -114,7 +114,7 @@ func (a *Agent) onProjectCreate(req *protocol.Envelope) {
 	}
 	a.workspaceMu.Lock()
 	defer a.workspaceMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(a.operationContext(), 20*time.Second)
 	defer cancel()
 	result, err := a.createProject(ctx, p)
 	if err != nil {

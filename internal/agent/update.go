@@ -52,8 +52,10 @@ func (a *Agent) currentUpdateStatus() protocol.AgentUpdateStatus {
 	if !a.startedAt.IsZero() {
 		status.InstanceStartedAt = a.startedAt.UnixMilli()
 	}
-	status.RestartScheduled = a.restartRequested.Load()
-	status.CanCancelRestart = status.Managed && status.State != "switching"
+	status.ImmediateRestart = a.immediateRequested.Load() || a.drainingForUpdate()
+	status.RestartScheduled = a.restartRequested.Load() || status.ImmediateRestart
+	status.CanCancelRestart = status.Managed && status.State != "switching" && !a.drainingForUpdate()
+	status.CanRestartNow = status.Managed && a.OnImmediateRestart != nil
 	if a.mgr != nil {
 		status.BlockingSessions = a.mgr.Count()
 	}
@@ -121,6 +123,18 @@ func (a *Agent) updateLoop(ctx context.Context) {
 }
 
 func (a *Agent) checkUpdate(ctx context.Context) {
+	if a.currentUpdateStatus().State == "switching" || a.drainingForUpdate() && !a.immediateRequested.Load() {
+		return
+	}
+	checked := false
+	defer func() {
+		if !checked {
+			a.updateIntentMu.Lock()
+			a.immediateRestart = nil
+			a.immediateRequested.Store(false)
+			a.updateIntentMu.Unlock()
+		}
+	}()
 	a.updateMu.Lock()
 	a.updateStatus.NextCheckAt = 0
 	a.updateMu.Unlock()
@@ -158,13 +172,18 @@ func (a *Agent) checkUpdate(ctx context.Context) {
 		a.setUpdateStatus("current", "", "当前未发现新版本")
 	}
 	a.restartReady = true
-	a.applyStagedUpdate()
+	checked = true
+	if a.immediateRequested.Load() {
+		a.applyImmediateRestart(ctx)
+	} else {
+		a.applyStagedUpdate()
+	}
 }
 
 func (a *Agent) applyStagedUpdate() {
 	a.updateIntentMu.Lock()
 	defer a.updateIntentMu.Unlock()
-	if a.currentUpdateStatus().State == "switching" {
+	if a.currentUpdateStatus().State == "switching" || a.immediateRequested.Load() || a.drainingForUpdate() {
 		return
 	}
 	var err error
@@ -192,10 +211,12 @@ func (a *Agent) applyStagedUpdate() {
 func (a *Agent) cancelRequestedRestart() error {
 	a.updateIntentMu.Lock()
 	defer a.updateIntentMu.Unlock()
-	if a.currentUpdateStatus().State == "switching" {
+	if a.currentUpdateStatus().State == "switching" || a.drainingForUpdate() {
 		return errors.New("Agent 已开始重启，无法取消")
 	}
 	a.restartRequested.Store(false)
+	a.immediateRequested.Store(false)
+	a.immediateRestart = nil
 	status := a.currentUpdateStatus()
 	if status.State == "waiting" && status.Version == "" {
 		a.setUpdateStatus("current", "", "手动重启安排已取消")
@@ -205,12 +226,20 @@ func (a *Agent) cancelRequestedRestart() error {
 
 func (a *Agent) onUpdateControl(env *protocol.Envelope) {
 	p, err := protocol.DecodePayload[protocol.AgentUpdateControl](env)
-	if err != nil || (p.Action != "check" && p.Action != "restart" && p.Action != "cancel_restart") {
+	if err != nil || (p.Action != "check" && p.Action != "restart" && p.Action != "cancel_restart" && p.Action != "restart_now") {
 		a.replyError(env, errors.New("更新操作无效"))
 		return
 	}
 	if a.OnRestart == nil || Version == "dev" {
 		a.replyError(env, errors.New("需要使用正式版 supervise 服务运行 Agent"))
+		return
+	}
+	if a.drainingForUpdate() && p.Action != "restart_now" {
+		a.replyError(env, errors.New("已开始关闭任务，请核对状态或重新确认立即重启"))
+		return
+	}
+	if p.Action == "restart_now" && (a.OnImmediateRestart == nil || !p.Confirmed || p.OwnerID == "" || p.InstanceStartedAt <= 0 || p.InstanceStartedAt != a.startedAt.UnixMilli()) {
+		a.replyError(env, errors.New("立即重启需要当前实例的明确确认和新版受管 Agent"))
 		return
 	}
 	if p.Action == "cancel_restart" {
@@ -237,6 +266,16 @@ func (a *Agent) onUpdateControl(env *protocol.Envelope) {
 	if p.Action == "restart" {
 		a.updateIntentMu.Lock()
 		a.restartRequested.Store(true)
+		a.updateIntentMu.Unlock()
+	}
+	if p.Action == "restart_now" {
+		a.updateIntentMu.Lock()
+		if a.immediateRestart != nil || a.currentUpdateStatus().State == "switching" {
+			a.updateIntentMu.Unlock()
+			return // A duplicate acknowledgement must not repeat destructive work.
+		}
+		a.immediateRestart = &p
+		a.immediateRequested.Store(true)
 		a.updateIntentMu.Unlock()
 	}
 	if p.Action == "cancel_restart" {
