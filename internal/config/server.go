@@ -89,21 +89,22 @@ func (c *Config) Warnings() []string { return c.warnings }
 // 默认值的选择标准：**在一台干净的开发机上能直接 `codegate-server serve` 跑起来**。
 func Defaults() *Config {
 	return &Config{
-		Listen:            ":8080",
-		DBPath:            DefaultDBPath(),
-		AccessTokenTTL:    15 * time.Minute,
-		RefreshTokenTTL:   30 * 24 * time.Hour,
-		AllowSignup:       false,
-		PairingCodeTTL:    10 * time.Minute,
-		HeartbeatInterval: 20 * time.Second,
-		MaxSessions:       20,
-		MaxFrameSize:      64 * 1024,
-		MaxBufferSize:     1024 * 1024,
-		MaxMessageSize:    64 * 1024,
-		SendQueueSize:     256,
-		WriteTimeout:      10 * time.Second,
-		PongTimeout:       60 * time.Second,
-		LogLevel:          "info",
+		DisableDSHMobileUI: true, // Native DSH layout first; compatibility is opt-in.
+		Listen:             ":8080",
+		DBPath:             DefaultDBPath(),
+		AccessTokenTTL:     15 * time.Minute,
+		RefreshTokenTTL:    30 * 24 * time.Hour,
+		AllowSignup:        false,
+		PairingCodeTTL:     10 * time.Minute,
+		HeartbeatInterval:  20 * time.Second,
+		MaxSessions:        20,
+		MaxFrameSize:       64 * 1024,
+		MaxBufferSize:      1024 * 1024,
+		MaxMessageSize:     64 * 1024,
+		SendQueueSize:      256,
+		WriteTimeout:       10 * time.Second,
+		PongTimeout:        60 * time.Second,
+		LogLevel:           "info",
 	}
 }
 

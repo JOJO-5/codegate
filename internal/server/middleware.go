@@ -50,6 +50,12 @@ func (s *Server) withRecover(next http.Handler) http.Handler {
 			if rec == nil {
 				return
 			}
+			// Let net/http abort an incomplete response. Swallowing this sentinel
+			// can finish a truncated chunked stream as though it completed normally.
+			// It is a transport signal, so it must not raise a handler-panic alarm.
+			if errors.Is(anyErr(rec), http.ErrAbortHandler) {
+				panic(http.ErrAbortHandler)
+			}
 			// ★ 打完整堆栈。panic 的堆栈是唯一能定位问题的线索，
 			// 只记一句 "panic: nil pointer" 等于没记。
 			s.log.Error("HTTP handler panic",
@@ -58,11 +64,6 @@ func (s *Server) withRecover(next http.Handler) http.Handler {
 				"path", r.URL.Path,
 				"stack", string(debug.Stack()),
 			)
-			// http.ErrAbortHandler 是 net/http 用来「静默中止连接」的哨兵，
-			// 不该当成 bug 处理，也不该再写响应。
-			if errors.Is(anyErr(rec), http.ErrAbortHandler) {
-				return
-			}
 			writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		}()
 		next.ServeHTTP(w, r)

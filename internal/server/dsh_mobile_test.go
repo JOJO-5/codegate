@@ -51,6 +51,7 @@ func TestDSHMobileCompatibilityIsPinnedAndReversible(t *testing.T) {
 
 func TestDSHMobileDoesNotWeakenCSPOrCorruptNonHTML(t *testing.T) {
 	s := &Server{cfg: config.Defaults()}
+	s.cfg.DisableDSHMobileUI = false
 	r := &http.Response{Header: make(http.Header), Body: io.NopCloser(strings.NewReader(mobileFixtureHTML)), StatusCode: 200}
 	r.Header.Set("Content-Type", "text/html")
 	r.Header.Set("Content-Security-Policy", "default-src 'none'")
@@ -74,6 +75,7 @@ func TestDSHMobileDoesNotWeakenCSPOrCorruptNonHTML(t *testing.T) {
 
 func TestDSHMobileAssetsRequireNormalProxyAuthorization(t *testing.T) {
 	e, _, id, ac := dshOperationFixture(t)
+	e.srv.cfg.DisableDSHMobileUI = false
 	e.srv.web.simpleDevice = id
 	for _, name := range []string{"v1.js", "v1.css"} {
 		r := httptest.NewRequest("GET", "https://codegate.example.test:8443/"+strings.TrimPrefix(dshMobilePrefix, "/")+name, nil)
@@ -94,6 +96,7 @@ func TestDSHMobileAssetsRequireNormalProxyAuthorization(t *testing.T) {
 
 func TestDSHMobileOversizedHTMLRemainsReadable(t *testing.T) {
 	s := &Server{cfg: config.Defaults()}
+	s.cfg.DisableDSHMobileUI = false
 	html := strings.Repeat("a", (2<<20)+64)
 	r := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(html)), ContentLength: int64(len(html))}
 	r.Header.Set("Content-Type", "text/html")

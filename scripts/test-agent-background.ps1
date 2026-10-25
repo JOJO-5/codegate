@@ -1,4 +1,5 @@
 ﻿#Requires -Version 5.1
+param([switch]$ProcessOnly, [string]$CodexPath)
 $ErrorActionPreference = 'Stop'
 $compiler = @((Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'), (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 $root = Join-Path ([IO.Path]::GetTempPath()) ('codegate-background-' + [Guid]::NewGuid().ToString('N'))
@@ -19,17 +20,35 @@ $fixtureSource = Join-Path $root 'fixture.cs'
 using System;using System.IO;using System.Diagnostics;using System.Runtime.InteropServices;using System.Threading;using System.Text;
 class Fixture {
  [DllImport("kernel32.dll")]static extern IntPtr GetConsoleWindow();
+ [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]struct Startup {public int cb;public string reserved,desktop,title;public uint x,y,xSize,ySize,xChars,yChars,fill,flags;public ushort show,reserved2;public IntPtr reservedPtr,input,output,error;}
+ [StructLayout(LayoutKind.Sequential)]struct ProcessInfo {public IntPtr process,thread;public uint pid,tid;}
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern bool CreateProcess(string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref Startup startup,out ProcessInfo process);
+ [DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr handle);
  static int Main(string[] args) {
   Console.OutputEncoding=Encoding.UTF8;
   if(args[0]=="doctor")return 0;
   if(args[0]=="version"){Console.WriteLine("codegate-agent v0.1.26");return 0;}
-  bool child=args[0]=="child";string config=args[child?1:2];
+  bool daemon=args[0]=="daemon";bool child=args[0]=="child"||daemon;string config=args[child?1:2];
+  if(daemon){File.WriteAllText(config+".daemonconsole",Process.GetCurrentProcess().Id+":"+GetConsoleWindow().ToInt64());Thread.Sleep(60000);return 0;}
   File.WriteAllText(config+(child?".childconsole":".parent"),Process.GetCurrentProcess().Id+":"+GetConsoleWindow().ToInt64());
   if(child){Thread.Sleep(60000);return 0;}
   Console.Error.WriteLine("fixture update fallback diagnostic 中文");
   if(config.EndsWith("exit.json"))return 23;
+  if(File.Exists(config+".codex")) {
+   var info=new ProcessStartInfo(File.ReadAllText(config+".codex"),"app-server daemon start"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+   info.EnvironmentVariables["CODEX_HOME"]=File.ReadAllText(config+".codexhome");
+   using(var codex=Process.Start(info)) {string output=codex.StandardOutput.ReadToEnd();string error=codex.StandardError.ReadToEnd();codex.WaitForExit();File.WriteAllText(config+".codexresult",codex.ExitCode+"\n"+output+error);}
+  }
   var p=Process.Start(new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName,"child \""+config+"\""){UseShellExecute=false,CreateNoWindow=true});
-  File.WriteAllText(config+".child",p.Id.ToString());Thread.Sleep(60000);return 0;
+  File.WriteAllText(config+".child",p.Id.ToString());
+  // Codex's managed daemon explicitly requests breakaway from its host Job.
+  // Normal children above must remain owned; only an explicit request may detach.
+  var startup=new Startup();startup.cb=Marshal.SizeOf(typeof(Startup));ProcessInfo detached;
+  string exe=Process.GetCurrentProcess().MainModule.FileName;
+  if(!CreateProcess(exe,new StringBuilder("\""+exe+"\" daemon \""+config+"\""),IntPtr.Zero,IntPtr.Zero,false,0x01000000|0x08000000,IntPtr.Zero,null,ref startup,out detached))
+   File.WriteAllText(config+".daemonerror",Marshal.GetLastWin32Error().ToString());
+  else {File.WriteAllText(config+".daemon",detached.pid.ToString());CloseHandle(detached.thread);CloseHandle(detached.process);}
+  Thread.Sleep(60000);return 0;
  }
 }
 '@ | Set-Content -LiteralPath $fixtureSource -Encoding UTF8
@@ -41,21 +60,44 @@ function Wait-Check([scriptblock]$Check, [int]$TimeoutSeconds = 12) {
  throw ('Background process condition timed out; caller line ' + (Get-PSCallStack)[1].ScriptLineNumber)
 }
 $hostProcess = $null
+$daemonProcesses = @()
+$codexConfig = $null
+$codexHome = $null
 try {
  $config = Join-Path $root '配置 & long.json'; '{}' | Set-Content -LiteralPath $config
- $hostProcess = Start-Process -FilePath $launcher -ArgumentList @('-config', ('"' + $config + '"')) -PassThru
- Wait-Check { Test-Path -LiteralPath ($config + '.childconsole') }
+ if ($CodexPath) {
+  $CodexPath = (Resolve-Path -LiteralPath $CodexPath).ProviderPath
+  $codexConfig = $config
+  # Keep the control socket below Windows' Unix socket path length limit.
+  $codexHome = Join-Path ([IO.Path]::GetTempPath()) ('cg-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
+  [IO.File]::WriteAllText($config + '.codex', $CodexPath)
+  [IO.File]::WriteAllText($config + '.codexhome', $codexHome)
+  New-Item -ItemType Directory -Path $codexHome | Out-Null
+ }
+ $hostProcess = Start-Process -FilePath $launcher -ArgumentList @('-config', ('"' + $config + '"')) -WindowStyle Hidden -PassThru
+ Wait-Check { Test-Path -LiteralPath ($config + '.childconsole') } -TimeoutSeconds 45
  $parent = (Get-Content -LiteralPath ($config + '.parent') -Raw).Split(':'); $child = (Get-Content -LiteralPath ($config + '.childconsole') -Raw).Split(':')
  if ($parent[1] -ne '0' -or $child[1] -ne '0') { throw 'Agent or descendant allocated a console' }
  $log = Join-Path $bin '..\logs\agent-background.log'
  Wait-Check { (Test-Path -LiteralPath $log) -and ((Get-Content -LiteralPath $log -Raw -Encoding UTF8) -match 'diagnostic 中文') }
+ if ($CodexPath) {
+  $codexResult = Get-Content -LiteralPath ($config + '.codexresult') -Raw -Encoding UTF8
+  if (-not $codexResult.StartsWith("0`n")) { throw ('Real Codex daemon start inside background launcher failed: ' + $codexResult) }
+ }
+ Wait-Check { (Test-Path -LiteralPath ($config + '.daemonconsole')) -or (Test-Path -LiteralPath ($config + '.daemonerror')) }
+ if (Test-Path -LiteralPath ($config + '.daemonerror')) { throw ('Explicit daemon breakaway rejected, Win32 error ' + (Get-Content -LiteralPath ($config + '.daemonerror') -Raw)) }
+ $daemon = (Get-Content -LiteralPath ($config + '.daemonconsole') -Raw).Split(':')
+ $daemonProcesses += [int]$daemon[0]
+ if ($daemon[1] -ne '0') { throw 'Detached daemon allocated a console' }
  Stop-Process -Id $hostProcess.Id -Force
  Wait-Check { $null -eq (Get-Process -Id ([int]$parent[0]) -ErrorAction SilentlyContinue) -and $null -eq (Get-Process -Id ([int]$child[0]) -ErrorAction SilentlyContinue) }
+ if ($null -eq (Get-Process -Id ([int]$daemon[0]) -ErrorAction SilentlyContinue)) { throw 'Explicitly detached daemon died with the launcher' }
  $hostProcess = $null
  $config = Join-Path $root 'exit.json'; '{}' | Set-Content -LiteralPath $config
- $hostProcess = Start-Process -FilePath $launcher -ArgumentList @('-config', ('"' + $config + '"')) -PassThru
+ $hostProcess = Start-Process -FilePath $launcher -ArgumentList @('-config', ('"' + $config + '"')) -WindowStyle Hidden -PassThru
  if (-not $hostProcess.WaitForExit(12000)) { throw 'Launcher failed to finish with Agent' }
  if ($hostProcess.ExitCode -ne 23) { throw "Agent exit code not preserved: $($hostProcess.ExitCode)" }
+ if ($ProcessOnly) { Write-Host 'PASS no-console launch; normal children owned; explicit daemon breakaway survives host exit; UTF-8 diagnostics; exit status preserved'; return }
  # Exercise the actual repair command against an owned standard legacy task.
  # S4U avoids a password prompt in CI; repair must preserve
  # that logon mode and its trigger while changing only the executable action.
@@ -77,6 +119,8 @@ try {
   $repaired = Get-ScheduledTask -TaskName 'CodeGate Agent' -TaskPath '\'
   if ($repaired.Principal.LogonType -ne 'S4U' -or $repaired.Triggers.Count -ne 1 -or [IO.Path]::GetFileName($repaired.Actions.Execute) -ne 'codegate-agent-background.exe') { throw 'Repair changed principal/trigger or kept console entry' }
   Wait-Check { Test-Path -LiteralPath ($repairConfig + '.childconsole') }
+  Wait-Check { Test-Path -LiteralPath ($repairConfig + '.daemon') }
+  $daemonProcesses += [int](Get-Content -LiteralPath ($repairConfig + '.daemon') -Raw)
   $parent=(Get-Content -LiteralPath ($repairConfig+'.parent') -Raw).Split(':');$child=(Get-Content -LiteralPath ($repairConfig+'.childconsole') -Raw).Split(':')
   if ($parent[1] -ne '0' -or $child[1] -ne '0') { throw 'Repaired scheduled task allocated a console' }
   Stop-ScheduledTask -InputObject $repaired
@@ -130,6 +174,30 @@ try {
  }
  Write-Host 'PASS GUI subsystem; no console in Agent/descendant; UTF-8 diagnostics; paths with spaces/Chinese/&; root termination kills owned tree; exit status preserved'
 } finally {
- if ($null -ne $hostProcess -and -not $hostProcess.HasExited) { Stop-Process -Id $hostProcess.Id -Force }
+ if ($null -ne $hostProcess -and -not $hostProcess.HasExited) { Stop-Process -Id $hostProcess.Id -Force; $hostProcess.WaitForExit() }
+ # Collect detached fixture children even when an earlier assertion failed.
+ foreach ($pidFile in (Get-ChildItem -LiteralPath $root -Filter '*.daemon' -File)) { $daemonProcesses += [int](Get-Content -LiteralPath $pidFile.FullName -Raw) }
+ foreach ($daemonPID in ($daemonProcesses | Select-Object -Unique)) {
+  $daemonProcess = Get-Process -Id $daemonPID -ErrorAction SilentlyContinue
+  if ($daemonProcess -and $daemonProcess.Path -and $daemonProcess.Path.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -and $daemonProcess.Name -eq 'codegate-agent') { $daemonProcess.Kill(); $daemonProcess.WaitForExit() }
+ }
+ if ($codexConfig) {
+  $stopInfo = [Diagnostics.ProcessStartInfo]::new($CodexPath, 'app-server daemon stop')
+  $stopInfo.UseShellExecute = $false; $stopInfo.CreateNoWindow = $true
+  $stopInfo.EnvironmentVariables['CODEX_HOME'] = $codexHome
+  $stop = [Diagnostics.Process]::Start($stopInfo)
+  if (-not $stop.WaitForExit(30000)) { $stop.Kill(); throw 'Isolated Codex daemon cleanup timed out' }
+  if ($stop.ExitCode -ne 0) { throw 'Isolated Codex daemon cleanup failed' }
+  $stop.Dispose()
+  if (-not ([IO.Path]::GetFullPath($codexHome)).StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) { throw 'Codex fixture cleanup path escaped temp directory' }
+  # Codex stop may retain its package updater. It belongs only to this test's
+  # isolated installation; never match a production daemon by process name.
+  foreach ($owned in (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($codexHome + '\', [StringComparison]::OrdinalIgnoreCase) })) {
+   $ownedProcess = Get-Process -Id $owned.ProcessId -ErrorAction SilentlyContinue
+   if ($ownedProcess) { $ownedProcess.Kill(); $ownedProcess.WaitForExit() }
+  }
+  Remove-Item -LiteralPath $codexHome -Recurse -Force
+ }
+ if (-not ([IO.Path]::GetFullPath($root)).StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture cleanup path escaped temp directory' }
  Remove-Item -LiteralPath $root -Recurse -Force
 }

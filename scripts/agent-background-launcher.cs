@@ -74,7 +74,11 @@ internal static class AgentBackgroundLauncher {
             LogPath=Path.Combine(logs,"agent-background.log");
             if(!File.Exists(agent)) {Log("Agent executable missing");return 4;}
             job=CreateJobObject(IntPtr.Zero,null);Check(job!=IntPtr.Zero);
-            Limits limits=new Limits();limits.Basic.Flags=0x2000; // KILL_ON_JOB_CLOSE
+            // Ordinary Agent/PTY descendants still die with this host. Shared
+            // CLI services such as Codex's managed daemon explicitly request
+            // CREATE_BREAKAWAY_FROM_JOB so they can outlive a terminal/Agent.
+            // Allow that opt-in without silently detaching normal children.
+            Limits limits=new Limits();limits.Basic.Flags=0x2000|0x0800; // KILL_ON_JOB_CLOSE | BREAKAWAY_OK
             Check(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(Limits))));
             Security security=new Security();security.Length=Marshal.SizeOf(typeof(Security));security.Inherit=true;
             Check(CreatePipe(out outputRead,out outputWrite,ref security,0));Check(SetHandleInformation(outputRead,1,0));
@@ -83,8 +87,8 @@ internal static class AgentBackgroundLauncher {
             Startup startup=new Startup();startup.cb=Marshal.SizeOf(typeof(Startup));startup.Flags=0x100;startup.Input=input;startup.Output=outputWrite;startup.Error=errorWrite;
             string command="\""+agent+"\" supervise -config \""+args[1]+"\"";
             Check(CreateProcess(agent,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,CREATE_SUSPENDED|CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT,IntPtr.Zero,directory,ref startup,out child));
-            // Assign while suspended: no descendant can escape ownership even if
-            // Task Scheduler stops this host immediately after process creation.
+            // Assign while suspended: normal descendants are owned before the
+            // Agent runs, even if Task Scheduler immediately stops this host.
             Check(AssignProcessToJobObject(job,child.Process));
             Check(ResumeThread(child.Thread)!=0xffffffff);Close(ref child.Thread);
             Close(ref outputWrite);Close(ref errorWrite);Close(ref input);
