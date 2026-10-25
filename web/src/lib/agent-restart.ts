@@ -67,6 +67,8 @@ export function createImmediateRestart(deps: Dependencies) {
       else if (update.state === 'switching') { phase.value = 'pending'; message.value = '任务已停止，正在等待新 Agent 上线。' }
       return
     }
+    // Observed Agent state outranks a delayed HTTP acknowledgement or error.
+    generation++; busy.value = false; dialog.value = false
     intent = null; deps.write(null)
   }
   return { dialog, busy, message, phase, open, close, confirm, observe, dispose: () => { generation++ } }

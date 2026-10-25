@@ -40,4 +40,22 @@ record={instance:103,version:'v1.0.0',target:'v1.1.0',checkedAt:0}
 controller=createImmediateRestart(deps)
 controller.observe({...status,agent_version:'v1.0.0',update:{...status.update,instance_started_at:104}})
 assert.equal(controller.phase.value,'error','restart into old version must not be called an upgrade success')
+record=null
+status={online:true,agent_version:'v1.0.0',update:{managed:true,can_restart_now:true,instance_started_at:200,state:'current',checked_at:1}}
+controller=createImmediateRestart(deps);controller.open()
+const delayed=controller.confirm()
+controller.observe({...status,agent_version:'v1.0.1',update:{...status.update,instance_started_at:201}})
+assert.equal(controller.phase.value,'complete')
+resolve();await delayed
+assert.equal(controller.phase.value,'complete','late HTTP acknowledgement cannot overwrite observed restart completion')
+assert.equal(controller.busy.value,false)
+assert.equal(controller.dialog.value,false)
+record=null
+let rejectLate
+controller=createImmediateRestart({...deps,submit:()=>new Promise((_,reject)=>rejectLate=reject)})
+controller.open();const rejected=controller.confirm()
+controller.observe({...status,update:{...status.update,state:'error',checked_at:2,detail:'停止超时，请核对'}})
+rejectLate(Error('response lost'));await rejected
+assert.equal(controller.phase.value,'error','late HTTP failure cannot overwrite observed Agent failure')
+assert.equal(controller.message.value,'停止超时，请核对')
 console.log('Agent immediate restart confirmation, stale instance, duplicate, uncertain dispatch and refresh recovery passed')
