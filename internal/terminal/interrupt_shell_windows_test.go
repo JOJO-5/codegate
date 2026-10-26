@@ -59,7 +59,10 @@ func TestConPTYShellInterruptKeepsSession(t *testing.T) {
 				if output, ok := rd.waitFor(echo, 10*time.Second); !ok {
 					t.Fatalf("command not echoed: %s", sanitize(output))
 				}
-				if _, err := p.Write([]byte("\r")); err != nil {
+				// ConPTY requests win32-input-mode. Submit an explicit VK_RETURN
+				// down/up pair so this signal probe does not depend on the host's
+				// layout-dependent VT character-to-key translation.
+				if _, err := p.Write([]byte("\x1b[13;28;13;1;0;1_\x1b[13;28;13;0;0;1_")); err != nil {
 					t.Fatal(err)
 				}
 			}

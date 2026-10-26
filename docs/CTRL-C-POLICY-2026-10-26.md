@@ -14,7 +14,7 @@ v0.1.45 的实现与验收记录。按用户要求，Codex、Claude Code、OpenC
 
 三项均在当前 Windows 11 开发机（10.0.26200.9711）通过，原有发送 0x03 的后端路径无需修改。探针只管理它创建的进程树，不停止用户会话。未将这些结果扩大为所有 Windows 版本或所有控制台程序都已验证；本机没有 pwsh 7，本轮未验证它的实际行为。
 
-发布前 Windows CI 出现提示符已显示、批量写入的命令却未执行的情况；卸载 PSReadLine 后仍复现，因此不能将其归因于该模块。自动探针保留默认行编辑，改为先核对命令回显、再单独发送回车，避免把提示符显示等同于输入已就绪；这不代表跨版本的批量输入兼容性已验收，也不修改用户的 Shell 配置。
+发布前 Windows CI 出现命令已回显但普通 VT 回车未提交的情况；卸载 PSReadLine 或等待回显后单独提交仍复现，不能将其归因于该模块或时序。自动探针保留默认行编辑，使用 ConPTY 请求的 [Win32 输入按键格式](https://github.com/microsoft/terminal/blob/main/src/terminal/input/terminalInput.cpp) 明确发送 VK_RETURN 按下/抬起，仅用于驱动中断与 Shell 生命周期测试；不修改产品输入或用户配置。普通 VT 回车的跨 Windows 环境兼容性未据此验收。
 
 微软说明 processed-input 模式决定系统如何处理 Ctrl+C，不能仅凭类别推断最终程序行为：[Low-Level Console Modes](https://learn.microsoft.com/en-us/windows/console/low-level-console-modes)。历史调查保留在原文并标注修订，当前前端策略独立于旧的 `CommandKind.Interruptible` 辅助值。
 
