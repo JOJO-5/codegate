@@ -18,6 +18,7 @@
 - Web 会话、上传/粘贴及 UX 回归，类型检查与生产构建；先用失败测试证明迟到剪贴板覆盖、输入框绕过保护和未附着发送等问题，再修复。
 - 隔离浏览器对真实 Vue、HTTP/WebSocket 路径完成 92 项检查，覆盖八种视口、深浅主题、按键字节、草稿刷新、只读/断线恢复、不自动重放、剪贴板失败/取消和焦点。模拟设备与剪贴板，不调用真实 Agent/模型，不读取真实剪贴板。
 - 本机真实 ConPTY 回归验证 cmd、Windows PowerShell 5.1 的持续 ping，以及 PowerShell Start-Sleep 中断后仍能继续执行命令。后端无需调整；历史 Windows Shell 禁用结论已标注修订。
+- Windows CI 的自动 Shell 生命周期探针使用 ConsoleHost 内置行编辑，避免不同 PSReadLine 版本把测试批量输入留在编辑区；不修改用户环境，PSReadLine 的跨版本批量输入兼容性仍未验收。
 - 未验收手机实机软键盘、Safari、安全区和读屏全流程；本机未安装 pwsh 7，其他 Windows 版本和真实编程模型的取消语义未据此宣称通过。
 
 详见 [手机终端验收记录](MOBILE-TERMINAL-2026-10-26.md) 和 [Ctrl+C 策略及实测](CTRL-C-POLICY-2026-10-26.md)。

@@ -31,7 +31,11 @@ func TestConPTYShellInterruptKeepsSession(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		args := []string{"-NoLogo", "-NoProfile", "-NoExit", "-Command", "function prompt { 'CG_PROMPT> ' }"}
+		// This is a signal/lifecycle probe, not a terminal-emulator driver for
+		// PSReadLine. Its line editor differs across installed versions and can
+		// leave bulk-written test commands unsubmitted on Windows CI. Use the
+		// real interactive ConsoleHost with its built-in line editing instead.
+		args := []string{"-NoLogo", "-NoProfile", "-NoExit", "-Command", "Remove-Module PSReadLine -ErrorAction SilentlyContinue; function prompt { 'CG_PROMPT> ' }"}
 		tests = append(tests,
 			scenario{name + "_native", command, args, "ping -t 127.0.0.1\r", "TTL=", "Write-Output ('CG_'+'AFTER')\r"},
 			scenario{name + "_builtin", command, args, "Write-Output ('CG_'+'RUNNING'); Start-Sleep -Seconds 60\r", "CG_RUNNING", "Write-Output ('CG_'+'AFTER')\r"},
