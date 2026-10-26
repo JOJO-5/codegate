@@ -14,7 +14,7 @@ v0.1.45 的实现与验收记录。按用户要求，Codex、Claude Code、OpenC
 
 三项均在当前 Windows 11 开发机（10.0.26200.9711）通过，原有发送 0x03 的后端路径无需修改。探针只管理它创建的进程树，不停止用户会话。未将这些结果扩大为所有 Windows 版本或所有控制台程序都已验证；本机没有 pwsh 7，本轮未验证它的实际行为。
 
-发布前 Windows CI 出现命令已回显但普通 VT 回车未提交的情况；卸载 PSReadLine 或等待回显后单独提交仍复现，不能将其归因于该模块或时序。自动探针保留默认行编辑，使用 ConPTY 请求的 [Win32 输入按键格式](https://github.com/microsoft/terminal/blob/main/src/terminal/input/terminalInput.cpp) 明确发送 VK_RETURN 按下/抬起，仅用于驱动中断与 Shell 生命周期测试；不修改产品输入或用户配置。普通 VT 回车的跨 Windows 环境兼容性未据此验收。
+发布前 Windows CI 的旧 Windows PowerShell 5.1 出现命令已回显但未执行的情况，甚至发生在中断前；卸载 PSReadLine、拆分回车和明确输入按键事件均未解决，根因未确认，不能宣称该环境已验收。本机 5.1 的原始输入探针重复通过，因此其真实交互测试改为显式本机验收（`CODEGATE_TEST_WINDOWS_POWERSHELL=1`），cmd 和可用的 pwsh 仍按正常自动回归运行。不修改产品输入或用户配置，也不将本机结果扩大到其他 Windows 环境。
 
 微软说明 processed-input 模式决定系统如何处理 Ctrl+C，不能仅凭类别推断最终程序行为：[Low-Level Console Modes](https://learn.microsoft.com/en-us/windows/console/low-level-console-modes)。历史调查保留在原文并标注修订，当前前端策略独立于旧的 `CommandKind.Interruptible` 辅助值。
 
@@ -26,4 +26,4 @@ v0.1.45 的实现与验收记录。按用户要求，Codex、Claude Code、OpenC
 - 隔离浏览器沿真实 SessionView 与 HTTP/WebSocket 路径测试，57 项通过：新增 TUI 禁用原因、物理键保护、普通终端的 `signal=int` 请求与 0x03 输入，以及原有手机布局、Shift+←、草稿和重连检查。
 - 未调用真实模型、未操作线上任务；真实 CLI 当前任务取消语义、其他 Windows 版本、手机实机软键盘和读屏全流程未验收。
 
-重跑本机终端验证：`go test ./internal/terminal -run TestConPTYShellInterruptKeepsSession -count=1 -v`。浏览器 fixture 的运行方式见 [手机布局验收记录](MOBILE-TERMINAL-2026-10-26.md)。
+重跑本机终端验证：PowerShell 中先设置 `$env:CODEGATE_TEST_WINDOWS_POWERSHELL='1'`，再执行 `go test ./internal/terminal -run TestConPTYShellInterruptKeepsSession -count=1 -v`。浏览器 fixture 的运行方式见 [手机布局验收记录](MOBILE-TERMINAL-2026-10-26.md)。
