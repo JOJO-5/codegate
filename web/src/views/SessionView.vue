@@ -232,9 +232,17 @@ function openSwitcher(): void {
   showSessionPanel.value = true
   void nextTick(() => switcher.value?.querySelector<HTMLElement>('.term__session-link--active, .term__session-link')?.focus())
 }
+function selectSession(id: string): void {
+  closeSwitcher()
+  if (id !== sessionId.value) void router.push({ name: 'session', params: { id } })
+}
 const showExtraKeys = ref(false)
 const pasteOpen = ref(false)
 const pasteDraft = ref('')
+const pastePreview = ref<HTMLTextAreaElement | null>(null)
+const clipboardReading = ref(false)
+let clipboardReadEpoch = 0
+let pasteOpener: HTMLElement | null = null
 const clipboardStatus = ref('')
 const copyFallback = ref('')
 const textSnapshot = ref<TerminalTextSnapshot | null>(null)
@@ -247,17 +255,49 @@ function openTextReader(): void {
   term.blur()
   textSnapshot.value = terminalTextSnapshot(term.buffer.active)
 }
-async function readClipboard(): Promise<void> {
-  pasteOpen.value = true
-  pasteDraft.value = ''
+function cancelClipboardRead(): void {
+  clipboardReadEpoch++
+  clipboardReading.value = false
+}
+watch(pasteDraft, () => {
+  if (clipboardReading.value) cancelClipboardRead()
+}, { flush: 'sync' })
+function closePaste(): void {
+  cancelClipboardRead()
+  pasteOpen.value = false
   clipboardStatus.value = ''
-  try { pasteDraft.value = await navigator.clipboard.readText() }
-  catch { clipboardStatus.value = '浏览器未允许读取剪贴板，请在下方输入框手动粘贴。' }
+  void nextTick(() => { if (!disposed && !pasteOpen.value) pasteOpener?.focus() })
+}
+async function readClipboard(): Promise<void> {
+  if (disposed || clipboardReading.value) return
+  if (!pasteOpen.value) pasteOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  pasteOpen.value = true
+  clipboardStatus.value = ''
+  void nextTick(() => { if (!disposed && pasteOpen.value) pastePreview.value?.focus() })
+  // Reopening a preview never discards text that has not been sent.
+  if (pasteDraft.value) return
+  const epoch = ++clipboardReadEpoch
+  clipboardReading.value = true
+  try {
+    const text = await navigator.clipboard.readText()
+    if (disposed || epoch !== clipboardReadEpoch) return
+    clipboardReading.value = false
+    pasteDraft.value = text
+    if (!text) clipboardStatus.value = '剪贴板中没有文字，请在下方输入框手动粘贴。'
+  } catch {
+    if (!disposed && epoch === clipboardReadEpoch) clipboardStatus.value = '浏览器未允许读取剪贴板，请在下方输入框手动粘贴。'
+  } finally {
+    if (!disposed && epoch === clipboardReadEpoch) clipboardReading.value = false
+  }
 }
 function pasteToTerminal(): void {
-  if (!term || role.value !== 'controller' || !isLive.value || !conn.isOpen || !pasteDraft.value) return
+  if (!term || !terminalInputReady.value || !pasteDraft.value) return
+  if (programmingTui.value && pasteDraft.value.includes('\x03')) {
+    errorText.value = '粘贴内容含 Ctrl+C 控制字符，请移除后重试。'
+    return
+  }
   term.paste(pasteDraft.value)
-  pasteOpen.value = false
+  closePaste()
   pasteDraft.value = ''
   clipboardStatus.value = '已粘贴到终端。'
 }
@@ -285,8 +325,8 @@ function syncViewport(): void {
   scheduleFit()
 }
 function submitDraft(event?: KeyboardEvent): void {
-  if (event?.isComposing || !mobileDraft.value || role.value !== 'controller' || !isLive.value || !conn.isOpen) return
-  sendText(mobileDraft.value + '\r')
+  if (event?.isComposing || !mobileDraft.value) return
+  if (!onTerminalData(mobileDraft.value + '\r')) return
   mobileDraft.value = ''
   composer.value?.focus()
 }
@@ -539,15 +579,16 @@ const searchOpen = ref(false)
 const searchTerm = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 
-/** 当前会话是否属于 shell 类（Ctrl+C 无效，§6.5）。 */
+// Use executable identity/bindings, never a user-editable session title.
+const programmingTui = computed(() => {
+  const s = summary.value
+  return !!s && (!!nativeCLI(s.command, s.args) || ['codex', 'claude', 'opencode', 'dsh'].includes(s.recovery?.command_id ?? ''))
+})
 const kind = computed(() => {
   const s = summary.value
   if (s === null) return 'tui' as const
-  // 用命令行 + 名字一起判断：Agent 可能给的是 `cmd.exe /k`，
-  // 也可能只回一个名字。任一命中 shell 就按 shell 处理。
-  const byCmd = classifyCommand(s.command ?? '')
-  if (byCmd === 'shell') return 'shell' as const
-  return classifyCommand(s.name ?? '')
+  if (programmingTui.value) return 'tui' as const
+  return classifyCommand((s.command ?? '').replace(/^"|"$/g, '').split(/[\\/]/).pop() ?? '')
 })
 const isShell = computed(() => kind.value === 'shell')
 const windowsShell = computed(() => {
@@ -605,6 +646,20 @@ function sendBytes(bytes: Uint8Array): void {
 
 function sendText(text: string): void {
   sendBytes(encoder.encode(text))
+}
+
+const terminalInputReady = computed(() => role.value === 'controller' && conn.isOpen && isLive.value && attachmentReady.value)
+function sendTerminalKey(text: string): void {
+  onTerminalData(text)
+}
+function onTerminalData(data: string): boolean {
+  if (!terminalInputReady.value) return false
+  if (programmingTui.value && data.includes('\x03')) {
+    errorText.value = '已拦截 Ctrl+C，避免编程 TUI 误退；请使用程序内的取消操作。'
+    return false
+  }
+  sendText(data)
+  return true
 }
 
 function sendResize(): void {
@@ -803,7 +858,6 @@ async function attach(since: number, queueFullReplay = false): Promise<void> {
 // 动作
 // ---------------------------------------------------------------------------
 
-/** Ctrl+C：只有 tui 类命令可用（§6.5）。 */
 function fillTaskTemplate(event: Event): void {
   const select = event.target as HTMLSelectElement
   const task = TASK_TEMPLATES.find(item => item.id === select.value)
@@ -815,15 +869,16 @@ function fillTaskTemplate(event: Event): void {
 }
 
 function sendInterrupt(): void {
-  if (windowsShell.value || role.value !== 'controller' || !isLive.value) return
+  if (programmingTui.value || !terminalInputReady.value) return
+  const epoch = attachmentEpoch
   void conn.request(
     MessageType.SessionSignal,
     { session_id: sessionId.value, signal: 'int' },
     sessionId.value,
-  ).catch((e) => { errorText.value = humanizeError(e) })
+  ).catch((e) => { if (!disposed && epoch === attachmentEpoch) errorText.value = humanizeError(e) })
 }
 
-/** 「终止会话」：shell 类命令的唯一可靠停止方式。 */
+/** Close the entire session, separately from interrupting the current command. */
 async function terminate(): Promise<void> {
   exiting.value = true
   errorText.value = null
@@ -966,15 +1021,7 @@ onMounted(async () => {
   sentRows = t.rows
 
   // ---- 输入 ----
-  t.onData((data) => {
-    // Windows ConPTY treats Ctrl+C in a cooked shell as EOF, which can close
-    // the shell. Suppress it there; on Unix and in TUIs, keep native input.
-    if (windowsShell.value && data.includes('\x03')) {
-      errorText.value = 'Windows shell 无法安全接收 Ctrl+C；请在 CLI 内使用自己的停止命令。会话仍在运行。'
-      return
-    }
-    if (role.value === 'controller' && isLive.value) sendText(data)
-  })
+  t.onData(onTerminalData)
   // 8-bit 输入（鼠标协议、某些终端的粘贴）走这条
   t.onBinary((data) => {
     if (role.value !== 'controller' || !isLive.value) return
@@ -1029,6 +1076,7 @@ onMounted(async () => {
 onUnmounted(() => {
   disposed = true
   contextEpoch++
+  cancelClipboardRead()
   cancelTerminalTouch()
   terminalReady.value = false
   attachmentEpoch++
@@ -1118,12 +1166,13 @@ onUnmounted(() => {
     </details>
     <!-- ---- 终端 ---- -->
     <div class="term__workspace">
+      <button v-if="showSessionPanel" class="term__switcher-backdrop" type="button" tabindex="-1" aria-label="关闭会话切换" @click="closeSwitcher" />
       <aside id="session-switcher" ref="switcher" class="term__sidebar" :class="{ 'term__sidebar--open': showSessionPanel }" aria-label="会话工作区" @keydown.esc.stop.prevent="closeSwitcher">
-        <div class="term__sidebar-heading">工作区</div>
+        <div class="term__sidebar-top"><div class="term__sidebar-heading">工作区</div><button class="btn btn--ghost btn--sm term__switcher-close" type="button" aria-label="关闭会话切换" @click="closeSwitcher">关闭</button></div>
         <button class="btn btn--primary" type="button" :disabled="!sessionDevice" @click="router.push({ name: 'device', params: { id: sessionDevice }, query: { create: 'session', cwd: summary?.cwd } })">＋ 新对话</button>
         <div class="term__recent">
         <div class="term__sidebar-heading">最近会话</div>
-        <button v-for="item in siblingSessions" :key="item.session_id" class="term__session-link" :class="{ 'term__session-link--active': item.session_id === sessionId }" type="button" @click="router.push({ name: 'session', params: { id: item.session_id } })">
+        <button v-for="item in siblingSessions" :key="item.session_id" class="term__session-link" :class="{ 'term__session-link--active': item.session_id === sessionId }" type="button" @click="selectSession(item.session_id)">
           <span>{{ item.name || item.command || '会话' }}</span>
           <small>{{ statusLabel(item.status) }}</small>
         </button>
@@ -1185,6 +1234,9 @@ onUnmounted(() => {
           v-model="searchTerm"
           class="mono"
           type="text"
+          aria-label="查找终端输出"
+          name="terminal-search"
+          autocomplete="off"
           placeholder="在输出中查找…"
           autocapitalize="none"
           autocorrect="off"
@@ -1193,8 +1245,8 @@ onUnmounted(() => {
           @keydown.shift.enter.prevent="findPrev"
           @keydown.esc.prevent="closeSearch"
         />
-        <button class="btn btn--sm" type="button" :disabled="searchTerm === ''" @click="findPrev">↑</button>
-        <button class="btn btn--sm" type="button" :disabled="searchTerm === ''" @click="findNext">↓</button>
+        <button class="btn btn--sm" type="button" aria-label="查找上一个" :disabled="searchTerm === ''" @click="findPrev">↑</button>
+        <button class="btn btn--sm" type="button" aria-label="查找下一个" :disabled="searchTerm === ''" @click="findNext">↓</button>
         <button class="btn btn--ghost btn--sm" type="button" @click="closeSearch">关闭</button>
       </div>
 
@@ -1203,21 +1255,6 @@ onUnmounted(() => {
       </div>
       <div v-if="errorText !== null" class="notice notice--err small" style="margin-bottom: 6px">
         {{ errorText }}
-      </div>
-
-      <!--
-        Ctrl+C 的前端兜底（架构文档 §6.5）。
-
-        Windows 自带的 ConPTY **无法**把中断信号送达 cooked mode 的子进程
-        （cmd / PowerShell）—— 写 0x03 会被 conhost 拦成 stdin EOF，
-        命令不会中断。三条后端方案都实测失败，唯一可靠的路径是随包分发
-        conpty.dll，那不在 MVP 范围内。
-
-        所以这里的责任是**如实告知 + 给替代动作**：
-        绝不呈现一个点了没反应的按钮 —— 那比没有按钮更糟。
-      -->
-      <div v-if="windowsShell" class="notice notice--warn small" style="margin-bottom: 6px">
-        Windows shell 的 Ctrl+C 会被 ConPTY 当成 EOF，因此已屏蔽该按键以保护会话。需要结束整个会话时，请点击「关闭会话」。
       </div>
 
       <div v-if="confirmTerminate" class="notice notice--warn small" role="alert" style="margin-bottom: 6px">
@@ -1229,16 +1266,11 @@ onUnmounted(() => {
           <button class="btn btn--sm" type="button" :disabled="exiting" @click="confirmTerminate = false">取消</button>
         </div>
       </div>
-      <div v-if="role === 'controller' && isLive && !isShell" class="row task-templates">
-        <select aria-label="任务模板" :disabled="!conn.isOpen" value="" @change="fillTaskTemplate">
-          <option value="">任务模板…</option><option v-for="task in TASK_TEMPLATES" :key="task.id" :value="task.id">{{ task.label }}</option>
-        </select><span class="small dim">仅填入输入框，确认后发送</span>
-      </div>
       <SessionAttachments v-if="summary" v-show="attachmentsOpen" ref="attachments" :key="sessionId" :session-id="sessionId" :enabled="role === 'controller' && isLive && conn.isOpen" :native-images="nativeImages" @close="attachmentsOpen = false" @reference="referenceAttachments" @native="pasteNativeAttachment" />
       <div class="term__composer" v-if="role === 'controller' && isLive">
         <button class="btn btn--sm term__attach-button" type="button" aria-label="添加图片或文件" :aria-expanded="attachmentsOpen" :disabled="!conn.isOpen" @click="attachmentsOpen = !attachmentsOpen">附件</button>
         <textarea ref="composer" v-model="mobileDraft" rows="1" aria-label="输入终端文字" placeholder="输入命令或文字，点发送…" :inputmode="shortcutInput ? 'none' : 'text'" autocapitalize="none" autocorrect="off" spellcheck="false" @pointerdown="enableSoftKeyboard" @keydown="onComposerKeydown" />
-        <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !conn.isOpen" @click="submitDraft()">发送 ↵</button>
+        <button class="btn btn--primary" type="button" :disabled="!mobileDraft || !terminalInputReady" @click="submitDraft()">发送 ↵</button>
       </div>
       <p v-if="mobileDraft && !drafts.storageUnavailable" class="small dim" role="status">未发送草稿已保存在当前标签页，切换会话后可接着写；退出账号时清除。</p>
       <p v-if="mobileDraft && drafts.storageUnavailable" class="notice notice--warn small" role="status">浏览器无法持久保存草稿，当前仅保存在标签页内存中；刷新前请先复制。</p>
@@ -1247,25 +1279,39 @@ onUnmounted(() => {
       <div v-if="copyFallback" class="stack clipboard-panel"><textarea :value="copyFallback" readonly rows="4" aria-label="手动复制终端输出" /><button class="btn btn--sm" type="button" @click="copyFallback = ''">关闭</button></div>
       <div v-if="pasteOpen" class="stack clipboard-panel">
         <label for="paste-preview">确认要粘贴的文字</label>
-        <textarea id="paste-preview" v-model="pasteDraft" rows="4" autocapitalize="none" autocorrect="off" spellcheck="false" />
+        <p v-if="clipboardReading" class="small dim" role="status">正在读取剪贴板…</p>
+        <textarea id="paste-preview" ref="pastePreview" v-model="pasteDraft" name="paste-preview" autocomplete="off" rows="4" autocapitalize="none" autocorrect="off" spellcheck="false" @keydown.esc.stop.prevent="closePaste" />
         <p class="small dim">粘贴后不会额外发送回车；文本中的换行可能让 Shell 执行多条命令。</p>
-        <div class="row"><button class="btn btn--primary btn--sm" type="button" :disabled="!pasteDraft || role !== 'controller' || !conn.isOpen || !isLive" @click="pasteToTerminal">粘贴到终端</button><button class="btn btn--sm" type="button" @click="pasteOpen = false">取消</button></div>
+        <div class="row"><button class="btn btn--primary btn--sm" type="button" :disabled="!pasteDraft || !terminalInputReady" @click="pasteToTerminal">粘贴到终端</button><button v-if="!pasteDraft" class="btn btn--sm" type="button" :disabled="clipboardReading" @click="readClipboard">重新读取剪贴板</button><button class="btn btn--sm" type="button" @click="closePaste">取消</button></div>
       </div>
       <div class="row term__quick-keys" role="group" aria-label="终端常用按键" @pointerdown="prepareShortcutInput" @click.capture="prepareShortcutInput">
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送 Esc（返回或取消）" @pointerdown.prevent @click="sendText('\x1b')">Esc</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送 Tab（切换或补全）" @pointerdown.prevent @click="sendText('\t')">Tab</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" aria-label="方向键向上" title="发送方向键 ↑" @pointerdown.prevent @click="sendText('\x1b[A')">↑</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" aria-label="方向键向下" title="发送方向键 ↓" @pointerdown.prevent @click="sendText('\x1b[B')">↓</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" title="发送回车（确认选择）" @pointerdown.prevent @click="sendText('\r')">Enter</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" title="发送 Esc（返回或取消）" @pointerdown.prevent @click="sendTerminalKey('\x1b')">Esc</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" title="发送 Tab（切换或补全）" @pointerdown.prevent @click="sendTerminalKey('\t')">Tab</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" title="发送 Shift+←（Shift 加左方向键）" @pointerdown.prevent @click="sendTerminalKey('\x1b[1;2D')">Shift+←</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" aria-label="方向键向上" title="发送方向键 ↑" @pointerdown.prevent @click="sendTerminalKey('\x1b[A')">↑</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" aria-label="方向键向下" title="发送方向键 ↓" @pointerdown.prevent @click="sendTerminalKey('\x1b[B')">↓</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" title="发送回车（确认选择）" @pointerdown.prevent @click="sendTerminalKey('\r')">Enter</button>
       </div>
       <div class="row term__tools term__actions" style="gap: 6px; flex-wrap: wrap">
         <button class="btn btn--sm" type="button" @click="focusTerminal">⌨ 键盘</button>
         <button class="btn btn--sm" type="button" :disabled="!terminalReady" @click="openTextReader">选字</button>
-        <button class="btn btn--sm" type="button" :disabled="role !== 'controller' || !conn.isOpen || !isLive" @click="readClipboard">粘贴</button>
-        <button class="btn btn--sm" type="button" :disabled="windowsShell || role !== 'controller' || !conn.isOpen || !isLive" :title="windowsShell ? 'Windows shell 不支持安全中断' : '发送 Ctrl+C，不关闭会话'" @pointerdown.prevent="prepareShortcutInput" @click="prepareShortcutInput($event); sendInterrupt()">Ctrl+C</button>
+        <button class="btn btn--sm" type="button" :disabled="!terminalInputReady || clipboardReading" @click="readClipboard">粘贴</button>
+        <button class="btn btn--sm term__interrupt" type="button" :disabled="programmingTui || !terminalInputReady" :aria-label="programmingTui ? 'Ctrl+C，编程 TUI 已禁用，防止误退' : 'Ctrl+C'" :title="programmingTui ? '编程 TUI 已禁用 Ctrl+C，避免误退；请使用程序内的取消操作' : '中断当前命令，不关闭终端'" @pointerdown.prevent="prepareShortcutInput" @click="prepareShortcutInput($event); sendInterrupt()"><span>Ctrl+C</span><small v-if="programmingTui" aria-hidden="true">防误退</small></button>
         <button class="btn btn--sm" type="button" :aria-expanded="showExtraKeys" aria-controls="terminal-extra-keys" @click="showExtraKeys = !showExtraKeys">{{ showExtraKeys ? '收起操作' : '更多操作' }}</button>
       </div>
       <div v-if="showExtraKeys" id="terminal-extra-keys" class="row term__tools term__extra-keys" role="group" aria-label="终端操作" style="gap: 6px; flex-wrap: wrap">
+        <div class="row" role="group" aria-label="更多终端按键" @pointerdown="prepareShortcutInput" @click.capture="prepareShortcutInput">
+          <span class="small dim">选择与移动</span>
+          <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" title="发送 Shift+Tab（反向切换）" @pointerdown.prevent @click="sendTerminalKey('\x1b[Z')">Shift+Tab</button>
+          <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" aria-label="方向键向左" @pointerdown.prevent @click="sendTerminalKey('\x1b[D')">←</button>
+          <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" aria-label="方向键向右" @pointerdown.prevent @click="sendTerminalKey('\x1b[C')">→</button>
+          <button class="btn btn--sm" type="button" :disabled="!terminalInputReady" title="发送空格（部分询问用来选择）" @pointerdown.prevent @click="sendTerminalKey(' ')">空格</button>
+        </div>
+        <div v-if="role === 'controller' && isLive && !isShell" class="row task-templates">
+          <select aria-label="任务模板" :disabled="!conn.isOpen" value="" @change="fillTaskTemplate">
+            <option value="">任务模板…</option><option v-for="task in TASK_TEMPLATES" :key="task.id" :value="task.id">{{ task.label }}</option>
+          </select><span class="small dim">仅填入输入框，确认后发送</span>
+        </div>
         <div class="row" role="group" aria-label="浏览与复制"><span class="small dim">浏览与复制</span><button class="btn btn--sm" type="button" @click="scrollHistory(-12)">向上翻</button>
         <button class="btn btn--sm" type="button" @click="scrollHistory(12)">向下翻</button>
         <button class="btn btn--sm" type="button" @click="term?.scrollToBottom()">回到底部</button>

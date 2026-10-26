@@ -4,16 +4,10 @@
  * 新 Agent 会通过心跳上报本机已配置与已安装命令；旧 Agent 仍使用
  * 这份预置表作为兼容回退。检测结果不会授予命令执行权限。
  *
- * # 分类为什么重要
- *
- * 它直接决定 Ctrl+C 按钮的可用性，见 `docs/PHASE0-ARCHITECTURE.md` §6.5：
- *
- *   - **tui**（raw mode 应用）：Ctrl+C 写 0x03 能真正中断进程 ✅
- *   - **shell**（cooked mode）：0x03 会被 conhost 拦截，子进程只收到 stdin EOF，
- *     命令**不会中断** ❌ —— 系统自带的 ConPTY 没有可靠办法做到这件事
- *
- * 所以对 shell 类命令，界面的责任是**如实告知并给替代路径**，
- * 而不是放一个点了没反应的按钮。那比没有按钮更糟。
+ * 分类用于模板和 Shell 输入方式；Ctrl+C 的防误退策略独立判断编程 CLI
+ * 的实际身份，不能根据可修改的会话名称或 kind 推断底层中断能力。
+ * Windows 交互式 cmd/PowerShell 已补充真实中断及继续执行的验证，
+ * 见 docs/CTRL-C-POLICY-2026-10-26.md。
  */
 
 /** 命令的分类。 */
@@ -66,17 +60,13 @@ export const PRESETS: CommandPreset[] = [
   {
     id: 'shell',
     label: 'Shell',
-    hint: 'cmd / PowerShell —— 注意 Ctrl+C 在 Windows 上无法中断它',
+    hint: 'cmd / PowerShell 等命令行终端',
     kind: 'shell',
   },
 ]
 
 /**
- * 已知的 **cooked mode** 程序（即 Ctrl+C 无效的那些）。
- *
- * 只列确定是 shell 的：多列一个不会造成伤害（只是把按钮置灰），
- * 但漏列一个会让用户以为 Ctrl+C 坏了。所以这个名单要**保守地小**，
- * 未知的一律按 tui 处理（见 `classifyCommand`）。
+ * 已知的交互式 Shell；未知命令按 tui 处理，但这不决定 Ctrl+C 策略。
  */
 const SHELL_COMMANDS = new Set([
   'cmd',
@@ -102,11 +92,8 @@ const SHELL_COMMANDS = new Set([
  * 输入可能是 `/bin/bash -l`、`C:\Windows\System32\cmd.exe /k`、`claude --continue`
  * 这类形式，所以要取 basename 并剥掉扩展名再比。
  *
- * ★ 未知命令返回 `'tui'`。这个默认值是刻意选的：
- *   主用例（Claude Code / Codex / OpenCode）都是 tui，
- *   把它们误判成 shell 会让主功能"看起来坏了"；
- *   反过来把一个未知程序误判成 tui，最坏结果是 Ctrl+C 点了没反应 ——
- *   而我们始终提供「终止会话」作为兜底动作，所以这个错误是可恢复的。
+ * 未知命令返回 `'tui'`，这是命令类别的启发式回退，不是执行授权或
+ * 中断能力证明。调用方应优先使用配置及原生 CLI 的可靠身份。
  */
 export function classifyCommand(commandLine: string): CommandKind {
   const first = commandLine.trim().split(/\s+/)[0] ?? ''

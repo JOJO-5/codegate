@@ -5,6 +5,9 @@ import ts from 'typescript'
 import { ref, computed, watch, nextTick, reactive } from 'vue'
 
 const url = code => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+const actualModule=async path=>import(url(ts.transpileModule(await readFile(new URL(path,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText))
+const {classifyCommand}=await actualModule('../src/lib/commands.ts')
+const {nativeCLI}=await actualModule('../src/lib/sessionQuota.ts')
 process.on('uncaughtException', error => { console.error(error.name + ': ' + error.message.replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/g,'[compiled component]')); process.exitCode=1 })
 const ended = { session_id:'ended', device_id:'device', name:'Closed Codex', command:'codex', cwd:'/work', status:'terminated', recovery:{command_id:'codex',native_id:'native'}, cols:80,rows:24 }
 const active = {...ended,session_id:'active',status:'running'}
@@ -13,7 +16,7 @@ const records=reactive({device:[ended,active]})
 const sessions={byDevice:records,forDevice:id=>records[id]??[],load:async()=>{},takeDraft:()=>'',patch(id,changes){for(const list of Object.values(records)){const item=list.find(s=>s.session_id===id);if(item)Object.assign(item,changes)}},setFor(id,list){records[id]=list}}
 const conn=reactive({isOpen:true,attachTerminal:async()=>{attachCalls++;throw Object.assign(Error('会话已关闭'),{code:'session_not_found'})},detachTerminal:async()=>{},request:async()=>{},onFrame:()=>()=>{},onControl:()=>()=>{}})
 const routes=[],emitted=[]
-globalThis.__sessionRecovery={ref,computed,watch,nextTick,conn,sessions,
+globalThis.__sessionRecovery={ref,computed,watch,nextTick,conn,sessions,classifyCommand,nativeCLI,
   api:{session:async()=>ended,deviceGit:async()=>({branch:'main'})},
   router:{push:async route=>routes.push(route)},
   devices:{items:[{id:'device',online:true}],byId:()=>({online:true}),load:async()=>{}},
@@ -23,8 +26,8 @@ globalThis.__sessionRecovery={ref,computed,watch,nextTick,conn,sessions,
 const shim=url(`const t=globalThis.__sessionRecovery;export const {ref,computed,watch,nextTick,onMounted,onUnmounted}=t;
 export const onBeforeUnmount=t.onUnmounted,defineComponent=x=>x;
 export const api=t.api,useConnStore=()=>t.conn,useSessionsStore=()=>t.sessions,useDevicesStore=()=>t.devices,usePreferencesStore=()=>t.preferences,useDraftsStore=()=>t.drafts,useRouter=()=>t.router;
-export const humanizeError=e=>e.message,statusKind=()=>'',statusLabel=s=>s,classifyCommand=()=> 'tui',nativeCLI=()=> 'codex',sessionQuotaProvider=s=>s==='codex'?'codex':'',canRecoverConversation=s=>s.command==='codex',liveSession=s=>['starting','running','detached'].includes(s.status);
-export const MessageType={ConversationList:'conversation.list',ConversationRestore:'conversation.restore',SessionExit:'session.exit',SessionClosed:'session.closed'},FrameFlag={},FrameType={},TASK_TEMPLATES=[],RouterLink={};
+export const humanizeError=e=>e.message,statusKind=()=>'',statusLabel=s=>s,classifyCommand=t.classifyCommand,nativeCLI=t.nativeCLI,sessionQuotaProvider=s=>s==='codex'?'codex':'',canRecoverConversation=s=>s.command==='codex',liveSession=s=>['starting','running','detached'].includes(s.status);
+export const MessageType={SessionSignal:'session.signal',ConversationList:'conversation.list',ConversationRestore:'conversation.restore',SessionExit:'session.exit',SessionClosed:'session.closed'},FrameFlag={},FrameType={},TASK_TEMPLATES=[],RouterLink={};
 export const estimateTerminalSize=()=>({cols:80,rows:24}),absoluteTime=String,workspaceFilePath=()=>'',terminalTextSnapshot=()=>{},captureImagePaste=()=>{};
 export class Terminal{};export class FitAddon{};export class WebLinksAddon{};export class SearchAddon{};export class Unicode11Addon{};export class WebglAddon{};export default {};`)
 async function component(path){
@@ -93,6 +96,130 @@ const corrected=view.setup({id:staleCached.session_id},{expose:()=>{},emit:()=>{
 corrected.terminalReady.value=true
 await corrected.loadContext();await nextTick();await nextTick()
 assert.equal(corrected.attachmentReady.value,true,'new running metadata can correct a stale closed snapshot')
+
+// Virtual keys must send only the requested key and preserve unsent text.
+const keyFrames=[]
+conn.sendFrame=(type,flags,id,bytes)=>keyFrames.push({id,bytes:[...bytes]})
+assert.equal(typeof corrected.sendTerminalKey,'function','mobile terminal keys have a guarded dispatch path')
+corrected.mobileDraft.value='unsent question'
+corrected.sendTerminalKey('\x1b[1;2D')
+assert.deepEqual(keyFrames.at(-1),{id:staleCached.session_id,bytes:[27,91,49,59,50,68]})
+assert.equal(corrected.mobileDraft.value,'unsent question','a selection key never submits or clears the composer')
+const acceptedKeys=keyFrames.length
+conn.isOpen=false;corrected.sendTerminalKey('\r');conn.isOpen=true
+corrected.role.value='viewer';corrected.sendTerminalKey('\r');corrected.role.value='controller'
+corrected.attachmentReady.value=false;corrected.sendTerminalKey('\r');corrected.attachmentReady.value=true
+corrected.summary.value={...corrected.summary.value,status:'terminated'};corrected.sendTerminalKey('\r')
+assert.equal(keyFrames.length,acceptedKeys,'offline, viewer, reconnecting and closed states never send terminal keys')
+console.log('PASS mobile terminal key dispatch preserves drafts and rejects unavailable input')
+
+const signals=[]
+conn.request=async(...args)=>{signals.push(args);return {payload:{}}}
+for(const entry of [
+ {command:'codex',name:'Codex',blocked:true},
+ {command:'claude',name:'Shell',blocked:true},
+ {command:'opencode',blocked:true},
+ {command:'dsh',blocked:true},
+ {command:'cmd.exe',args:['/c','C:\\tools\\opencode.cmd'],blocked:true},
+ {command:'node.exe',recovery:{command_id:'codex',native_id:'bound'},blocked:true},
+ {command:'cmd.exe',name:'Codex',blocked:false},
+ {command:'C:\\Program Files\\PowerShell\\7\\pwsh.exe',blocked:false},
+ {command:'powershell.exe',blocked:false},
+ {command:'/bin/bash',blocked:false},
+]){
+ const input=view.setup({id:'interrupt-test'},{expose:()=>{},emit:()=>{}})
+ input.summary.value={...active,recovery:undefined,...entry,status:'running',session_id:'interrupt-test'}
+ input.role.value='controller';input.attachmentReady.value=true
+ input.mobileDraft.value='preserve this'
+ let count=signals.length
+ await input.sendInterrupt()
+ assert.equal(signals.length,count+(entry.blocked?0:1),`Ctrl+C policy for ${entry.command}`)
+ if(!entry.blocked)assert.deepEqual(signals.at(-1),['session.signal',{session_id:'interrupt-test',signal:'int'},'interrupt-test'])
+ assert.equal(input.mobileDraft.value,'preserve this')
+ assert.equal(typeof input.onTerminalData,'function')
+ count=keyFrames.length;input.onTerminalData('\x03')
+ assert.equal(keyFrames.length,count+(entry.blocked?0:1),`physical Ctrl+C policy for ${entry.command}`)
+ if(entry.blocked){input.onTerminalData('x');assert.equal(keyFrames.length,count+1,'TUI normal typing remains enabled')}
+ for(const mode of ['offline','viewer','unattached','closed']){
+  conn.isOpen=mode!=='offline';input.role.value=mode==='viewer'?'viewer':'controller';input.attachmentReady.value=mode!=='unattached';input.summary.value.status=mode==='closed'?'terminated':'running'
+  const requests=signals.length,frames=keyFrames.length
+  await input.sendInterrupt();input.onTerminalData('\x03')
+  assert.equal(signals.length,requests,`${mode} cannot interrupt`);assert.equal(keyFrames.length,frames,`${mode} cannot type`)
+ }
+ conn.isOpen=true
+}
+console.log('PASS Ctrl+C protects programming TUIs, enables shells and ignores session labels')
+const lateInterrupt=view.setup({id:'late-interrupt'},{expose:()=>{},emit:()=>{}})
+lateInterrupt.summary.value={...active,session_id:'late-interrupt',status:'running',command:'cmd.exe',recovery:undefined}
+lateInterrupt.role.value='controller';lateInterrupt.attachmentReady.value=true
+let failInterrupt
+conn.request=()=>new Promise((_,reject)=>{failInterrupt=reject})
+lateInterrupt.sendInterrupt()
+lateInterrupt.onControl({type:'session.closed',payload:{session_id:'late-interrupt'}})
+lateInterrupt.errorText.value='new connection state'
+failInterrupt(Error('old interrupt failure'));await nextTick()
+assert.equal(lateInterrupt.errorText.value,'new connection state','late interrupt failure cannot overwrite a closed session state')
+const draftInput=view.setup({id:'draft-input'},{expose:()=>{},emit:()=>{}})
+draftInput.summary.value={...active,status:'running',session_id:'draft-input'}
+draftInput.role.value='controller';draftInput.attachmentReady.value=true
+draftInput.mobileDraft.value='text with \x03 control'
+let draftFrames=keyFrames.length
+draftInput.submitDraft()
+assert.equal(keyFrames.length,draftFrames,'composer cannot bypass programming TUI Ctrl+C protection')
+assert.equal(draftInput.mobileDraft.value,'text with \x03 control','blocked composer text remains editable')
+draftInput.mobileDraft.value='not attached';draftInput.attachmentReady.value=false
+draftInput.submitDraft()
+assert.equal(keyFrames.length,draftFrames,'composer cannot send before attachment is ready')
+assert.equal(draftInput.mobileDraft.value,'not attached')
+draftInput.attachmentReady.value=true;draftInput.mobileDraft.value='normal question';draftInput.submitDraft()
+assert.equal(keyFrames.length,draftFrames+1,'ready composer sends normally')
+assert.equal(draftInput.mobileDraft.value,'')
+
+// Clipboard permissions may resolve after editing, cancelling or leaving.
+let finishClipboard, failClipboard, clipboardReads=0
+globalThis.document={activeElement:null}
+globalThis.HTMLElement=class {}
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard:{readText:()=>{clipboardReads++;return new Promise((resolve,reject)=>{finishClipboard=resolve;failClipboard=reject})}}}})
+const pasteView=view.setup({id:'paste-test'},{expose:()=>{},emit:()=>{}})
+const pendingPaste=pasteView.readClipboard()
+pasteView.pasteDraft.value='manually pasted text'
+finishClipboard('old clipboard');await pendingPaste
+assert.equal(pasteView.pasteDraft.value,'manually pasted text','late clipboard read must not overwrite manual editing')
+assert.equal(pasteView.clipboardReading.value,false)
+pasteView.closePaste()
+const readCount=clipboardReads
+await pasteView.readClipboard()
+assert.equal(clipboardReads,readCount,'reopening preserves an unsent preview instead of replacing it')
+assert.equal(pasteView.pasteDraft.value,'manually pasted text')
+pasteView.closePaste();pasteView.pasteDraft.value=''
+const cancelledPaste=pasteView.readClipboard()
+const duplicatePaste=pasteView.readClipboard()
+assert.equal(clipboardReads,readCount+1,'only one clipboard permission request can be pending')
+pasteView.closePaste();finishClipboard('cancelled content');await cancelledPaste;await duplicatePaste
+assert.equal(pasteView.pasteOpen.value,false)
+assert.equal(pasteView.pasteDraft.value,'','cancelled clipboard read cannot update hidden preview')
+const deniedPaste=pasteView.readClipboard();failClipboard(Error('permission denied'));await deniedPaste
+assert.match(pasteView.clipboardStatus.value,/手动粘贴/,'denied permission leaves a usable manual recovery path')
+assert.equal(pasteView.pasteOpen.value,true)
+assert.equal(pasteView.clipboardReading.value,false)
+const emptyPaste=pasteView.readClipboard();finishClipboard('');await emptyPaste
+assert.match(pasteView.clipboardStatus.value,/没有文字/,'empty clipboard is distinct from permission failure')
+const oldPaste=pasteView.readClipboard(),failOld=failClipboard;pasteView.closePaste()
+const newPaste=pasteView.readClipboard()
+const finishNew=finishClipboard
+// An old rejection cannot clear the new request's busy state or show an error.
+// Keep separate resolvers because each request belongs to its own preview.
+failOld(Error('old permission failure'));await oldPaste
+assert.equal(pasteView.clipboardReading.value,true,'old failure cannot clear a newer read')
+assert.equal(pasteView.clipboardStatus.value,'')
+finishNew('new clipboard');await newPaste
+assert.equal(pasteView.pasteDraft.value,'new clipboard')
+globalThis.window={removeEventListener:()=>{}}
+const leaving=view.setup({id:'leaving-paste'},{expose:()=>{},emit:()=>{}})
+const unmountLeaving=unmounted.at(-1),leavingPaste=leaving.readClipboard()
+unmountLeaving();finishClipboard('after navigation');await leavingPaste
+assert.equal(leaving.pasteDraft.value,'','unmounted view ignores clipboard completion')
+console.log('PASS clipboard editing, cancel, permission recovery and navigation guards')
 
 const recovery=await component('../src/components/ConversationRecovery.vue')
 mounted=[];unmounted=[]

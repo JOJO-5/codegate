@@ -4,6 +4,8 @@
 > 关联：`docs/PHASE0-ARCHITECTURE.md` §17 R1/R4
 > 工具：`tools/conpty_probe.py`、`tools/ansi_report.py`、`tools/scan_tui.py`
 
+> **2026-10-26 补充：本文 Ctrl+C 的 Shell 禁用结论已被当前交互式 cmd/PowerShell 回归测试修订。** 下文保留当时的观察，当前界面策略和实测边界见 [Ctrl+C 策略](CTRL-C-POLICY-2026-10-26.md)。
+
 ---
 
 ## 0. 一句话结论

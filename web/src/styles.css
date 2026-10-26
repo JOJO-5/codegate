@@ -658,6 +658,9 @@ a.item:hover {
 }
 .term__footer {
   flex: none;
+  max-height: 55%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 6px 10px calc(6px + var(--safe-bottom));
   background: var(--bg-elev);
   color: var(--fg);
@@ -762,7 +765,11 @@ a.item:hover {
 .setup-details summary { cursor: pointer; font-weight: 600; }
 .setup-details[open] summary { margin-bottom: 10px; }
 .term__quick-keys { gap: 6px; margin-bottom: 6px; }
+.term__interrupt { flex-direction: column; gap: 0; line-height: 1.15; }
+.term__interrupt small { font-size: 10px; }
 .term__extra-keys { margin-top: 6px; }
+.term__extra-keys > .row { flex-wrap: wrap; width: 100%; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
+.term__extra-keys > .row > .dim:first-child { flex-basis: 100%; }
 .clipboard-panel { padding: 10px; margin: 8px 0; max-height: 45dvh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
 .clipboard-panel textarea { min-height: 80px; font-size: 16px; }
 .session-filters .btn:not(.btn--primary) { border-color: transparent; background: transparent; }
@@ -796,10 +803,12 @@ a.item:hover {
 .terminal-reader__body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-y pinch-zoom; }
 .terminal-reader__text { margin: 0; padding: 12px; font: 14px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
 .terminal-reader__manual { flex: none; margin: 0 12px 8px; font-size: 16px; }
-.term__workspace { display: flex; flex: 1; min-height: 0; }
+.term__workspace { position: relative; display: flex; flex: 1; min-height: 0; }
 .term__workspace .term__host { flex: 1; min-width: 0; }
 .term__sidebar { width: 214px; flex: none; padding: 16px 10px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; background: var(--bg-elev); border-right: 1px solid var(--border); color: var(--fg); }
 .term__sidebar-heading { margin: 12px 8px 5px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--fg-dim); }
+.term__sidebar-top { display: flex; align-items: center; justify-content: space-between; flex: none; }
+.term__switcher-close, .term__switcher-backdrop { display: none; }
 .term__session-link { border: 0; background: transparent; color: inherit; text-align: left; border-radius: 8px; padding: 10px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .term__session-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .term__session-link small { color: var(--fg-dim); }
@@ -848,13 +857,15 @@ a.item:hover {
   .term__footer { padding: 6px 6px calc(6px + var(--safe-bottom)); }
   .term__tools { flex-wrap: nowrap !important; }
   .term__tools .btn { flex: none; }
-  .term__quick-keys { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .term__quick-keys .btn { min-width: 0; min-height: 44px; padding: 6px; }
+  .term__quick-keys { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(68px, 1.5fr) repeat(3, minmax(0, 1fr)); gap: 4px; }
+  .term__quick-keys .btn { min-width: 0; min-height: 44px; padding: 6px 2px; font-size: 12px; justify-content: center; }
   .term__actions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: visible; max-height: none; }
   .term__actions .btn { min-width: 0; min-height: 40px; padding: 6px 4px; }
   .term__extra-keys { flex-wrap: wrap !important; overflow: visible; max-height: none; }
-  .term__sidebar { display: none; position: absolute; z-index: 7; top: 45px; bottom: 76px; left: 0; box-shadow: 12px 0 24px #0007; }
+  .term__sidebar { display: none; position: absolute; z-index: 7; inset: 0 auto 0 0; max-width: 85%; overscroll-behavior: contain; box-shadow: 12px 0 24px #0007; }
   .term__sidebar--open { display: flex; }
+  .term__switcher-close { display: inline-flex; min-height: 44px; }
+  .term__switcher-backdrop { display: block; position: absolute; z-index: 6; inset: 0; width: 100%; border: 0; background: #0005; cursor: pointer; }
   .term__panel-button { display: inline-flex; }
 }
 
