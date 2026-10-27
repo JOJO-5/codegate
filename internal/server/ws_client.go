@@ -285,6 +285,10 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 			return
 		}
 		req.Recovery = nil
+		if err := validateNativeLaunchMode(agent.Caps(), agent.Commands(), req); err != nil {
+			sendErrorEnvelope(s.c.TrySendText, env, err)
+			return
+		}
 		env.Payload, _ = json.Marshal(req)
 		if req.Worktree && !agent.Caps().Worktrees {
 			sendErrorEnvelope(s.c.TrySendText, env, protocol.NewError(protocol.CodeInvalidPayload, "请更新 Agent 后创建独立 Git 工作区"))

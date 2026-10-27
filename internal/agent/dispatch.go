@@ -264,8 +264,15 @@ func (a *Agent) createSession(req protocol.SessionCreatePayload) (*session.Sessi
 
 func (a *Agent) createSessionLocked(req protocol.SessionCreatePayload) (*session.Session, error) {
 	// 1. 命令：只能从白名单里选（除非显式开启自定义命令）。
-	cmd, err := a.commandConfig().ResolveCommand(req.CommandID, req.Command, req.Args, req.Resume)
+	commandConfig := a.commandConfig()
+	cmd, err := commandConfig.ResolveCommand(req.CommandID, req.Command, req.Args, req.Resume)
 	if err != nil {
+		return nil, err
+	}
+	if req.Resume && req.LaunchMode != "" {
+		return nil, ErrNativeLaunchMode
+	}
+	if err := commandConfig.applyNativeLaunchMode(req.CommandID, req.LaunchMode, &cmd); err != nil {
 		return nil, err
 	}
 
@@ -683,6 +690,10 @@ func toCodeError(err error) *protocol.CodeError {
 		}
 	}
 	switch {
+	case errors.Is(err, ErrNativeLaunchMode):
+		return protocol.NewError(protocol.CodeInvalidPayload, ErrNativeLaunchMode.Error())
+	case errors.Is(err, ErrNativeLaunchVersion):
+		return protocol.NewError(protocol.CodeInvalidPayload, ErrNativeLaunchVersion.Error())
 	case err == nil:
 		return protocol.NewError(protocol.CodeInternal, "internal error")
 

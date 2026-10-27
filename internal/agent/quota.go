@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,6 +196,8 @@ func quotaGet(ctx context.Context, client *http.Client, endpoint, token string, 
 		return "请求配置无效"
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "codegate-agent/"+Version)
 	if claude {
 		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 	}
@@ -206,8 +209,25 @@ func quotaGet(ctx context.Context, client *http.Client, endpoint, token string, 
 	switch resp.StatusCode {
 	case 200:
 	case 401:
+		if endpoint == openCodeGoUsageURL {
+			// Inspect only a bounded, known error code. Never forward provider text,
+			// which may contain credentials or other account information.
+			var failure struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			_ = json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(&failure)
+			if failure.Error.Code == "api_key_expired" {
+				return "OpenCode Go API Key 已过期；请在 OpenCode Console 新建 Key，在此设备的 OpenCode 中更换后刷新"
+			}
+			return "OpenCode Go API Key 未通过验证；请检查此设备的 OpenCode Go 连接配置，更换有效 Key 后刷新"
+		}
 		return "本机登录已过期，请在 CLI 中重新登录"
 	case 403:
+		if endpoint == openCodeGoUsageURL {
+			return "OpenCode Go 额度查询被拒绝，无法确认订阅状态；请稍后刷新，并在 OpenCode Console 核对账号与订阅"
+		}
 		return "当前账号无权限或未订阅此服务"
 	case 429:
 		return "查询过于频繁，请稍后刷新"
@@ -385,20 +405,88 @@ type claudeQuotaLane struct {
 	Reset string   `json:"resets_at"`
 }
 
+const openCodeGoUsageURL = "https://opencode.ai/inference/go/v1/usage"
+
+// V2 stores credentials in SQLite. A replaced/removed V2 key must never be
+// overridden by the obsolete auth.json left behind by migration. Read only the
+// Go row(s), never export credentials or forward native database errors.
+func openCodeV2QuotaKey(ctx context.Context, path string) (key string, v2 bool, message string) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return "", false, ""
+	} else if err != nil {
+		return "", true, "无法读取本机 OpenCode 凭据，请检查文件访问权限后刷新"
+	}
+	db, err := sql.Open("sqlite", nativeSQLiteURI(path))
+	if err != nil {
+		return "", true, "无法读取本机 OpenCode 凭据，请检查 CLI 配置后刷新"
+	}
+	defer db.Close()
+	var exists int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='credential'`).Scan(&exists); err != nil {
+		return "", true, "无法读取本机 OpenCode 凭据，请稍后刷新"
+	}
+	if exists == 0 {
+		return "", false, "" // V1's database has no credential table.
+	}
+	rows, err := db.QueryContext(ctx, `SELECT active,value FROM credential WHERE integration_id='opencode-go' ORDER BY active DESC LIMIT 2`)
+	if err != nil {
+		return "", true, "本机 OpenCode 凭据格式不兼容，请在 CLI 中核对 Go 连接配置"
+	}
+	defer rows.Close()
+	count, selected := 0, 0
+	for rows.Next() {
+		var active int
+		var raw string
+		if rows.Scan(&active, &raw) != nil {
+			return "", true, "无法读取本机 OpenCode Go 凭据，请检查 CLI 配置后刷新"
+		}
+		count++
+		if count > 1 && selected == 1 && active == 0 {
+			break // Exactly one explicitly active credential takes precedence.
+		}
+		if count > 1 {
+			return "", true, "本机 OpenCode Go 有多个候选 Key，请在 CLI 中选择活动凭据后刷新"
+		}
+		var value struct {
+			Type string `json:"type"`
+			Key  string `json:"key"`
+		}
+		if len(raw) > 64<<10 || json.Unmarshal([]byte(raw), &value) != nil || (value.Type != "key" && value.Type != "api") || value.Key == "" {
+			return "", true, "本机 OpenCode Go 凭据不是可查询的 API Key，请在 CLI 中核对连接配置"
+		}
+		key, selected = value.Key, active
+	}
+	if rows.Err() != nil {
+		return "", true, "读取本机 OpenCode Go 凭据失败，请稍后刷新"
+	}
+	if count == 0 {
+		return "", true, "本机 OpenCode V2 未配置 Go API Key；请在 CLI 中连接 OpenCode Go 后刷新"
+	}
+	return key, true, ""
+}
+
 func openCodeQuota(ctx context.Context, env []string, client *http.Client) ([]protocol.QuotaWindow, string) {
 	root := nativeEnvValue(env, "XDG_DATA_HOME")
 	if root == "" {
 		root = filepath.Join(nativeHome(env), ".local", "share")
 	}
-	var auth map[string]struct {
-		Type string `json:"type"`
-		Key  string `json:"key"`
-	}
-	_ = quotaFile(filepath.Join(root, "opencode", "auth.json"), &auth)
 	token := nativeEnvValue(env, "OPENCODE_API_KEY")
 	if token == "" {
-		if a, ok := auth["opencode-go"]; ok && a.Type == "api" {
-			token = a.Key
+		key, v2, message := openCodeV2QuotaKey(ctx, filepath.Join(root, "opencode", "opencode.db"))
+		if message != "" {
+			return nil, message
+		}
+		if v2 {
+			token = key
+		} else {
+			var auth map[string]struct {
+				Type string `json:"type"`
+				Key  string `json:"key"`
+			}
+			_ = quotaFile(filepath.Join(root, "opencode", "auth.json"), &auth)
+			if a, ok := auth["opencode-go"]; ok && a.Type == "api" {
+				token = a.Key
+			}
 		}
 	}
 	if token == "" {
@@ -410,7 +498,7 @@ func openCodeQuota(ctx context.Context, env []string, client *http.Client) ([]pr
 			Reset string   `json:"resetsAt"`
 		} `json:"usage"`
 	}
-	if message := quotaGet(ctx, client, "https://opencode.ai/zen/go/v1/usage", token, false, &data); message != "" {
+	if message := quotaGet(ctx, client, openCodeGoUsageURL, token, false, &data); message != "" {
 		return nil, message
 	}
 	result := []protocol.QuotaWindow{}

@@ -5,7 +5,7 @@ import { RouterLink } from 'vue-router'
 import { api, type GitResult, type ContinuationTask } from '../lib/api'
 import { useSessionsStore } from '../stores/sessions'
 import { absoluteTime, humanizeError, statusLabel } from '../lib/format'
-const props = defineProps<{ deviceId: string; cwd: string; online: boolean }>()
+const props = defineProps<{ deviceId: string; cwd: string; online: boolean; projectKey?: string }>()
 const sessions = useSessionsStore()
 const records = computed(() => sessions.forDevice(props.deviceId).filter(s => s.cwd === props.cwd && !s.archived))
 const latest = computed(() => [...records.value].sort((a,b) => b.created_at - a.created_at)[0])
@@ -43,9 +43,9 @@ async function refresh(): Promise<void> {
       <p v-if="checked && !tasks.length && !error" class="small dim">此目录暂无后台续跑任务。</p>
       <p v-if="checked" class="faint small">{{ error ? '最近读取尝试' : '读取时间' }}：{{ absoluteTime(checked) }}</p>
       <div v-if="latest" class="row">
-        <RouterLink class="btn btn--sm" :to="{ name: 'session', params: { id: latest.session_id } }">核对原对话</RouterLink>
-        <RouterLink class="btn btn--sm" :to="{ name: 'session-files', params: { id: latest.session_id } }">核对文件</RouterLink>
-        <RouterLink class="btn btn--sm" :to="{ name: 'session-git', params: { id: latest.session_id } }">核对 Git 与交付</RouterLink>
+        <RouterLink class="btn btn--sm" :to="{ name: 'session', params: { id: latest.session_id }, query: projectKey ? { project: projectKey } : {} }">核对原对话</RouterLink>
+        <RouterLink class="btn btn--sm" :to="{ name: 'session-files', params: { id: latest.session_id }, query: projectKey ? { project: projectKey } : {} }">核对文件</RouterLink>
+        <RouterLink class="btn btn--sm" :to="{ name: 'session-git', params: { id: latest.session_id }, query: projectKey ? { project: projectKey } : {} }">核对 Git 与交付</RouterLink>
       </div>
       <p class="small dim">人工核对：需求是否满足、测试结果是否可信、文件改动是否符合预期，以及需要的发布是否完成。</p>
     </div>

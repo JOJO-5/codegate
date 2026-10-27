@@ -8,6 +8,7 @@ const url = code => `data:text/javascript;base64,${Buffer.from(code).toString('b
 const actualModule=async path=>import(url(ts.transpileModule(await readFile(new URL(path,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText))
 const {classifyCommand}=await actualModule('../src/lib/commands.ts')
 const {nativeCLI}=await actualModule('../src/lib/sessionQuota.ts')
+const {inProject}=await actualModule('../src/lib/projectWork.ts')
 process.on('uncaughtException', error => { console.error(error.name + ': ' + error.message.replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/g,'[compiled component]')); process.exitCode=1 })
 const ended = { session_id:'ended', device_id:'device', name:'Closed Codex', command:'codex', cwd:'/work', status:'terminated', recovery:{command_id:'codex',native_id:'native'}, cols:80,rows:24 }
 const active = {...ended,session_id:'active',status:'running'}
@@ -16,17 +17,17 @@ const records=reactive({device:[ended,active]})
 const sessions={byDevice:records,forDevice:id=>records[id]??[],load:async()=>{},takeDraft:()=>'',patch(id,changes){for(const list of Object.values(records)){const item=list.find(s=>s.session_id===id);if(item)Object.assign(item,changes)}},setFor(id,list){records[id]=list}}
 const conn=reactive({isOpen:true,attachTerminal:async()=>{attachCalls++;throw Object.assign(Error('会话已关闭'),{code:'session_not_found'})},detachTerminal:async()=>{},request:async()=>{},onFrame:()=>()=>{},onControl:()=>()=>{}})
 const routes=[],emitted=[]
-globalThis.__sessionRecovery={ref,computed,watch,nextTick,conn,sessions,classifyCommand,nativeCLI,
+globalThis.__sessionRecovery={ref,computed,watch,nextTick,conn,sessions,classifyCommand,nativeCLI,inProject,
   api:{session:async()=>ended,deviceGit:async()=>({branch:'main'})},
   router:{push:async route=>routes.push(route)},
   devices:{items:[{id:'device',online:true}],byId:()=>({online:true}),load:async()=>{}},
-  drafts:{get:()=>'',set:()=>{},owner:'owner'},preferences:{fontSize:14,load:async()=>{}},
+  drafts:{get:()=>'',set:()=>{},owner:'owner'},preferences:{fontSize:14,load:async()=>{},projects:[]},route:reactive({query:{}}),
   onMounted:fn=>mounted.push(fn),onUnmounted:fn=>unmounted.push(fn),
 }
 const shim=url(`const t=globalThis.__sessionRecovery;export const {ref,computed,watch,nextTick,onMounted,onUnmounted}=t;
 export const onBeforeUnmount=t.onUnmounted,defineComponent=x=>x;
-export const api=t.api,useConnStore=()=>t.conn,useSessionsStore=()=>t.sessions,useDevicesStore=()=>t.devices,usePreferencesStore=()=>t.preferences,useDraftsStore=()=>t.drafts,useRouter=()=>t.router;
-export const humanizeError=e=>e.message,statusKind=()=>'',statusLabel=s=>s,classifyCommand=t.classifyCommand,nativeCLI=t.nativeCLI,sessionQuotaProvider=s=>s==='codex'?'codex':'',canRecoverConversation=s=>s.command==='codex',liveSession=s=>['starting','running','detached'].includes(s.status);
+export const api=t.api,useConnStore=()=>t.conn,useSessionsStore=()=>t.sessions,useDevicesStore=()=>t.devices,usePreferencesStore=()=>t.preferences,useDraftsStore=()=>t.drafts,useRouter=()=>t.router,useRoute=()=>t.route;
+export const humanizeError=e=>e.message,statusKind=()=>'',statusLabel=s=>s,classifyCommand=t.classifyCommand,nativeCLI=t.nativeCLI,inProject=t.inProject,sessionQuotaProvider=s=>s==='codex'?'codex':'',canRecoverConversation=s=>s.command==='codex',liveSession=s=>['starting','running','detached'].includes(s.status);
 export const MessageType={SessionSignal:'session.signal',ConversationList:'conversation.list',ConversationRestore:'conversation.restore',SessionExit:'session.exit',SessionClosed:'session.closed'},FrameFlag={},FrameType={},TASK_TEMPLATES=[],RouterLink={};
 export const estimateTerminalSize=()=>({cols:80,rows:24}),absoluteTime=String,workspaceFilePath=()=>'',terminalTextSnapshot=()=>{},captureImagePaste=()=>{};
 export class Terminal{};export class FitAddon{};export class WebLinksAddon{};export class SearchAddon{};export class Unicode11Addon{};export class WebglAddon{};export default {};`)
@@ -47,6 +48,15 @@ ctx.terminalReady.value=true
 await nextTick()
 assert.equal(attachCalls,0,'known closed terminal is not retried as a live process')
 assert.equal(ctx.canRestore.value,true,'closed native conversation offers recovery in the session')
+__sessionRecovery.preferences.projects=[{key:'project.demo',device_id:'device',cwd:'/work'}]
+__sessionRecovery.route.query.project='project.demo'
+ctx.goBack()
+assert.equal(routes.at(-1).name,'project','a terminal opened from a project returns to its workspace')
+__sessionRecovery.route.query.project='removed-project'
+ctx.goBack()
+assert.equal(routes.at(-1).name,'device','removed or mismatched project context falls back safely')
+delete __sessionRecovery.route.query.project
+__sessionRecovery.preferences.projects=[];routes.length=0
 
 // A stale running snapshot must become an ended conversation after not-found.
 globalThis.__sessionRecovery.api.session=async()=>({...active,session_id:'stale'})

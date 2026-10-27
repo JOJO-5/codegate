@@ -294,6 +294,8 @@ export interface AgentUpdateStatus {
 }
 
 export interface CommandAvailability {
+  native_launch_modes?: import('./protocol').NativeLaunchMode[]
+  native_launch_note?: string
   id: string
   label: string
   kind: 'shell' | 'tui'

@@ -19,6 +19,16 @@ async function render(path, state) {
 }
 const noop = () => {}
 const checks = [
+  ['额度不可用直接说明原因和恢复路径，不藏进折叠面板', async () => {
+    const html = await render('../src/components/QuotaPanel.vue', {
+      props: { provider: 'opencode' }, panel: null, providers: [{ provider: 'opencode', status: 'unavailable', source: '本机 API Key', checked_at: 1, windows: [], message: 'Go API Key 已过期，请在本机 OpenCode 中更换后刷新' }],
+      names: { opencode: 'OpenCode Go' }, busy: false, conn: { isOpen: true }, error: '', elapsed: 0, cached: false,
+      date: () => '测试时间', refresh: noop,
+    })
+    assert.ok(html.includes('Go API Key 已过期'))
+    assert.ok(!html.includes('<details'), 'credential recovery must be visible without expanding details')
+    assert.ok(!html.includes('<meter'), 'missing quota is not a numeric balance')
+  }],
   ['需要确认的续跑保留处理入口，不能直接删除', async () => {
     const html = await render('../src/components/ContinuationPanel.vue', {
       source: null, compact: false, visibleRows: [{ id: 'blocked', source: { name: 'Codex' }, mode: 'live_quota', state: 'needs_review', detail: 'identity mismatch' }],
@@ -31,7 +41,7 @@ const checks = [
   ['摘要保留失败原因与缓存结果，不把进程退出等同于交付完成', async () => {
     const html = await render('../src/components/WorkSummary.vue', {
       records: [{ status: 'exited' }], latest: { session_id: 'ended', status: 'exited' },
-      deviceId: 'device', online: true, sessions: { sources: { device: 'cache' } },
+      deviceId: 'device', projectKey: '', online: true, sessions: { sources: { device: 'cache' } },
       git: { branch: 'main', files: [], sync_known: false }, tasks: [], busy: false,
       error: '设备读取失败', checked: 123, refresh: noop, absoluteTime: () => '测试时间',
       statusLabel: () => '已退出', continuationLabels: {},
@@ -73,11 +83,11 @@ const checks = [
     const ended = { session_id: 'ended', device_id: 'device', name: '项目 · Codex', command: 'codex', cwd: '/demo', status: 'terminated', online: true }
     const html = await render('../src/views/ProjectsView.vue', {
       error: '', preferences: { projects: [], loading: false }, removed: null, launch: null, query: '', visible: [],
-      recent: [ended], sessions: { loading: false, sources: { device: 'live' } }, conn: { isOpen: true },
+      recent: [ended], shownRecent: [ended], adding: false, showAllRecent: false, sessions: { loading: false, sources: { device: 'live' } }, conn: { isOpen: true },
       devices: { items: [], onlineCount: 0, byId: () => ({ online: true, name: '电脑' }) },
       repositories: { loading: {}, results: {}, errors: {}, commands: {} }, discovered: [], scanBusy: false, scanFailed: false,
       statusLabel: () => '已终止', isLiveStatus: () => false, canRecoverConversation: () => true,
-      unavailable: () => '', refresh: noop, loadRecent: noop, loadRepositories: noop, recoveringSession: null, addingProject: false,
+      unavailable: () => '', refresh: noop, loadRecent: noop, loadRepositories: noop, toggleAdding: noop, recoveringSession: null, addingProject: false,
     })
     assert.ok(html.includes('恢复原对话'))
   }],

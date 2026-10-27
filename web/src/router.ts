@@ -23,6 +23,8 @@ import { useAuthStore } from './stores/auth'
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/projects' },
   { path: '/projects', name: 'projects', component: () => import('./views/ProjectsView.vue'), meta: { title: '项目' } },
+  { path: '/projects/:key', name: 'project', component: () => import('./views/ProjectView.vue'), props: route => ({ projectKey: route.params.key }), meta: { title: '项目工作空间' } },
+  { path: '/tasks', name: 'tasks', component: () => import('./views/TasksView.vue'), meta: { title: '任务' } },
 
   {
     path: '/login',
@@ -80,7 +82,7 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: to => to.hash ? { el: to.hash } : { top: 0 },
 })
 
 /**

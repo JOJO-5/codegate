@@ -300,8 +300,11 @@ export interface SessionSummary {
 
 export type SessionStatus = 'starting' | 'running' | 'detached' | 'exited' | 'failed' | 'terminated'
 
+export interface NativeLaunchMode { id: string; label: string; description: string; command_hint: string; full_access?: boolean }
+
 /** `protocol.SessionCreatePayload`。 */
 export interface SessionCreatePayload {
+  launch_mode?: string
   worktree?: boolean
   device_id: string
   name?: string

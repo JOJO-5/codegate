@@ -2,7 +2,7 @@
 import { TransferChunkSizer } from '../lib/transferPacing'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDraftsStore } from '../stores/drafts'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useConnStore } from '../stores/conn'
 import { MessageType, type SessionCreatedPayload } from '../lib/protocol'
 import { humanizeError } from '../lib/format'
@@ -16,6 +16,7 @@ interface Chunk { path: string; size: number; offset: number; data: string }
 const props = defineProps<{ id: string; embedded?: boolean }>()
 const conn = useConnStore()
 const router = useRouter()
+const route = useRoute()
 const drafts = useDraftsStore()
 const cwd = ref('')
 const deviceId = ref('')
@@ -213,7 +214,7 @@ onUnmounted(clearPreview)
   <main class="page files-view" :class="{ 'files-view--embedded': embedded }">
     <div class="row row--between" style="margin-bottom: 16px">
       <div class="row">
-        <button v-if="!embedded" class="btn btn--sm" type="button" @click="router.push({ name: 'session', params: { id } })">‹ 返回终端</button>
+        <button v-if="!embedded" class="btn btn--sm" type="button" @click="router.push({ name: 'session', params: { id }, query: route.query.project ? { project: route.query.project } : {} })">‹ 返回终端</button>
         <h1 style="margin: 0">工作区文件</h1>
       </div>
       <div class="row"><button class="btn btn--sm" type="button" :disabled="busy || uploading || !conn.isOpen" @click="newTextOpen = !newTextOpen">新建文本文件</button><button class="btn btn--sm" type="button" :disabled="busy" @click="list()">刷新</button></div>

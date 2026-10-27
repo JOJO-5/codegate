@@ -188,7 +188,7 @@ func (c *AgentConn) SetUpdateStatus(status protocol.AgentUpdateStatus) {
 func (c *AgentConn) SetCommands(commands []protocol.CommandAvailability) {
 	c.updateMu.Lock()
 	defer c.updateMu.Unlock()
-	c.commands = append([]protocol.CommandAvailability(nil), commands...)
+	c.commands = cloneCommandInventory(commands)
 }
 
 func (c *AgentConn) SetDSHWebEnabled(enabled *bool) {
@@ -210,7 +210,15 @@ func (c *AgentConn) DSHWebEnabled() *bool {
 func (c *AgentConn) Commands() []protocol.CommandAvailability {
 	c.updateMu.RLock()
 	defer c.updateMu.RUnlock()
-	return append([]protocol.CommandAvailability(nil), c.commands...)
+	return cloneCommandInventory(c.commands)
+}
+
+func cloneCommandInventory(commands []protocol.CommandAvailability) []protocol.CommandAvailability {
+	out := append([]protocol.CommandAvailability(nil), commands...)
+	for i := range out {
+		out[i].NativeLaunchModes = append([]protocol.NativeLaunchMode(nil), out[i].NativeLaunchModes...)
+	}
+	return out
 }
 
 func (c *AgentConn) SetRoots(roots []string) {

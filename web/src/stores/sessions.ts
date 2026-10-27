@@ -126,6 +126,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     deviceId: string,
     opts: {
       commandId?: string
+      launchMode?: string
       command?: string
       args?: string[]
       cwd: string
@@ -144,6 +145,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       rows: opts.rows,
       ...(opts.name !== undefined && opts.name !== '' ? { name: opts.name } : {}),
       ...(opts.commandId !== undefined ? { command_id: opts.commandId } : {}),
+      ...(opts.launchMode ? { launch_mode: opts.launchMode } : {}),
       ...(opts.command !== undefined ? { command: opts.command } : {}),
       ...(opts.args !== undefined ? { args: opts.args } : {}),
       ...(opts.worktree === true ? { worktree: true } : {}),

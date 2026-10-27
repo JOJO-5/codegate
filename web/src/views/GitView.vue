@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { api, type GitResult } from '../lib/api'
 import { MessageType, type SessionCreatedPayload } from '../lib/protocol'
 import { useConnStore } from '../stores/conn'
 import { absoluteTime, humanizeError } from '../lib/format'
 const props = defineProps<{ id: string }>()
 const router = useRouter()
+const route = useRoute()
 const conn = useConnStore()
 const result = ref<GitResult | null>(null)
 const error = ref('')
@@ -67,7 +68,7 @@ onUnmounted(() => { alive = false })
 
 <template>
   <div class="stack git-view">
-    <div class="row row--between"><h1>Git 改动</h1><button class="btn" @click="router.push({ name: 'session', params: { id } })">返回终端</button></div>
+    <div class="row row--between"><h1>Git 改动</h1><button class="btn" @click="router.push({ name: 'session', params: { id }, query: route.query.project ? { project: route.query.project } : {} })">返回终端</button></div>
     <div v-if="error" class="notice notice--err" role="alert">{{ error }}</div>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <section class="card stack">

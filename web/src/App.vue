@@ -9,7 +9,7 @@
  *      （服务端对同一用户虽然允许多条，但每条都要独立 attach，纯浪费）。
  */
 
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useNotificationsStore } from './stores/notifications'
 import { useTheme } from './lib/theme'
@@ -29,6 +29,9 @@ onMounted(() => window.addEventListener('focus', refreshPreferences))
 onUnmounted(() => window.removeEventListener('focus', refreshPreferences))
 const route = useRoute()
 const router = useRouter()
+const accountMenu = ref<HTMLDetailsElement | null>(null)
+watch(() => route.fullPath, () => { if (accountMenu.value) accountMenu.value.open = false })
+function closeAccountMenu(): void { if (accountMenu.value) { accountMenu.value.open = false; accountMenu.value.querySelector('summary')?.focus() } }
 
 /**
  * 终端页和登录页不要外壳。
@@ -61,15 +64,15 @@ async function onLogout(): Promise<void> {
 </script>
 
 <template>
-  <div :class="showChrome ? 'shell' : ''">
+  <div :class="showChrome ? ['shell', { 'shell--workspace': route.name === 'project' }] : ''">
     <a v-if="showChrome" class="skip-link" href="#main-content">跳到主要内容</a>
     <header v-if="showChrome" class="topbar">
       <RouterLink to="/projects" class="brand">CodeGate</RouterLink>
 
       <nav class="nav" aria-label="主要导航">
         <RouterLink to="/projects">项目</RouterLink>
+        <RouterLink to="/tasks">任务</RouterLink>
         <RouterLink to="/devices" :class="{ 'nav-current': route.path.startsWith('/devices') }">设备</RouterLink>
-        <RouterLink to="/settings">设置</RouterLink>
       </nav>
 
       <div class="grow" />
@@ -80,8 +83,7 @@ async function onLogout(): Promise<void> {
       </span>
 
       <div class="header-actions">
-        <button class="btn btn--ghost btn--sm theme-toggle" type="button" :aria-label="dark ? '切换浅色模式' : '切换深色模式'" :title="dark ? '切换浅色模式' : '切换深色模式'" @click="toggleTheme"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><template v-if="dark"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></template><path v-else d="M20.5 14A9 9 0 0 1 10 3.5 9 9 0 1 0 20.5 14Z" /></svg></button>
-        <button class="btn btn--ghost btn--sm" type="button" @click="onLogout">登出</button>
+        <details ref="accountMenu" class="account-menu" @keydown.esc.stop.prevent="closeAccountMenu"><summary>设置</summary><div class="account-menu__content"><RouterLink to="/settings">账号与设置</RouterLink><button class="btn btn--ghost btn--sm" type="button" @click="toggleTheme">{{ dark ? '切换浅色模式' : '切换深色模式' }}</button><button class="btn btn--ghost btn--sm" type="button" @click="onLogout">登出</button></div></details>
       </div>
     </header>
 

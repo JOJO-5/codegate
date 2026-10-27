@@ -465,6 +465,9 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 		return nil, nil, "", errors.New("无效的原生对话 ID")
 	}
 	if tool == "codex" {
+		if err := checkCodexNativeLaunchVersion(a.operationContext(), *cmd, env, cwd); err != nil {
+			return nil, nil, "", err
+		}
 		if err := a.prepareCodexDaemon(cmd, env, cwd); err != nil {
 			return nil, nil, "", err
 		}
@@ -497,6 +500,9 @@ func (a *Agent) prepareConversation(cmd *ResolvedCommand, env []string, cwd, com
 			env = replaceEnv(env, "OPENCODE_PASSWORD", client.password)
 			env = replaceEnv(env, "CODEGATE_OPENCODE_V2_URL", client.endpoint.String())
 			return env, binding, "", nil
+		}
+		if cmd.NativeLaunchMode != "" {
+			return nil, nil, "", ErrNativeLaunchMode
 		}
 	}
 	if binding.NativeID != "" {

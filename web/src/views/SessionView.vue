@@ -47,7 +47,7 @@ import { terminalTextSnapshot, type TerminalTextSnapshot } from '../lib/terminal
 import { workspaceFilePath, type UploadedAttachment } from '../lib/uploads'
 import { captureImagePaste } from '../lib/clipboardImages'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -72,6 +72,7 @@ import {
 } from '../lib/protocol'
 import { classifyCommand } from '../lib/commands'
 import { humanizeError, statusKind, statusLabel } from '../lib/format'
+import { inProject } from '../lib/projectWork'
 
 const props = defineProps<{ id: string }>()
 
@@ -81,6 +82,7 @@ const devices = useDevicesStore()
 const preferences = usePreferencesStore()
 const drafts = useDraftsStore()
 const router = useRouter()
+const route = useRoute()
 
 const hostEl = ref<HTMLDivElement | null>(null)
 
@@ -89,6 +91,7 @@ const sessionId = computed(() => props.id)
 
 // Navigation and recovery cannot depend on successfully attaching a live PTY.
 const summary = ref<SessionSummary | null>(Object.values(sessions.byDevice).flat().find(s => s.session_id === props.id) ?? null)
+const returnProject = computed(() => (preferences.projects ?? []).find(p => p.key === route.query.project && p.device_id.replace(/-/g, '') === summary.value?.device_id.replace(/-/g, '') && inProject(p.cwd, summary.value?.cwd ?? '', devices.byId(p.device_id)?.platform)))
 const contextReady = ref(summary.value !== null)
 const contextBusy = ref(false)
 const contextError = ref('')
@@ -123,7 +126,7 @@ const workspaceOpen = ref(false)
 const filesOpen = ref(false)
 function openFiles(): void {
  if (window.matchMedia('(min-width: 769px)').matches) filesOpen.value = !filesOpen.value
- else void router.push({ name: 'session-files', params: { id: sessionId.value } })
+ else void router.push({ name: 'session-files', params: { id: sessionId.value }, query: returnProject.value ? { project: returnProject.value.key } : {} })
 }
 const sessionTool = computed(() => {
   const s = summary.value
@@ -897,6 +900,8 @@ async function terminate(): Promise<void> {
 }
 
 function goBack(): void {
+  const project = returnProject.value
+  if (project) { void router.push({ name: 'project', params: { key: project.key } }); return }
   const dev = summary.value?.device_id.replace(/-/g, '')
   if (dev !== undefined && dev !== '') {
     void router.push({ name: 'device', params: { id: dev } })
@@ -1111,15 +1116,15 @@ onUnmounted(() => {
 
 <template>
   <div class="term" :style="{ height: termHeight }" @paste.capture="onImagePaste">
-    <ConversationRecovery v-if="recovering && summary" :key="sessionId" :source="summary" @close="recovering = false" />
+    <ConversationRecovery v-if="recovering && summary" :key="sessionId" :source="summary" :project-key="returnProject?.key" @close="recovering = false" />
     <ContinuationPanel v-if="sessionDevice" :key="sessionId" :device-id="sessionDevice" :session-id="sessionId" compact :source="continuing ? summary : null" @close="continuing = false" />
     <!-- ---- 顶栏 ---- -->
     <div class="term__bar">
-      <button class="btn btn--ghost btn--sm" type="button" @click="goBack">‹ 会话</button>
+      <button class="btn btn--ghost btn--sm" type="button" @click="goBack">{{ returnProject ? '‹ 项目' : '‹ 会话' }}</button>
       <button class="btn btn--ghost btn--sm term__panel-button" type="button" :aria-expanded="showSessionPanel" aria-controls="session-switcher" @click="openSwitcher">☰ 切换</button>
       <button class="btn btn--sm" type="button" @click="openFiles">文件</button>
 
-      <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-git', params: { id: sessionId } })">Git</button>
+      <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-git', params: { id: sessionId }, query: returnProject ? { project: returnProject.key } : {} })">Git</button>
       <button v-if="summary?.recovery && summary && ['codex','claude','opencode','dsh'].includes(nativeCLI(summary.command,summary.args))" class="btn btn--sm" type="button" @click="continuing = true">{{ isLive ? '自动续跑' : '安排继续' }}</button>
       <button v-if="canRestore" class="btn btn--primary btn--sm" type="button" :disabled="!!recoveryUnavailable" @click="recovering = true">恢复原对话</button>
       <span class="term__title" :title="summary?.name ?? sessionId">

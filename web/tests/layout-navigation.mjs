@@ -19,7 +19,7 @@ async function render(file, state, region) {
   const js = ts.transpileModule(compiled, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
   const app = Vue.createSSRApp({ setup: () => state, render: new Function('Vue', js)(Vue) })
   app.component('RouterLink', { template: '<a><slot /></a>' })
-  for (const name of ['RouterView', 'AddProject', 'WorkSummary', 'TaskLaunch', 'ConversationRecovery', 'WorkflowPanel']) app.component(name, { render: () => null })
+  for (const name of ['RouterView', 'AddProject', 'WorkSummary', 'TaskLaunch', 'ConversationRecovery', 'WorkflowPanel', 'NativeLaunchModePicker']) app.component(name, { render: () => null })
   app.config.warnHandler = () => {}
   return renderToString(app)
 }
@@ -27,27 +27,33 @@ async function render(file, state, region) {
 const noop = () => {}
 const project = { key: 'project.demo', label: 'Demo', device_id: 'device', command_id: 'codex', cwd: '/demo' }
 const projectState = {
-  preferences: { projects: [project], loading: false }, error: '', removed: null, launch: null, query: '', recent: [], visible: [project],
+  preferences: { projects: [project], loading: false }, error: '', removed: null, launch: null, query: '', recent: [], shownRecent: [], showAllRecent: false, visible: [project], adding: false, discoveryStarted: false,
   devices: { items: [], onlineCount: 1, byId: () => ({ online: true, name: '电脑' }) },
   sessions: { loading: false, forDevice: () => [], sources: {} }, conn: { isOpen: true },
   repositories: { loading: {}, results: {}, errors: {}, commands: {} }, discovered: [], scanBusy: false, scanFailed: false,
   expanded: '', editing: '', recoveringSession: null, addingProject: false, unavailable: () => '',
-  refresh: noop, loadRecent: noop, loadRepositories: noop,
+  refresh: noop, loadRecent: noop, loadRepositories: noop, toggleAdding: noop,
 }
 
 const projects = await render('../src/views/ProjectsView.vue', projectState)
 assert.match(projects, /设备在线/)
-assert.match(projects, /<details[^>]*class="project-settings"[^>]*>[\s\S]*?<summary[^>]*>项目设置<\/summary>[\s\S]*?移除入口[\s\S]*?<\/details>/, 'project administration has a discoverable disclosure rather than competing with task actions')
-assert.match(projects, /<details[^>]*class="repository-browser"[^>]*>[\s\S]*?<summary/, 'repository discovery can be disclosed independently of saved work')
-const scanningFailure = await render('../src/views/ProjectsView.vue', { ...projectState, scanFailed: true })
+assert.match(projects, /进入项目/, 'saved projects have a single stable workspace entry')
+assert.ok(!projects.includes('查看与恢复会话'), 'project cards no longer expand whole workspaces inline')
+assert.ok(!projects.includes('移除入口'), 'project management stays inside its workspace')
+assert.ok(!projects.includes('class="repository-browser"'), 'repository scanning is requested explicitly')
+const scanningFailure = await render('../src/views/ProjectsView.vue', { ...projectState, adding: true, discoveryStarted: true, scanFailed: true })
 assert.match(scanningFailure, /<summary[^>]*>[\s\S]*?扫描有问题[\s\S]*?<\/summary>/, 'collapsed discovery still signals a scan failure')
-const projectSessionsFailed = await render('../src/views/ProjectsView.vue', {
-  ...projectState, expanded: project.key,
+const workspaceState = { ...projectState, project, device: { online: true, platform: 'linux' }, reason: '', section: 'sessions', sections: [], search: '', records: [], shown: [], removed: false, launch: false, recovering: null, statusLabel: s => s, canRecoverConversation: () => false }
+const projectSessionsFailed = await render('../src/views/ProjectView.vue', {
+  ...workspaceState,
   sessions: { ...projectState.sessions, error: '读取会话失败' },
 })
 assert.ok(!projectSessionsFailed.includes('此目录还没有会话'), 'failed project session reads must not claim an empty directory')
-const projectSessionsEmpty = await render('../src/views/ProjectsView.vue', { ...projectState, expanded: project.key })
+const projectSessionsEmpty = await render('../src/views/ProjectView.vue', workspaceState)
 assert.match(projectSessionsEmpty, /此目录还没有会话/)
+const staleRecord = { session_id: 'stale', name: 'Old live record', command: 'codex', status: 'running' }
+const failedRefresh = await render('../src/views/ProjectView.vue', { ...workspaceState, records: [staleRecord], shown: [staleRecord], isLiveStatus: () => true, sessions: { ...projectState.sessions, error: '刷新失败', sources: { device: 'live' } } })
+assert.ok(!failedRefresh.includes('接回终端'), 'a failed refresh cannot reuse an old live-source flag as current confirmation')
 assert.ok(!projectSessionsFailed.includes('还没有最近会话'), 'recent session failure is not an empty state')
 const savedProjectsFailed = await render('../src/views/ProjectsView.vue', {
   ...projectState, visible: [], preferences: { projects: [], loading: false, error: '项目读取失败' },
@@ -56,7 +62,7 @@ assert.ok(!savedProjectsFailed.includes('还没有保存的项目'), 'project lo
 
 const launch = await render('../src/components/TaskLaunch.vue', {
   label: 'Demo', deviceId: 'device', mode: 'terminal', busy: false, tools: [], command: '', cwd: '/demo', name: '', isolated: false,
-  task: '', selected: null, reason: '请选择已安装并授权的工具', error: '', devices: { byId: () => ({ name: '电脑' }) },
+  task: '', launchMode: '', selected: null, reason: '请选择已安装并授权的工具', error: '', devices: { byId: () => ({ name: '电脑' }) },
   TASK_TEMPLATES: [], launch: noop, emit: noop,
 })
 assert.equal((launch.match(/type="radio"/g) ?? []).length, 2, 'both execution methods are visible keyboard-operable radio choices')
@@ -66,7 +72,7 @@ assert.match(launch, /请选择已安装并授权的工具/)
 
 const shell = await render('../src/App.vue', {
   showChrome: true, dark: false, conn: { health: 'connected', healthText: '已连接' }, auth: { isLoggedIn: true },
-  notifications: { events: [] }, toggleTheme: noop, onLogout: noop,
+  notifications: { events: [] }, toggleTheme: noop, onLogout: noop, closeAccountMenu: noop,
   route: { fullPath: '/projects', path: '/projects' },
 })
 assert.match(shell, /href="#main-content"[^>]*>跳到主要内容/)

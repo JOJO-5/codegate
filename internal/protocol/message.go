@@ -141,6 +141,7 @@ type AgentHelloPayload struct {
 
 // AgentCaps 是 Agent 自报的能力上限。
 type AgentCaps struct {
+	NativeLaunchModes     bool     `json:"native_launch_modes,omitempty"`
 	WorkflowV1            bool     `json:"workflow_v1,omitempty"`
 	LiveContinueProviders []string `json:"live_continue_providers,omitempty"`
 	CodexLiveContinue     bool     `json:"codex_live_continue,omitempty"`
@@ -303,6 +304,16 @@ type CommandAvailability struct {
 	Managed   bool   `json:"managed,omitempty"`
 	Resume    bool   `json:"resume,omitempty"`
 	WebURL    string `json:"web_url,omitempty"`
+	NativeLaunchModes []NativeLaunchMode `json:"native_launch_modes,omitempty"`
+	NativeLaunchNote  string             `json:"native_launch_note,omitempty"`
+}
+
+type NativeLaunchMode struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	CommandHint string `json:"command_hint"`
+	FullAccess  bool   `json:"full_access,omitempty"`
 }
 
 // HeartbeatSession 是心跳里的会话摘要（只放对账必需的字段，尽量小）。
@@ -326,6 +337,7 @@ type SessionSyncPayload struct {
 //   - 走白名单时只传 CommandID
 //   - 允许自定义命令时传 Command/Args（需 Agent 侧显式开启，§21.1）
 type SessionCreatePayload struct {
+	LaunchMode string `json:"launch_mode,omitempty"`
 	Recovery  *ConversationBinding `json:"recovery,omitempty"`
 	Worktree  bool                 `json:"worktree,omitempty"`
 	DeviceID  string               `json:"device_id"`

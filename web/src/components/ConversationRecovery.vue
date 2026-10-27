@@ -8,7 +8,7 @@ import { MessageType, type SessionSummary, type SessionCreatedPayload } from '..
 import { estimateTerminalSize } from '../lib/viewport'
 import { absoluteTime, humanizeError } from '../lib/format'
 
-const props = defineProps<{ source: SessionSummary }>()
+const props = defineProps<{ source: SessionSummary; projectKey?: string }>()
 const emit = defineEmits<{ close: [] }>()
 const router = useRouter(), conn = useConnStore(), sessions = useSessionsStore()
 const busy = ref(false), error = ref('')
@@ -34,7 +34,7 @@ async function restore(id = ''): Promise<void> {
     sessions.setFor(device, [session, ...(sessions.byDevice[device] ?? []).filter(s => s.session_id !== session.session_id)])
     void sessions.load(device, true)
     emit('close')
-    await router.push({ name: 'session', params: { id: session.session_id } })
+    await router.push({ name: 'session', params: { id: session.session_id }, query: props.projectKey ? { project: props.projectKey } : {} })
   } catch (e) { if (!cancelled && current === generation) error.value = humanizeError(e) }
   finally { if (!cancelled && current === generation) busy.value = false }
 }

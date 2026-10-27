@@ -20,10 +20,11 @@ var (
 
 // ResolvedCommand 是最终要执行的具体命令。
 type ResolvedCommand struct {
-	Command string
-	Args    []string
-	Kind    CommandKind
-	Label   string
+	NativeLaunchMode string
+	Command          string
+	Args             []string
+	Kind             CommandKind
+	Label            string
 	// Custom 为 true 表示它来自浏览器的自定义输入（allow_custom_commands）。
 	Custom bool
 }

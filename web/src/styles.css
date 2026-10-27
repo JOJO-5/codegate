@@ -995,3 +995,86 @@ a.item:hover {
 .term__host--viewer { overflow: auto; touch-action: pan-x pan-y pinch-zoom; }
 .term__host--viewer .xterm { min-width: max-content; touch-action: pan-x pan-y pinch-zoom; }
 .term__host--viewer .xterm-viewport { touch-action: pan-x pan-y pinch-zoom; }
+
+/* Work starts with a project; maintenance and evidence stay in context. */
+.account-menu { position: relative; }
+.account-menu > summary { cursor: pointer; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); list-style: none; }
+.account-menu > summary::after { content: ' ▾'; color: var(--fg-dim); }
+.account-menu__content { position: absolute; right: 0; top: calc(100% + 8px); width: 176px; padding: 8px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 8px 24px var(--card-shadow); display: grid; gap: 4px; }
+.account-menu__content > a { padding: 10px; color: var(--fg); }
+.account-menu__content > button { text-align: left; justify-content: flex-start; }
+.project-path--compact { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
+.projects-page .recent-work { border: 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); box-shadow: none; border-radius: 0; padding: 18px 0; background: transparent; gap: 4px; }
+.projects-page .recent-work__item { padding: 10px 0; }
+.projects-page .recent-work__item p { margin: 3px 0 0; }
+.projects-page .recent-work h2 { margin: 0 0 8px; }
+.recent-toggle--mobile { display: none; }
+.projects-page .project-card { padding: 22px; box-shadow: none; }
+.projects-page .project-card h2 { font-size: 18px; }
+.projects-page .project-launch { margin-top: 18px; }
+.projects-page .project-launch > a { flex: 1; justify-content: space-between; }
+.add-project-area { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; background: var(--bg-elev); }
+.add-project-area > .row { flex-wrap: wrap; }
+.workspace-back { display: inline-block; margin: 0 0 24px; font-size: 13px; }
+.workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 20px; }
+.workspace-heading h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.workspace-heading p { margin: 4px 0 0; }
+.workspace-heading .row { flex: none; flex-wrap: wrap; }
+.workspace-context { border-top: 1px solid var(--border); padding: 10px 0; font-size: 12px; color: var(--fg-dim); }
+.workspace-context summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; }
+.workspace-context p { overflow-wrap: anywhere; }
+.workspace-sections { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding: 8px 0 12px; margin-bottom: 24px; }
+.workspace-sections [aria-pressed='true'] { background: var(--bg-elev-2); color: var(--fg); font-weight: 600; box-shadow: inset 0 -2px var(--accent); }
+.workspace-content { max-width: 960px; min-width: 0; }
+.workspace-content > .field { max-width: 520px; margin: 16px 0; }
+.workspace-content > .row { flex-wrap: wrap; }
+.workspace-session { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 0; border-bottom: 1px solid var(--border); }
+.workspace-session > div { min-width: 0; overflow-wrap: anywhere; }
+.workspace-session h3 { color: var(--fg); font-size: 15px; margin: 0; }
+.workspace-session p { margin: 5px 0 0; }
+.workspace-session > .btn { flex: none; }
+.project-workspace .modal-dialog > .task-launch { margin: 0; padding: 4px; border: 0; box-shadow: none; }
+.project-workspace .modal-dialog .row { flex-wrap: wrap; }
+.task-toolbar { display: grid; grid-template-columns: minmax(180px, 260px) minmax(200px, 1fr); gap: 16px; margin: 8px 0 24px; }
+.task-row { min-width: 0; padding: 24px 0; border-bottom: 1px solid var(--border); }
+.task-row__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.task-row__heading > div { min-width: 0; }
+.task-row h2 { font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; margin: 5px 0 8px; }
+.task-row p { overflow-wrap: anywhere; margin: 6px 0; }
+.task-row .badge { flex: none; }
+.task-reason { color: var(--fg-dim); }
+.task-actions { flex-wrap: wrap; margin: 14px 0 0; }
+.task-evidence { margin: 18px 0 0; padding: 16px; background: var(--bg-elev); border-left: 2px solid var(--border-strong); overflow-wrap: anywhere; }
+.task-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; margin: 0; font-size: 12px; }
+.task-evidence ol { padding-left: 22px; }
+.task-pagination { justify-content: center; padding: 24px 0; }
+.device-task-history > summary { cursor: pointer; padding: 10px 0; font-size: 13px; color: var(--fg-dim); }
+@media (max-width: 768px) {
+  html { scroll-padding-top: 80px; scroll-padding-bottom: calc(84px + var(--safe-bottom)); }
+  .shell a, .shell button, .shell input, .shell select, .shell summary { scroll-margin-top: 80px; scroll-margin-bottom: calc(84px + var(--safe-bottom)); }
+  .topbar { grid-template-columns: 1fr auto auto; padding: calc(6px + var(--safe-top)) 14px 6px; }
+  .topbar > .nav { position: fixed; top: auto; bottom: 0; left: 0; right: 0; display: flex; gap: 6px; border-top: 1px solid var(--border); padding: 8px 14px calc(8px + var(--safe-bottom)); background: var(--bg-elev); z-index: 25; }
+  .shell { padding-bottom: calc(72px + var(--safe-bottom)); }
+  .shell--workspace { padding-bottom: 0; }
+  .shell--workspace .topbar > .nav { display: none; }
+  .topbar .health { font-size: 11px; gap: 5px; }
+  .topbar .brand { font-size: 16px; }
+  .account-menu > summary { min-height: 44px; display: flex; align-items: center; padding: 8px; font-size: 13px; }
+  .workspace-heading { flex-wrap: wrap; gap: 16px; padding-bottom: 16px; }
+  .workspace-heading h1 { font-size: 24px; }
+  .workspace-heading > .row { width: 100%; }
+  .workspace-heading > .row > .btn { flex: 1; }
+  .workspace-sections { gap: 2px; margin-bottom: 16px; }
+  .workspace-sections > button { flex: 1; font-size: 12px; padding: 8px; white-space: nowrap; }
+  .project-workspace .workspace-sections > button { min-width: 80px; }
+  .workspace-session { gap: 10px; }
+  .workspace-session > .btn { max-width: 42%; white-space: normal; }
+  .task-toolbar { grid-template-columns: 1fr; gap: 12px; }
+  .task-row__heading { flex-wrap: wrap; gap: 4px; }
+  .task-row__heading > div { flex: 1 1 100%; }
+  .projects-page .project-card { padding: 18px; }
+  .projects-page .recent-work { padding: 14px 0; }
+  .recent-work:not(.recent-work--expanded) .recent-work__item ~ .recent-work__item { display: none; }
+  .recent-toggle--mobile { display: inline-flex; }
+  .workspace-content input, .task-toolbar input, .task-toolbar select { font-size: 16px; }
+}

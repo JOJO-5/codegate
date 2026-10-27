@@ -66,7 +66,7 @@ watch(() => [props.sessionId, props.provider, conn.isOpen], () => { epoch++; bus
           <small class="dim">重置：{{ date(w.resets_at) }}</small>
         </div>
       </template>
-      <details v-else class="small dim"><summary>暂不可用 · 查看原因</summary><p>{{ p.message || '额度暂不可用' }}</p></details>
+      <p v-else class="small dim" role="status">{{ p.message || '额度暂不可用，请稍后刷新' }}</p>
       <small class="dim">{{ p.source }}</small><br />
       <small class="dim">查询：{{ date(p.checked_at) }}</small>
     </article>

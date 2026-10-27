@@ -34,11 +34,13 @@ func (a *Agent) commandInventory() []protocol.CommandAvailability {
 	for _, spec := range cfg.AllowedCommands {
 		_, localConfig := a.cfg.FindCommand(spec.ID)
 		installed := commandInstalled(spec.Command)
+		modes, note := nativeLaunchInventory(spec)
 		if !localConfig && runtime.GOOS == "windows" { installed = installed && commandInstalled(spec.ID) }
 		out = append(out, protocol.CommandAvailability{
 			ID: spec.ID, Label: spec.Label, Kind: string(spec.Kind),
 			Installed: installed, Allowed: true, Managed: !localConfig,
 			Resume: len(spec.ResumeArgs) > 0, WebURL: spec.WebURL,
+			NativeLaunchModes: modes, NativeLaunchNote: note,
 		})
 		seen[spec.ID] = true
 	}

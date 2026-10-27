@@ -13,6 +13,8 @@ import WorkflowPanel from '../components/WorkflowPanel.vue'
 import ConversationRecovery from '../components/ConversationRecovery.vue'
 import NewProjectDialog from '../components/NewProjectDialog.vue'
 import ImmediateAgentRestart from '../components/ImmediateAgentRestart.vue'
+import NativeLaunchModePicker from '../components/NativeLaunchModePicker.vue'
+import { launchModeIssue } from '../lib/nativeLaunchModes'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
@@ -66,12 +68,14 @@ async function importLegacyPreferences(): Promise<void> {
 }
 const router = useRouter()
 const route = useRoute()
+const taskHistoryOpen = ref(route.hash === '#device-tasks')
 const continuingSession = ref<SessionSummary | null>(null)
 const newProjectOpen = ref(false)
 const pendingFile = ref('')
 async function projectReady(result: { path: string; filePath?: string; commandId: string; warning?: string; createdProject: boolean }): Promise<void> {
  newProjectOpen.value = false
  cwd.value = result.path
+ launchMode.value = ''
  worktree.value = false
  pendingFile.value = result.filePath ?? ''
  preferenceNotice.value = result.warning ?? `已创建：${result.filePath || result.path}`
@@ -204,6 +208,9 @@ const updateLabel = computed(() => {
 
 // ---- 新建会话表单 ----
 const presetId = ref('claude')
+const launchMode = ref('')
+watch([presetId, () => props.id], () => { launchMode.value = '' }, { flush: 'sync' })
+const nativeCommand = computed(() => reportedCommands.value?.find(c => c.id === presetId.value && c.allowed && c.installed))
 const cwd = ref('')
 const sessionName = ref('')
 const worktree = ref(false)
@@ -435,12 +442,16 @@ async function createSession(): Promise<void> {
     return
   }
 
+
+  const modeIssue = launchModeIssue(nativeCommand.value?.native_launch_modes, launchMode.value)
+  if (modeIssue) { createError.value = modeIssue; return }
   creating.value = true
   try {
     const size = estimateTerminalSize()
     const name = sessionName.value.trim()
     const s = await sessions.create(props.id, {
       commandId: preset.id,
+      launchMode: launchMode.value,
       worktree: worktree.value,
       cwd: cwd.value.trim(),
       cols: size.cols,
@@ -530,7 +541,7 @@ function showCreateForm(): void {
     <div v-if="hasLegacyPreferences" class="notice notice--info">此浏览器有旧版置顶或启动组合。<button class="btn btn--sm" type="button" :disabled="importingPreferences || preferences.saving" @click="importLegacyPreferences">{{ importingPreferences ? '正在导入…' : '导入到当前账号' }}</button></div>
     <div v-if="preferenceNotice" class="notice notice--info" role="status">{{ preferenceNotice }}</div>
     <nav class="section-nav" aria-label="设备功能">
-      <a href="#device-sessions">会话</a><a href="#device-tasks">后台任务</a><a href="#device-tools-heading">工具与设置</a>
+      <a href="#device-sessions">会话</a><RouterLink :to="{ name: 'tasks', query: { device: id } }">后台任务</RouterLink><a href="#device-tools-heading">工具与设置</a>
     </nav>
     <NewProjectDialog v-if="newProjectOpen" :device-id="id" :roots="allowedRoots" :commands="selectableCommands" :default-command="presetId" :default-parent="cwd" @close="newProjectOpen = false" @ready="projectReady" />
     <div class="device-workspace">
@@ -597,8 +608,12 @@ function showCreateForm(): void {
     </div>
 
     <section id="device-tasks" class="device-tasks" aria-label="后台任务">
+    <div class="card stack"><h2>后台任务</h2><p class="small dim">集中查看运行状态、预约和需要处理的事项。</p><RouterLink class="btn" :to="{ name: 'tasks', query: { device: id } }">查看此设备的任务</RouterLink></div>
+    <details class="device-task-history" :open="taskHistoryOpen || !!continuingSession" @toggle="taskHistoryOpen = ($event.target as HTMLDetailsElement).open"><summary>原有任务记录与历史管理</summary>
+    <template v-if="taskHistoryOpen || continuingSession">
     <ContinuationPanel :key="id" :device-id="id" :source="continuingSession" @close="continuingSession = null" />
     <WorkflowPanel :key="`workflow:${id}`" :device-id="id" />
+    </template></details>
     </section>
     </div>
     <aside class="device-sidebar" aria-label="启动与设备管理">
@@ -685,6 +700,7 @@ function showCreateForm(): void {
           />
         </div>
 
+        <NativeLaunchModePicker v-if="selectedPreset?.kind === 'tui'" id="device-native-mode" v-model="launchMode" :modes="nativeCommand?.native_launch_modes" :note="nativeCommand?.native_launch_note" :disabled="creating" />
         <div v-if="reportedCommands === undefined" class="notice notice--warn small">
           当前 Agent 尚未上报本机命令清单；预置列表仅供旧版本兼容，是否可运行仍由本机 allowed_commands 决定。
         </div>
