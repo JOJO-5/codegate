@@ -166,6 +166,9 @@ async function claimControl(): Promise<void> {
 const terminalReady = ref(false)
 const attachmentReady = ref(false)
 const attaching = ref(false)
+const attachmentRetryPending = ref(false)
+const attachmentRetryCount = ref(0)
+let attachmentRetryTimer: ReturnType<typeof setTimeout> | null = null
 let attachmentEpoch = 0
 let fullReplayQueued = false
 const replaying = ref(false)
@@ -781,12 +784,36 @@ function onControl(env: Envelope): void {
 // attach
 // ---------------------------------------------------------------------------
 
-async function attach(since: number, queueFullReplay = false): Promise<void> {
+function cancelAttachmentRetry(): void {
+  if (attachmentRetryTimer !== null) clearTimeout(attachmentRetryTimer)
+  attachmentRetryTimer = null
+  attachmentRetryPending.value = false
+}
+function stopAttachmentRetry(): void {
+  cancelAttachmentRetry()
+  errorText.value = '自动重连已停止，可手动重试或返回设备查看状态。'
+}
+function scheduleAttachmentRetry(error: unknown, epoch: number): void {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : ''
+  if (!['device_offline', 'timeout', 'request_outcome_unknown'].includes(String(code)) ||
+      disposed || attachmentRetryCount.value >= 6) return
+  const delay = Math.min(1000 * 2 ** attachmentRetryCount.value, 10_000)
+  attachmentRetryCount.value++
+  attachmentRetryPending.value = true
+  attachmentRetryTimer = setTimeout(() => {
+    attachmentRetryTimer = null
+    attachmentRetryPending.value = false
+    if (!disposed && epoch === attachmentEpoch && conn.isOpen && isLive.value) void attach(lastSeq, false, true)
+  }, delay)
+}
+async function attach(since: number, queueFullReplay = false, automatic = false): Promise<void> {
   if (!terminalReady.value || !conn.isOpen || !contextReady.value || !isLive.value) return
   if (attaching.value) {
     if (queueFullReplay) fullReplayQueued = true
     return
   }
+  cancelAttachmentRetry()
+  if (!automatic) attachmentRetryCount.value = 0
   const epoch = attachmentEpoch
   const revision = statusRevision
   attaching.value = true
@@ -844,7 +871,10 @@ async function attach(since: number, queueFullReplay = false): Promise<void> {
         summary.value = { ...summary.value, status: 'exited' }
         sessions.patch(sessionId.value, { status: 'exited' })
         errorText.value = null
-      } else errorText.value = humanizeError(e)
+      } else {
+        errorText.value = humanizeError(e)
+        scheduleAttachmentRetry(e, epoch)
+      }
     }
   } finally {
     if (epoch === attachmentEpoch) {
@@ -914,6 +944,8 @@ function goBack(): void {
 // socket and the terminal subscriptions, regardless of which is ready first.
 // The same path restores this exact session on subsequent connections.
 watch([() => conn.isOpen, terminalReady, contextReady, isLive], ([open, ready, known, live]) => {
+  cancelAttachmentRetry()
+  attachmentRetryCount.value = 0
   attachmentEpoch++
   fullReplayQueued = false
   attaching.value = false
@@ -1080,6 +1112,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disposed = true
+  cancelAttachmentRetry()
   contextEpoch++
   cancelClipboardRead()
   cancelTerminalTouch()
@@ -1217,6 +1250,11 @@ onUnmounted(() => {
         <div class="small faint">恢复后会自动接着上次的位置继续，不需要刷新</div>
       </div>
 
+      <div v-else-if="attachmentRetryPending" class="term__overlay" role="status">
+        <span class="small dim">电脑连接暂未恢复，正在自动接回原终端（{{ attachmentRetryCount }}/6）…</span>
+        <span class="small faint">只重新连接现有终端，不会新建对话；输入内容保留。</span>
+        <button class="btn btn--sm" type="button" @click="stopAttachmentRetry">停止自动重连</button>
+      </div>
       <div v-else-if="terminalReady && !attachmentReady" class="term__overlay">
         <span class="small dim">{{ errorText ? '暂未接回会话，请重试或返回设备查看状态' : '正在接回原会话…' }}</span>
         <button v-if="errorText" class="btn btn--sm" type="button" @click="attach(lastSeq)">重试连接</button>

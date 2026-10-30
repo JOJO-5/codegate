@@ -116,19 +116,18 @@ func (p *pendingRegistry) DropClient(c *ClientConn) int {
 // DropDevice 摘除某设备相关的全部待回请求（Agent 断线时调用）。
 func (p *pendingRegistry) DropDevice(deviceID string) int {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	n := 0
+	dropped := make(map[string]*pendingReq)
 	for k, r := range p.m {
 		if r.deviceID == deviceID {
 			delete(p.m, k)
-			if r.release != nil {
-				r.release()
-			}
-			n++
+			dropped[k] = r
 		}
 	}
-	return n
+	p.mu.Unlock()
+	for id, r := range dropped {
+		r.fail(id, "设备连接中断，尚未确认操作结果，请重新连接后核对状态")
+	}
+	return len(dropped)
 }
 
 // sweep 清理超时未回的请求，由后台清理循环调用。
@@ -136,25 +135,31 @@ func (p *pendingRegistry) DropDevice(deviceID string) int {
 // ★ 顺带给客户端回一条错误。
 //
 // 静默清理是不行的：前端的 UI 会永远停在 loading 上，用户以为
-// 「点了没反应」。回一条 timeout 错误至少能让它显示出「请求超时，请重试」。
+// 「点了没反应」。错误必须对应原请求，并区分失去回执与操作失败。
 func (p *pendingRegistry) sweep(now time.Time) {
 	p.mu.Lock()
-	var expired []*pendingReq
+	expired := make(map[string]*pendingReq)
 	for k, r := range p.m {
 		if now.After(r.expiresAt) {
 			delete(p.m, k)
-			expired = append(expired, r)
+			expired[k] = r
 		}
 	}
 	p.mu.Unlock()
 
-	for _, r := range expired {
-		if r.release != nil {
-			r.release()
-		}
-		sendErrorEnvelope(r.client.TrySendText, nil,
-			protocol.NewRetryableError(protocol.CodeInternal, "请求超时，请重试"))
+	for id, r := range expired {
+		r.fail(id, "等待设备回执超时，尚未确认操作结果，请先核对状态")
 	}
+}
+
+// The request already crossed the dispatch boundary. Losing its connection or
+// receipt cannot prove the operation failed; never encourage automatic replay.
+func (r *pendingReq) fail(requestID, message string) {
+	if r.release != nil {
+		r.release()
+	}
+	sendErrorEnvelope(r.client.TrySendText, &protocol.Envelope{RequestID: requestID},
+		protocol.NewError(protocol.CodeRequestOutcomeUnknown, message))
 }
 
 // Len 返回当前待回请求数量（诊断用）。

@@ -232,6 +232,85 @@ assert.equal(leaving.pasteDraft.value,'','unmounted view ignores clipboard compl
 console.log('PASS clipboard editing, cancel, permission recovery and navigation guards')
 
 const recovery=await component('../src/components/ConversationRecovery.vue')
+{
+ const originalTimers={setTimeout,clearTimeout},retryTimers=new Map();let timerId=0,retries=0
+ globalThis.setTimeout=(fn,delay)=>{const id=++timerId;retryTimers.set(id,{fn,delay});return id}
+ globalThis.clearTimeout=id=>retryTimers.delete(id)
+ const recovered={...ended,status:'running',session_id:'retry-original'}
+ __sessionRecovery.api.session=async()=>recovered
+ conn.attachTerminal=async()=>{retries++;throw Object.assign(Error('device offline'),{code:'device_offline',retryable:true})}
+ const retryView=view.setup({id:recovered.session_id},{expose:()=>{},emit:()=>{}})
+ const stopRetryView=unmounted.at(-1)
+ await retryView.loadContext();retryView.terminalReady.value=true;await nextTick();await nextTick()
+ assert.equal(retryView.attachmentRetryPending?.value,true,'offline Agent schedules safe reattach while browser socket stays open')
+ retryView.mobileDraft.value='keep my input'
+ for(let i=0;i<6;i++){
+  const pending=[...retryTimers.entries()][0];assert.ok(pending,'bounded recovery timer exists')
+  retryTimers.delete(pending[0]);pending[1].fn();await nextTick();await nextTick()
+ }
+ assert.equal(retries,7,'automatic reattach stops after six retries')
+ assert.equal(retryTimers.size,0,'retry budget cannot become an endless request loop')
+ assert.equal(retryView.mobileDraft.value,'keep my input')
+ conn.attachTerminal=async()=>({payload:{session:recovered,role:'controller',seq_to:0,seq_from:0}})
+ await retryView.attach(0)
+ assert.equal(retryView.attachmentReady.value,true,'manual retry can reconnect the same terminal after budget exhaustion')
+ conn.attachTerminal=async()=>{throw Object.assign(Error('device offline'),{code:'device_offline'})}
+ await retryView.attach(0)
+ stopRetryView()
+ assert.equal(retryTimers.size,0,'leaving the terminal cancels scheduled retries')
+ globalThis.setTimeout=originalTimers.setTimeout;globalThis.clearTimeout=originalTimers.clearTimeout
+}
+// A missing receipt does not prove restore failed. Check live state without
+// dispatching a second restore, and only navigate on a matching native identity.
+{
+ mounted=[]
+ const oldGet=__sessionRecovery.drafts.get,oldSet=__sessionRecovery.drafts.set
+ const savedRecovery=new Map()
+ __sessionRecovery.drafts.get=key=>savedRecovery.get(key)||''
+ __sessionRecovery.drafts.set=(key,value)=>value?savedRecovery.set(key,value):savedRecovery.delete(key)
+ let dispatched=0
+ conn.request=async()=>{dispatched++;throw Object.assign(Error('receipt lost'),{code:'request_outcome_unknown'})}
+ const uncertain=recovery.setup({source:ended},{expose:()=>{},emit:()=>{}})
+ mounted.forEach(fn=>fn());await nextTick();await nextTick()
+ assert.equal(uncertain.uncertain?.value,true,'lost receipt is explicitly uncertain rather than safely retryable')
+ await uncertain.restore()
+ assert.equal(dispatched,1,'uncertain recovery cannot blindly dispatch again')
+ mounted=[]
+ const reopened=recovery.setup({source:ended},{expose:()=>{},emit:()=>{}})
+ mounted.forEach(fn=>fn());await nextTick();await nextTick()
+ assert.equal(dispatched,1,'closing/reopening or refreshing cannot replay a restore with a missing receipt')
+ assert.equal(reopened.uncertain?.value,true,'unconfirmed intent survives dialog recreation')
+ sessions.sources={device:'live'}
+ const oldLoad=sessions.load,oldRecords=records.device
+ sessions.load=async()=>{}
+ records.device=[]
+ await uncertain.checkResult()
+ assert.equal(uncertain.uncertain.value,true,'absence of a live match does not prove the previous request failed')
+ assert.equal(uncertain.verifiedMissing?.value,true,'a fresh live check can enable an explicitly confirmed retry')
+ await uncertain.confirmRetry()
+ assert.equal(dispatched,1,'a fresh check alone is not authorization to replay recovery')
+ records.device=[{...ended,status:'running',session_id:'confirmed-restored'}]
+ const navigationCount=routes.length
+ await uncertain.checkResult()
+ assert.equal(dispatched,1,'checking recovery results never replays the restore request')
+ assert.equal(routes.length,navigationCount+1,uncertain.error.value)
+ assert.equal(routes.at(-1).params.id,'confirmed-restored','confirmed native identity resumes the actual restored terminal')
+ assert.equal(savedRecovery.size,0,'confirmed receipt clears the persisted recovery intent')
+ mounted=[]
+ const explicitRetry=recovery.setup({source:ended},{expose:()=>{},emit:()=>{}})
+ mounted.forEach(fn=>fn());await nextTick();await nextTick()
+ records.device=[]
+ await explicitRetry.checkResult()
+ explicitRetry.retryConfirmation.value=true
+ let retriedNative
+ conn.request=async(type,payload)=>{dispatched++;retriedNative=payload.native_id;return {payload:{session:{...ended,status:'running',session_id:'explicitly-retried'}}}}
+ await explicitRetry.confirmRetry()
+ assert.equal(dispatched,3,'a live check plus explicit confirmation authorizes exactly one additional restore')
+ assert.equal(retriedNative,'native','confirmed retry remains bound to the same native conversation')
+ assert.equal(savedRecovery.size,0)
+ sessions.load=oldLoad;records.device=oldRecords;routes.length=0;emitted.length=0
+ __sessionRecovery.drafts.get=oldGet;__sessionRecovery.drafts.set=oldSet
+}
 mounted=[];unmounted=[]
 let resolveRestore,restoreCalls=0
 conn.request=async type=>{

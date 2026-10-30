@@ -231,7 +231,7 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	for {
 		a.writeManagedHealth(false)
-		err := a.runOnce(ctx)
+		err := a.runOnce(ctx, bo.Reset)
 
 		if ctx.Err() != nil {
 			a.log.Info("收到退出信号，Agent 停止")
@@ -260,7 +260,7 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 // runOnce 完成一次完整的「连接 → 认证 → 服务」。
-func (a *Agent) runOnce(ctx context.Context) error {
+func (a *Agent) runOnce(ctx context.Context, onAuthenticated func()) error {
 	disp := newDispatcher(a.log)
 
 	// ---- 1. 建连 ----
@@ -286,9 +286,9 @@ func (a *Agent) runOnce(ctx context.Context) error {
 		return err
 	}
 
-	// 连上了才算一次成功：重置退避。
-	// （调用方看到 nil 以外的错误才会退避，所以这里只能通过"返回 nil 之外的路径"
-	//  来表达成功 —— 见 Run 里的处理。）
+	// Only a completed authentication resets the outer reconnect loop. Failed
+	// dials/handshakes keep their backoff; a later outage starts at the minimum.
+	onAuthenticated()
 	a.writeManagedHealth(true)
 	a.log.Info("已连接到 Server",
 		"server", a.cfg.ServerURL,

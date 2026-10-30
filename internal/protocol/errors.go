@@ -55,18 +55,19 @@ const (
 	// （devices.Get 走 404、authorizeDevice 走 403），
 	// 于是 /devices/{id} 和 /devices/{id}/sessions 对同一台别人的设备
 	// 给出了不同状态码 —— 那本身就是那个预言机。
-	CodeNotFound           ErrorCode = "not_found"
-	CodeDeviceOffline      ErrorCode = "device_offline"
-	CodeDeviceNotPaired    ErrorCode = "device_not_paired"
-	CodeSessionNotFound    ErrorCode = "session_not_found"
-	CodeSessionLimit       ErrorCode = "session_limit_reached"
-	CodeCwdNotAllowed      ErrorCode = "cwd_not_allowed"
-	CodeCommandNotAllowed  ErrorCode = "command_not_allowed"
-	CodeAlreadyAttached    ErrorCode = "session_already_attached"
-	CodeFrameTooLarge      ErrorCode = "frame_too_large"
-	CodeRateLimited        ErrorCode = "rate_limited"
-	CodeInternal           ErrorCode = "internal"
-	CodeVersionUnsupported ErrorCode = "version_unsupported"
+	CodeNotFound              ErrorCode = "not_found"
+	CodeDeviceOffline         ErrorCode = "device_offline"
+	CodeRequestOutcomeUnknown ErrorCode = "request_outcome_unknown"
+	CodeDeviceNotPaired       ErrorCode = "device_not_paired"
+	CodeSessionNotFound       ErrorCode = "session_not_found"
+	CodeSessionLimit          ErrorCode = "session_limit_reached"
+	CodeCwdNotAllowed         ErrorCode = "cwd_not_allowed"
+	CodeCommandNotAllowed     ErrorCode = "command_not_allowed"
+	CodeAlreadyAttached       ErrorCode = "session_already_attached"
+	CodeFrameTooLarge         ErrorCode = "frame_too_large"
+	CodeRateLimited           ErrorCode = "rate_limited"
+	CodeInternal              ErrorCode = "internal"
+	CodeVersionUnsupported    ErrorCode = "version_unsupported"
 )
 
 // CodeError 是**可以安全回传给对端**的错误。
