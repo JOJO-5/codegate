@@ -265,7 +265,7 @@ func (a *Agent) nativeHistory(tool, cwd string, env []string, key, target string
 		if d.IsDir() {
 			return nil
 		}
-		if !strings.HasSuffix(path, ".jsonl") && !strings.HasSuffix(path, ".jsonl.zstd") {
+		if !strings.HasSuffix(path, ".jsonl") && !strings.HasSuffix(path, ".jsonl.zstd") && !strings.HasSuffix(path, ".jsonl.zst") {
 			return nil
 		}
 		item, recordCwd := readNativeHeader(path, tool)
@@ -301,7 +301,17 @@ func (a *Agent) nativeHistory(tool, cwd string, env []string, key, target string
 }
 func sameDirectory(a, b string) bool {
 	if os.PathSeparator == '\\' {
-		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+		if strings.EqualFold(filepath.Clean(a), filepath.Clean(b)) {
+			return true
+		}
+		// Native CLIs may persist the extended Windows spelling (\\?\D:\...).
+		// Compare filesystem identities without weakening workspace authorization.
+		left, err := os.Stat(a)
+		if err != nil {
+			return false
+		}
+		right, err := os.Stat(b)
+		return err == nil && os.SameFile(left, right)
 	}
 	return filepath.Clean(a) == filepath.Clean(b)
 }
@@ -361,7 +371,7 @@ func readNativeHeader(path, tool string) (protocol.NativeConversation, string) {
 	}
 	defer f.Close()
 	var reader io.Reader = f
-	if strings.HasSuffix(path, ".zstd") {
+	if strings.HasSuffix(path, ".zstd") || strings.HasSuffix(path, ".zst") {
 		z, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(8<<20))
 		if err != nil {
 			return protocol.NativeConversation{}, ""

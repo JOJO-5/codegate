@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -12,6 +13,100 @@ import (
 	"github.com/jojo/codegate/internal/protocol"
 	"github.com/klauspost/compress/zstd"
 )
+
+func TestCodexHistoryCompressedRollouts(t *testing.T) {
+	for _, suffix := range []string{".jsonl", ".jsonl.zst", ".jsonl.zstd"} {
+		t.Run(suffix, func(t *testing.T) {
+			home, cwd, other := t.TempDir(), t.TempDir(), t.TempDir()
+			root := filepath.Join(home, "sessions")
+			if err := os.MkdirAll(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			id := uuid.NewString()
+			for _, dir := range []string{cwd, other} {
+				nativeID := id
+				if dir == other {
+					nativeID = uuid.NewString()
+				}
+				header, err := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": nativeID, "cwd": dir, "timestamp": "2026-11-10T12:00:00Z"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				data := append(header, '\n')
+				if suffix != ".jsonl" {
+					encoder, err := zstd.NewWriter(nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					data = encoder.EncodeAll(data, nil)
+					encoder.Close()
+				}
+				if err := os.WriteFile(filepath.Join(root, nativeID+suffix), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := &Agent{}
+			for _, target := range []string{"", id, uuid.NewString()} {
+				history, err := a.nativeHistory("codex", cwd, []string{"CODEX_HOME=" + home}, "", target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if target != "" && target != id {
+					if len(history) != 0 {
+						t.Fatal("missing identity matched another conversation")
+					}
+				} else if len(history) != 1 || history[0].ID != id {
+					t.Fatalf("original conversation missing: history=%v", history)
+				}
+			}
+		})
+	}
+}
+
+func TestCodexSQLiteHistoryWindowsExtendedDirectory(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows native directory spelling")
+	}
+	home, cwd, other := t.TempDir(), t.TempDir(), t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec("CREATE TABLE threads (id TEXT,title TEXT,cwd TEXT,created_at INTEGER,updated_at INTEGER,archived INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	if _, err = db.Exec("INSERT INTO threads VALUES(?,?,?,100,200,0)", id, "Original conversation", `\\?\`+cwd); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"", id} {
+		history, err := (&Agent{}).nativeHistory("codex", cwd, []string{"CODEX_HOME=" + home}, "", target)
+		if err != nil || len(history) != 1 || history[0].ID != id {
+			t.Fatalf("same directory must match native spelling: history=%v err=%v", history, err)
+		}
+	}
+	if sameDirectory(cwd, `\\?\`+other) {
+		t.Fatal("different native directory matched")
+	}
+}
+
+// Explicit local opt-in: lookup only, never starts a CLI or emits history text.
+func TestCodexNativeHistoryReadOnlySmoke(t *testing.T) {
+	id := os.Getenv("CODEGATE_CODEX_HISTORY_SMOKE_ID")
+	if id == "" {
+		t.Skip("local native history lookup not requested")
+	}
+	cwd := os.Getenv("CODEGATE_CODEX_HISTORY_SMOKE_CWD")
+	history, err := (&Agent{}).nativeHistory("codex", cwd, BuildEnv(Config{}, 80, 24), "", id)
+	if err != nil {
+		t.Fatal("native history lookup failed", err)
+	}
+	if len(history) != 1 || history[0].ID != id {
+		t.Fatal("original native identity was not found uniquely")
+	}
+	t.Log("original native identity found uniquely; read-only lookup; model calls=0")
+}
 
 func TestNativeHistorySameDirectoryAndZstd(t *testing.T) {
 	root := t.TempDir()

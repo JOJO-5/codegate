@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jojo/codegate/internal/processutil"
 	"github.com/jojo/codegate/internal/protocol"
+	"github.com/klauspost/compress/zstd"
 )
 
 // Runs a real installed CLI against isolated state and a local fake provider.
@@ -93,6 +94,50 @@ func TestCodexDaemonTerminalSmoke(t *testing.T) {
 		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "CodeGate isolated recovery marker"}}},
 	}}, &injected); err != nil {
 		t.Fatal("persist isolated native history", err)
+	}
+	if os.Getenv("CODEGATE_CODEX_COMPRESSED_SMOKE") == "1" {
+		// Exercise a cold native read after compression, only in our isolated home.
+		control.close()
+		stop := exec.CommandContext(ctx, binary, "app-server", "daemon", "stop")
+		stop.Env = env
+		processutil.Background(stop)
+		if err = stop.Run(); err != nil {
+			t.Fatal(err)
+		}
+		if err = filepath.WalkDir(filepath.Join(home, "sessions"), func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
+				return walkErr
+			}
+			data, e := os.ReadFile(path)
+			if e != nil {
+				return e
+			}
+			encoder, e := zstd.NewWriter(nil)
+			if e != nil {
+				return e
+			}
+			defer encoder.Close()
+			if e = os.WriteFile(path+".zst", encoder.EncodeAll(data, nil), 0600); e != nil {
+				return e
+			}
+			return os.Remove(path)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		cold := ResolvedCommand{Command: binary}
+		if err = a.prepareCodexDaemon(&cold, env, root); err != nil {
+			t.Fatal(err)
+		}
+		control, err = openCodexControl(ctx, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer control.close()
+		var resumed json.RawMessage
+		if err = control.call("thread/resume", map[string]any{"threadId": started.Thread.ID, "excludeTurns": true}, &resumed); err != nil {
+			t.Fatal("cold native resume from compressed rollout", err)
+		}
+		t.Log("cold native resume from isolated .jsonl.zst succeeded; model calls=0")
 	}
 	// Starting a second terminal must preserve the same running service/thread.
 	second := ResolvedCommand{Command: binary}
