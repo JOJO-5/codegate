@@ -34,7 +34,7 @@ func (s *SQLite) WorkflowByNonce(ctx context.Context, user, nonce string) (*prot
 	return s.Workflow(ctx, id)
 }
 func (s *SQLite) Workflows(ctx context.Context, user, device string) ([]*protocol.Workflow, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT payload_json,user_id FROM workflows WHERE (?='' OR user_id=?) AND (?='' OR device_id=?) ORDER BY CASE WHEN state IN ('ready_for_review','cancelled','failed','needs_review') THEN 1 ELSE 0 END,updated_at DESC,id LIMIT 100", user, user, device, device)
+	rows, err := s.db.QueryContext(ctx, "SELECT payload_json,user_id FROM workflows WHERE COALESCE(json_extract(payload_json,'$.deleted_at'),0)=0 AND (?='' OR user_id=?) AND (?='' OR device_id=?) ORDER BY CASE WHEN state IN ('ready_for_review','cancelled','failed','needs_review') THEN 1 ELSE 0 END,updated_at DESC,id LIMIT 100", user, user, device, device)
 	if err != nil {
 		return nil, wrapErr(err)
 	}

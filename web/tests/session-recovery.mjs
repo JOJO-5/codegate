@@ -19,16 +19,17 @@ const conn=reactive({isOpen:true,attachTerminal:async()=>{attachCalls++;throw Ob
 const routes=[],emitted=[]
 globalThis.__sessionRecovery={ref,computed,watch,nextTick,conn,sessions,classifyCommand,nativeCLI,inProject,
   api:{session:async()=>ended,deviceGit:async()=>({branch:'main'})},
-  router:{push:async route=>routes.push(route)},
+  router:{push:async route=>{routes.push(route)}},
   devices:{items:[{id:'device',online:true}],byId:()=>({online:true}),load:async()=>{}},
   drafts:{get:()=>'',set:()=>{},owner:'owner'},preferences:{fontSize:14,load:async()=>{},projects:[]},route:reactive({query:{}}),
   onMounted:fn=>mounted.push(fn),onUnmounted:fn=>unmounted.push(fn),
 }
 const shim=url(`const t=globalThis.__sessionRecovery;export const {ref,computed,watch,nextTick,onMounted,onUnmounted}=t;
 export const onBeforeUnmount=t.onUnmounted,defineComponent=x=>x;
+export const NavigationFailureType={duplicated:16},isNavigationFailure=(failure,type)=>failure?.type===type;
 export const api=t.api,useConnStore=()=>t.conn,useSessionsStore=()=>t.sessions,useDevicesStore=()=>t.devices,usePreferencesStore=()=>t.preferences,useDraftsStore=()=>t.drafts,useRouter=()=>t.router,useRoute=()=>t.route;
 export const humanizeError=e=>e.message,statusKind=()=>'',statusLabel=s=>s,classifyCommand=t.classifyCommand,nativeCLI=t.nativeCLI,inProject=t.inProject,sessionQuotaProvider=s=>s==='codex'?'codex':'',canRecoverConversation=s=>s.command==='codex',liveSession=s=>['starting','running','detached'].includes(s.status);
-export const MessageType={SessionSignal:'session.signal',ConversationList:'conversation.list',ConversationRestore:'conversation.restore',SessionExit:'session.exit',SessionClosed:'session.closed'},FrameFlag={},FrameType={},TASK_TEMPLATES=[],RouterLink={};
+export const MessageType={SessionSignal:'session.signal',ConversationList:'conversation.list',ConversationRestore:'conversation.restore',SessionExit:'session.exit',SessionClosed:'session.closed',SessionConnection:'session.connection'},FrameFlag={},FrameType={},TASK_TEMPLATES=[],RouterLink={};
 export const estimateTerminalSize=()=>({cols:80,rows:24}),absoluteTime=String,workspaceFilePath=()=>'',terminalTextSnapshot=()=>{},captureImagePaste=()=>{};
 export class Terminal{};export class FitAddon{};export class WebLinksAddon{};export class SearchAddon{};export class Unicode11Addon{};export class WebglAddon{};export default {};`)
 async function component(path){
@@ -308,6 +309,46 @@ const recovery=await component('../src/components/ConversationRecovery.vue')
  assert.equal(dispatched,3,'a live check plus explicit confirmation authorizes exactly one additional restore')
  assert.equal(retriedNative,'native','confirmed retry remains bound to the same native conversation')
  assert.equal(savedRecovery.size,0)
+
+ // A failed second request says nothing about the first missing receipt.
+ mounted=[]
+ let retryRequests=0
+ conn.request=async()=>{retryRequests++;throw Object.assign(Error(retryRequests===1?'lost receipt':'device offline'),{code:retryRequests===1?'request_outcome_unknown':'device_offline'})}
+ const stillUnknown=recovery.setup({source:ended},{expose:()=>{},emit:()=>{}})
+ mounted.forEach(fn=>fn());await nextTick();await nextTick()
+ records.device=[]
+ await stillUnknown.checkResult();stillUnknown.retryConfirmation.value=true
+ await stillUnknown.confirmRetry()
+ assert.equal(retryRequests,2)
+ assert.equal(stillUnknown.uncertain.value,true,'a definitive rejection of the retry cannot resolve the original uncertain restore')
+ assert.equal(savedRecovery.size,1,'the original pending recovery survives a rejected retry and refresh')
+ await stillUnknown.restore()
+ assert.equal(retryRequests,2,'normal retry stays gated until the original outcome is checked')
+
+ savedRecovery.clear();mounted=[]
+ const originalPush=__sessionRecovery.router.push
+ __sessionRecovery.router.push=async()=>{throw Error('navigation failed')}
+ conn.request=async()=>({payload:{session:{...ended,status:'running',session_id:'restored-before-navigation'}}})
+ const navigationFailure=recovery.setup({source:ended},{expose:()=>{},emit:()=>{}})
+ mounted.forEach(fn=>fn());await nextTick();await nextTick();await nextTick()
+ assert.equal(navigationFailure.uncertain.value,true,'navigation failure after restore must not offer another dispatch')
+ assert.equal(savedRecovery.size,1,'a restored terminal whose navigation failed remains recoverable after refresh')
+ __sessionRecovery.router.push=originalPush
+ conn.request=async()=>{throw Error('checking a known restored terminal must not dispatch')}
+ await navigationFailure.checkResult()
+ assert.equal(savedRecovery.size,0,'read-only result check can open the already restored terminal after navigation recovers')
+ assert.equal(routes.at(-1).params.id,'restored-before-navigation')
+ for(const failureType of [4,16]){
+  mounted=[]
+  __sessionRecovery.router.push=async()=>({type:failureType})
+  conn.request=async()=>({payload:{session:{...ended,status:'running',session_id:'restored-aborted-navigation'}}})
+  const aborted=recovery.setup({source:ended},{expose:()=>{},emit:()=>{}})
+  mounted.forEach(fn=>fn());await nextTick();await nextTick();await nextTick()
+  assert.equal(savedRecovery.size,failureType===4?1:0,'aborted navigation retains intent; an already open destination resolves it')
+  if(failureType===4)assert.equal(aborted.uncertain.value,true)
+  savedRecovery.clear()
+ }
+ __sessionRecovery.router.push=originalPush
  sessions.load=oldLoad;records.device=oldRecords;routes.length=0;emitted.length=0
  __sessionRecovery.drafts.get=oldGet;__sessionRecovery.drafts.set=oldSet
 }
@@ -356,3 +397,67 @@ assert.equal(latePanel.conversations.value.length,0,'old legacy history cannot o
 finishBoundRestore({payload:{session:active}});await nextTick();await nextTick()
 assert.ok(routes.some(r=>r.params?.id===active.session_id),'late binding recovery reaches the resumed conversation')
 console.log('PASS closed-session context, cold refresh, switching, stale live status, recovery duplicate/stale/error guards')
+
+// Browser WS may remain open while the PC Agent loses its independent link.
+const reconnectSession={...active,status:'running',session_id:'agent-reconnect'}
+__sessionRecovery.api.session=async()=>reconnectSession
+let reattachments=0
+conn.attachTerminal=async()=>{reattachments++;return {payload:{session:reconnectSession,role:'controller',seq_from:0,seq_to:0}}}
+const interrupted=view.setup({id:reconnectSession.session_id},{expose:()=>{},emit:()=>{}})
+await interrupted.loadContext();interrupted.terminalReady.value=true
+await nextTick();await nextTick()
+assert.equal(interrupted.attachmentReady.value,true,'fixture starts with an attached terminal')
+interrupted.mobileDraft.value='keep input across PC disconnection'
+interrupted.onControl({type:'session.connection',payload:{session_id:reconnectSession.session_id,state:'offline'}})
+assert.equal(interrupted.attachmentReady.value,false,'Agent disconnect invalidates terminal input even when browser WS stays open')
+const attempts=reattachments
+interrupted.onControl({type:'session.connection',payload:{session_id:'other',state:'ready'}})
+await nextTick();assert.equal(reattachments,attempts,'other terminals cannot trigger recovery')
+interrupted.onControl({type:'session.connection',payload:{session_id:reconnectSession.session_id,state:'ready'}})
+await nextTick();await nextTick()
+assert.equal(interrupted.attachmentReady.value,true,'Agent sync reattaches the same terminal without a page refresh')
+assert.equal(reattachments,attempts+1)
+assert.equal(interrupted.mobileDraft.value,'keep input across PC disconnection')
+interrupted.onControl({type:'session.connection',payload:{session_id:reconnectSession.session_id,state:'offline'}})
+interrupted.stopAttachmentRetry()
+const stopped=reattachments
+interrupted.onControl({type:'session.connection',payload:{session_id:reconnectSession.session_id,state:'ready'}})
+await nextTick();assert.equal(reattachments,stopped,'explicitly stopping recovery remains respected')
+let finishPreOutageAttach
+conn.attachTerminal=()=>new Promise(resolve=>{finishPreOutageAttach=resolve})
+const preOutage=interrupted.attach(0)
+interrupted.onControl({type:'session.connection',payload:{session_id:reconnectSession.session_id,state:'offline'}})
+finishPreOutageAttach({payload:{session:reconnectSession,role:'controller',seq_from:0,seq_to:0}});await preOutage
+assert.equal(interrupted.attachmentReady.value,false,'late attach receipt cannot overwrite a newer offline notification')
+assert.equal(interrupted.mobileDraft.value,'keep input across PC disconnection')
+console.log('PASS independent Agent disconnect, sync recovery, draft retention and explicit stop')
+
+// Stopping while the receipt is in flight must also stop late failures/replay.
+{
+ const originalTimers={setTimeout,clearTimeout},timers=new Map();let timerID=0,attempts=0,finish,fail
+ globalThis.setTimeout=(fn,delay)=>{const id=++timerID;timers.set(id,{fn,delay});return id}
+ globalThis.clearTimeout=id=>timers.delete(id)
+ const session={...active,status:'running',session_id:'stop-pending-attach'}
+ __sessionRecovery.api.session=async()=>session
+ conn.attachTerminal=()=>{attempts++;return new Promise((resolve,reject)=>{finish=resolve;fail=reject})}
+ const stoppedView=view.setup({id:session.session_id},{expose:()=>{},emit:()=>{}})
+ const dispose=unmounted.at(-1)
+ await stoppedView.loadContext();stoppedView.terminalReady.value=true;await nextTick()
+ stoppedView.mobileDraft.value='keep after stopping'
+ stoppedView.stopAttachmentRetry()
+ fail(Object.assign(Error('late timeout'),{code:'timeout'}));await nextTick();await nextTick()
+ assert.equal(timers.size,0,'a late failed attach cannot re-arm retries after stop')
+ assert.match(stoppedView.errorText.value,/已停止/,'late failure cannot replace the stop acknowledgement')
+ await stoppedView.attach(0,true,true)
+ assert.equal(attempts,1,'automatic replay cannot bypass an explicit stop')
+ const manual=stoppedView.attach(0)
+ assert.equal(attempts,2,'manual retry remains available after stopping')
+ stoppedView.stopAttachmentRetry()
+ finish({payload:{session,role:'controller',seq_from:0,seq_to:0}});await manual
+ assert.equal(stoppedView.attachmentReady.value,false,'a late success cannot reactivate input after stop')
+ assert.equal(stoppedView.attaching.value,false,'stop leaves a usable manual recovery state')
+ assert.equal(stoppedView.mobileDraft.value,'keep after stopping')
+ dispose()
+ globalThis.setTimeout=originalTimers.setTimeout;globalThis.clearTimeout=originalTimers.clearTimeout
+}
+console.log('PASS stopping pending attachment ignores late receipts and automatic replay')

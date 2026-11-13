@@ -165,6 +165,8 @@ async function claimControl(): Promise<void> {
 }
 const terminalReady = ref(false)
 const attachmentReady = ref(false)
+const agentAvailable = ref(true)
+const attachmentRetryStopped = ref(false)
 const attaching = ref(false)
 const attachmentRetryPending = ref(false)
 const attachmentRetryCount = ref(0)
@@ -717,7 +719,7 @@ function onFrame(frame: DecodedFrame): void {
     // 服务端明确告知有字节被丢弃 —— 只能全量重放，增量补不回来。
     replaying.value = true
     lastSeq = 0
-    void attach(0, true)
+    void attach(0, true, true)
     return
   }
 
@@ -730,6 +732,24 @@ function onControl(env: Envelope): void {
   if (typeof sid !== 'string' || sid !== sessionId.value) return
 
   switch (env.type) {
+    case MessageType.SessionConnection: {
+      const state = p?.['state']
+      if (state !== 'offline' && state !== 'ready') return
+      cancelAttachmentRetry()
+      attachmentEpoch++
+      attaching.value = false; attachmentReady.value = false; fullReplayQueued = false
+      role.value = 'viewer'; replaying.value = false
+      agentAvailable.value = state === 'ready'
+      if (state === 'offline') {
+        errorText.value = null
+      } else if (attachmentRetryStopped.value) {
+        errorText.value = '电脑已重新连接，自动接回已停止；可手动重试连接。'
+      } else if (terminalReady.value && conn.isOpen && contextReady.value && isLive.value) {
+        attachmentRetryCount.value = 0
+        void attach(lastSeq, false, true)
+      }
+      break
+    }
     case MessageType.SessionExit: {
       statusRevision++
       replaying.value = false
@@ -790,13 +810,20 @@ function cancelAttachmentRetry(): void {
   attachmentRetryPending.value = false
 }
 function stopAttachmentRetry(): void {
+  attachmentRetryStopped.value = true
   cancelAttachmentRetry()
+  attachmentEpoch++
+  attaching.value = false
+  attachmentReady.value = false
+  fullReplayQueued = false
+  replaying.value = false
+  role.value = 'viewer'
   errorText.value = '自动重连已停止，可手动重试或返回设备查看状态。'
 }
 function scheduleAttachmentRetry(error: unknown, epoch: number): void {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : ''
   if (!['device_offline', 'timeout', 'request_outcome_unknown'].includes(String(code)) ||
-      disposed || attachmentRetryCount.value >= 6) return
+      disposed || attachmentRetryStopped.value || attachmentRetryCount.value >= 6) return
   const delay = Math.min(1000 * 2 ** attachmentRetryCount.value, 10_000)
   attachmentRetryCount.value++
   attachmentRetryPending.value = true
@@ -807,13 +834,13 @@ function scheduleAttachmentRetry(error: unknown, epoch: number): void {
   }, delay)
 }
 async function attach(since: number, queueFullReplay = false, automatic = false): Promise<void> {
-  if (!terminalReady.value || !conn.isOpen || !contextReady.value || !isLive.value) return
+  if (disposed || (automatic && attachmentRetryStopped.value) || !terminalReady.value || !conn.isOpen || !agentAvailable.value || !contextReady.value || !isLive.value) return
   if (attaching.value) {
     if (queueFullReplay) fullReplayQueued = true
     return
   }
   cancelAttachmentRetry()
-  if (!automatic) attachmentRetryCount.value = 0
+  if (!automatic) { attachmentRetryCount.value = 0; attachmentRetryStopped.value = false }
   const epoch = attachmentEpoch
   const revision = statusRevision
   attaching.value = true
@@ -881,7 +908,7 @@ async function attach(since: number, queueFullReplay = false, automatic = false)
       attaching.value = false
       if (fullReplayQueued && terminalReady.value && conn.isOpen) {
         fullReplayQueued = false
-        void attach(0)
+        void attach(0, false, true)
       }
     }
   }
@@ -944,6 +971,9 @@ function goBack(): void {
 // socket and the terminal subscriptions, regardless of which is ready first.
 // The same path restores this exact session on subsequent connections.
 watch([() => conn.isOpen, terminalReady, contextReady, isLive], ([open, ready, known, live]) => {
+  // A new browser link has no subscriptions yet; probe by attaching rather
+  // than waiting for an Agent notification addressed to its old connection.
+  if (!open) agentAvailable.value = true
   cancelAttachmentRetry()
   attachmentRetryCount.value = 0
   attachmentEpoch++
@@ -952,7 +982,7 @@ watch([() => conn.isOpen, terminalReady, contextReady, isLive], ([open, ready, k
   attachmentReady.value = false
   role.value = 'viewer'
   replaying.value = false
-  if (open && ready && known && live) void attach(lastSeq)
+  if (open && ready && known && live && !attachmentRetryStopped.value) void attach(lastSeq, false, true)
 }, { flush: 'sync' })
 
 // ---------------------------------------------------------------------------
@@ -1237,17 +1267,26 @@ onUnmounted(() => {
       <div v-else-if="attaching" class="term__overlay" role="status">
         <span class="spinner" />
         <span class="small dim">正在接回原会话…</span>
+        <button class="btn btn--sm" type="button" @click="stopAttachmentRetry">停止自动接回</button>
       </div>
 
       <div v-else-if="replaying" class="term__overlay">
         <span class="spinner" />
         <span class="small dim">正在重放历史输出…</span>
+        <button class="btn btn--sm" type="button" @click="stopAttachmentRetry">停止自动接回</button>
       </div>
 
       <div v-else-if="!conn.isOpen" class="term__overlay">
         <span class="spinner" />
         <div class="small dim">{{ conn.healthText }}</div>
-        <div class="small faint">恢复后会自动接着上次的位置继续，不需要刷新</div>
+        <div class="small faint">{{ attachmentRetryStopped ? '自动接回已停止，网络恢复后可手动重试连接。' : '恢复后会自动接着上次的位置继续，不需要刷新' }}</div>
+      </div>
+
+      <div v-else-if="!agentAvailable" class="term__overlay" role="status">
+        <span class="small dim">电脑 Agent 连接暂时中断，浏览器与服务器仍保持连接。</span>
+        <span class="small faint">{{ attachmentRetryStopped ? '自动接回已停止，电脑上线后可手动重试。' : '等待电脑重新上线后自动接回原终端，不会新建对话；未发送输入保留。' }}</span>
+        <button v-if="!attachmentRetryStopped" class="btn btn--sm" type="button" @click="stopAttachmentRetry">停止自动接回</button>
+        <button class="btn btn--ghost btn--sm" type="button" @click="goBack">返回设备</button>
       </div>
 
       <div v-else-if="attachmentRetryPending" class="term__overlay" role="status">

@@ -49,6 +49,7 @@ type Workflow struct {
 	DiffTruncated  bool           `json:"diff_truncated,omitempty"`
 	CreatedAt      int64          `json:"created_at"`
 	UpdatedAt      int64          `json:"updated_at"`
+	DeletedAt      int64          `json:"deleted_at,omitempty"`
 }
 
 func WorkflowTerminal(state string) bool {

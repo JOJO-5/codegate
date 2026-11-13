@@ -170,6 +170,9 @@ type AuditLog struct {
 //
 // 方法按域分组，顺序与 migrations/0001_init.sql 一致，便于对照。
 type Store interface {
+	ReserveSessionCreation(context.Context, *SessionCreation) (bool, error)
+	SessionCreation(context.Context, string, string, string) (*SessionCreation, error)
+	ResolveSessionCreation(context.Context, string, string, string, *protocol.Envelope) error
 	InsertWorkflow(context.Context,*protocol.Workflow,string) error
 	Workflow(context.Context,string)(*protocol.Workflow,error)
 	WorkflowByNonce(context.Context,string,string)(*protocol.Workflow,error)

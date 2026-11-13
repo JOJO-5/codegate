@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useDevicesStore } from '../stores/devices'
 import { usePreferencesStore } from '../stores/preferences'
@@ -8,7 +8,7 @@ import { useDraftsStore } from '../stores/drafts'
 import { continuationLabels } from '../lib/continuationLabels'
 import { workflowLabels, workflowTerminal } from '../lib/workflows'
 import { absoluteTime } from '../lib/format'
-import { inProject, type WorkItem, type WorkGroup } from '../lib/projectWork'
+import { inProject, canRemoveWork, type WorkItem, type WorkGroup } from '../lib/projectWork'
 const route = useRoute(), devices = useDevicesStore(), preferences = usePreferencesStore(), catalog = useWorkCatalogStore(), drafts = useDraftsStore()
 const initialDevice = typeof route.query.device === 'string' ? route.query.device : ''
 const initialCwd = typeof route.query.cwd === 'string' ? route.query.cwd : ''
@@ -27,13 +27,36 @@ const scoped = computed(() => catalog.items.filter(t => scopedDevices.value.some
 const counts = computed(() => Object.fromEntries(groups.map(g => [g.id, scoped.value.filter(t => t.group === g.id).length])))
 const filtered = computed(() => scoped.value.filter(t => t.group === group.value && `${t.title} ${t.cwd} ${t.detail}`.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())).sort((a,b) => b.updatedAt - a.updatedAt))
 const shown = computed(() => filtered.value.slice((page.value - 1) * 20, page.value * 20))
+const selected = ref<string[]>([]), removalTargets = ref<WorkItem[]>([])
+const removable = computed(() => shown.value.filter(canRemoveWork))
+const selectedItems = computed(() => shown.value.filter(t => selected.value.includes(t.key) && canRemoveWork(t)))
+const undoButton = ref<HTMLButtonElement | null>(null), historyButton = ref<HTMLButtonElement | null>(null)
+const confirmRemovalButton = ref<HTMLButtonElement | null>(null)
+let removalTrigger: HTMLElement | null = null
+watch([deviceId, cwd, group, query, page], () => { selected.value = []; removalTargets.value = [] })
+function selectPage(): void { selected.value = selectedItems.value.length === removable.value.length ? [] : removable.value.map(t => t.key) }
+async function requestRemoval(targets: WorkItem[]): Promise<void> {
+  removalTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  removalTargets.value = [...targets]
+  await nextTick()
+  confirmRemovalButton.value?.focus()
+}
+function keepRecords(): void { removalTargets.value = []; removalTrigger?.focus(); removalTrigger = null }
+async function removeRecords(): Promise<void> {
+  const keys = new Set(removalTargets.value.map(t => t.key))
+  await catalog.remove(catalog.items.filter(t => keys.has(t.key)))
+  if (disposed) return
+  removalTargets.value = []; selected.value = selected.value.filter(key => catalog.items.some(t => t.key === key))
+  await nextTick(); (undoButton.value || historyButton.value)?.focus()
+}
+async function undoRecords(): Promise<void> { await catalog.undoRemoval(); if (!disposed) { await nextTick(); (undoButton.value || historyButton.value)?.focus() } }
 const loading = computed(() => scopedDevices.value.some(d => catalog.loading[d.id]))
 const incomplete = computed(() => scopedDevices.value.some(d => !!catalog.errors[d.id] || !catalog.snapshots[d.id]?.continuationLoaded || !catalog.snapshots[d.id]?.workflowLoaded))
 const missingDevice = computed(() => !!deviceId.value && !devices.byId(deviceId.value))
 watch([deviceId, cwd, group, query], () => { page.value = 1 })
 watch(() => filtered.value.length, length => { page.value = Math.min(page.value, Math.max(1, Math.ceil(length / 20))) })
 watch(deviceId, () => { cwd.value = ''; void refresh() })
-async function refresh(): Promise<void> { await devices.load(); await Promise.all(scopedDevices.value.map(d => catalog.load(d.id))) }
+async function refresh(): Promise<void> { await devices.load(true); await Promise.all(scopedDevices.value.map(d => catalog.load(d.id))) }
 function label(t: WorkItem): string { return (t.kind === 'continuation' ? continuationLabels : workflowLabels)[t.state] || '状态待核对' }
 function canCancel(t: WorkItem): boolean { return t.kind === 'workflow' ? !workflowTerminal(t.state) : !['completed', 'cancelled', 'failed'].includes(t.state) }
 function projectFor(t: WorkItem) { return preferences.projects.find(p => p.device_id === t.deviceId && inProject(p.cwd, t.cwd, devices.byId(t.deviceId)?.platform)) }
@@ -46,24 +69,29 @@ const stepStates: Record<string, string> = { completed: '执行成功', failed: 
 </script>
 <template>
   <main class="page page--wide tasks-page">
-    <header class="workspace-heading"><div><p class="projects-eyebrow">保持进展，看清阻塞</p><h1>任务</h1><p class="dim">预约、续跑与主 Agent 调度，在这里查看和处理。</p></div><button class="btn" :disabled="loading || devices.loading" @click="refresh">{{ loading ? '读取中…' : '刷新任务' }}</button></header>
+    <header class="workspace-heading"><div><p class="projects-eyebrow">保持进展，看清阻塞</p><h1>任务</h1><p class="dim">预约、续跑与主 Agent 调度，在这里查看和处理。</p></div><button ref="historyButton" class="btn" :disabled="loading || devices.loading" @click="refresh">{{ loading ? '读取中…' : '刷新任务' }}</button></header>
     <p v-if="devices.error" class="notice notice--err" role="alert">{{ devices.error }} <button class="btn btn--sm" @click="devices.load(true).then(refresh)">重试读取设备</button></p>
     <div class="task-toolbar"><label class="field">设备<select v-model="deviceId"><option value="">全部设备</option><option v-for="d in devices.items" :key="d.id" :value="d.id">{{ d.name }}{{ d.online ? '' : '（离线）' }}</option></select></label><label class="field">查找任务<input v-model="query" type="search" placeholder="名称、目录或等待原因…" /></label></div>
     <p v-if="cwd" class="notice small">仅显示项目：<span class="mono">{{ cwd }}</span> <button class="btn btn--ghost btn--sm" @click="cwd = ''">查看此设备全部任务</button></p>
     <p v-if="missingDevice" class="notice notice--warn" role="status">所选设备不可用，可能已解绑；请选择其他设备。</p>
     <div class="workspace-sections" role="group" aria-label="任务状态"><button v-for="g in groups" :key="g.id" class="btn btn--ghost" :aria-pressed="group === g.id" @click="group = g.id">{{ g.label }} <span class="projects-count">{{ counts[g.id] }}</span></button></div>
+    <p v-if="drafts.storageUnavailable" class="notice notice--warn small" role="status">标签页存储不可用，移除后的撤销入口只能在当前页面保留；刷新前请先完成撤销。</p>
+    <div v-if="catalog.undoEntries.length || catalog.historyNotice" class="notice stack" role="status"><p v-if="catalog.historyNotice">{{ catalog.historyNotice }}</p><button v-if="catalog.undoEntries.length" ref="undoButton" class="btn btn--sm" :disabled="catalog.historyBusy" @click="undoRecords">{{ catalog.historyBusy ? '正在处理记录…' : `撤销移除（${catalog.undoEntries.length}）` }}</button></div>
+    <div v-if="removable.length" class="history-toolbar"><div class="row"><button class="btn btn--ghost btn--sm" :disabled="catalog.historyBusy" @click="selectPage">{{ selectedItems.length === removable.length ? '取消本页选择' : '选择本页可移除记录' }}</button><button class="btn btn--sm" :disabled="catalog.historyBusy || !selectedItems.length" @click="requestRemoval(selectedItems)">移除所选（{{ selectedItems.length }}）</button></div><p class="small dim">仅管理已停止或已交付的记录；移除可撤销，文件与执行证据保留，也不代表验收通过。</p></div>
+    <section v-if="removalTargets.length" class="notice stack" aria-labelledby="remove-history-title"><h2 id="remove-history-title">移除 {{ removalTargets.length }} 条任务记录？</h2><p>从列表移除所选记录，不停止任务、不删除代码或对话。移除后可撤销。</p><div class="row"><button ref="confirmRemovalButton" class="btn" :disabled="catalog.historyBusy" @click="removeRecords">{{ catalog.historyBusy ? '正在移除…' : `确认移除 ${removalTargets.length} 条记录` }}</button><button class="btn btn--ghost" :disabled="catalog.historyBusy" @click="keepRecords">保留记录</button></div></section>
     <p v-if="(loading || devices.loading) && !scoped.length" class="empty" role="status">正在读取任务…</p>
     <p v-if="incomplete && !loading" class="notice notice--warn" role="status">部分记录尚未确认，下方数量仅包含已读取结果。请刷新重试。</p>
     <template v-for="d in scopedDevices" :key="d.id"><p v-if="catalog.errors[d.id]" class="notice notice--err small" role="alert">{{ d.name }} · {{ catalog.errors[d.id] }}。已有记录保留。</p><p v-else-if="!d.online" class="small dim">{{ d.name }} 离线：显示服务端最后记录，执行与停止状态等待设备确认。</p><p v-if="(catalog.snapshots[d.id]?.continuations.length || 0) >= 200 || (catalog.snapshots[d.id]?.workflows.length || 0) >= 200" class="small dim">{{ d.name }} 已达到单次列表上限；这里不是全部历史。</p></template>
     <p v-if="!devices.items.length && !devices.loading && !devices.error" class="empty">连接设备后可在项目内开始工作。<RouterLink :to="{ name: 'devices' }">管理设备</RouterLink></p>
     <p v-else-if="!shown.length && !loading && !devices.loading && !incomplete && !devices.error && !missingDevice" class="empty">{{ query.trim() ? '没有匹配的任务。' : `暂无${groups.find(g => g.id === group)?.label}任务。` }}</p>
     <article v-for="t in shown" :key="t.key" class="task-row">
+      <label v-if="canRemoveWork(t)" class="history-select"><input v-model="selected" type="checkbox" :value="t.key" :disabled="catalog.historyBusy" :aria-label="'选择记录：' + t.title" /><span>选择记录</span></label>
       <div class="task-row__heading"><div><p class="small dim">{{ devices.byId(t.deviceId)?.name }} · {{ t.kind === 'workflow' ? '主 Agent 调度' : t.continuation?.mode === 'live_quota' ? '原终端自动续跑' : '后台预约与续跑' }}</p><h2>{{ t.title }}</h2></div><span class="badge" :class="t.group === 'review' ? 'badge--warn' : 'badge--idle'">{{ label(t) }}</span></div>
       <p v-if="t.detail" class="task-reason">{{ t.detail }}</p>
       <p class="small dim mono project-path--compact" :title="t.cwd">{{ t.cwd }}</p>
       <p v-if="t.state === 'ready_for_review'" class="notice small">自动执行已交付，仍需你核对改动和验证结果。</p>
       <p v-if="t.state === 'needs_review'" class="notice small">派发已暂停，请核对原因与原对话；不会自动重放。</p>
-      <div class="row task-actions"><button class="btn btn--sm" :aria-expanded="opened === t.key" @click="opened = opened === t.key ? '' : t.key">{{ opened === t.key ? '收起过程' : '查看过程与结果' }}</button><RouterLink v-if="projectFor(t)" class="btn btn--ghost btn--sm" :to="{ name: 'project', params: { key: projectFor(t)!.key } }">进入项目</RouterLink><button v-if="canCancel(t)" class="btn btn--sm" :disabled="catalog.cancelling[t.key] || t.state === 'cancelling'" @click="catalog.cancel(t)">{{ t.state === 'cancelling' ? '等待停止确认' : catalog.cancelling[t.key] ? '正在请求取消…' : '取消任务' }}</button></div>
+      <div class="row task-actions"><button class="btn btn--sm" :aria-expanded="opened === t.key" @click="opened = opened === t.key ? '' : t.key">{{ opened === t.key ? '收起过程' : '查看过程与结果' }}</button><RouterLink v-if="projectFor(t)" class="btn btn--ghost btn--sm" :to="{ name: 'project', params: { key: projectFor(t)!.key } }">进入项目</RouterLink><button v-if="canCancel(t)" class="btn btn--sm" :disabled="catalog.cancelling[t.key] || t.state === 'cancelling'" @click="catalog.cancel(t)">{{ t.state === 'cancelling' ? '等待停止确认' : catalog.cancelling[t.key] ? '正在请求取消…' : '取消任务' }}</button><button v-if="canRemoveWork(t)" class="btn btn--ghost btn--sm" :disabled="catalog.historyBusy" @click="requestRemoval([t])">移除记录</button></div>
       <p v-if="catalog.notices[t.key]" class="notice small" role="status">{{ catalog.notices[t.key] }}</p>
       <div v-if="opened === t.key" class="task-evidence stack">
         <p class="small dim">更新：{{ absoluteTime(t.updatedAt) }} · {{ devices.byId(t.deviceId)?.online ? '服务端任务记录' : '设备离线，等待同步' }}</p>

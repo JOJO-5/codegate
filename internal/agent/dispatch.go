@@ -445,6 +445,11 @@ func (a *Agent) onSessionDetach(env *protocol.Envelope) {
 
 	sess, err := a.mgr.MustGet(sid)
 	if err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			a.forgetViews(sid)
+			a.reply(env, protocol.TypeSessionDetached, protocol.SessionDetachedPayload{SessionID: req.SessionID, Reason: "already_closed"})
+			return
+		}
 		a.replyError(env, err)
 		return
 	}

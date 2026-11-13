@@ -14,6 +14,8 @@ import ConversationRecovery from '../components/ConversationRecovery.vue'
 import NewProjectDialog from '../components/NewProjectDialog.vue'
 import ImmediateAgentRestart from '../components/ImmediateAgentRestart.vue'
 import NativeLaunchModePicker from '../components/NativeLaunchModePicker.vue'
+import TaskLaunch from '../components/TaskLaunch.vue'
+import { useDraftsStore } from '../stores/drafts'
 import { launchModeIssue } from '../lib/nativeLaunchModes'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
@@ -34,6 +36,10 @@ import { canRecoverConversation } from '../lib/conversationSessions'
 const props = defineProps<{ id: string }>()
 
 const auth = useAuthStore()
+const drafts = useDraftsStore()
+const legacyPendingKey = computed(() => `launch-pending:${props.id}:device:${props.id}`)
+const legacyPending = computed(() => !!drafts.get(legacyPendingKey.value))
+let launchGeneration = 0
 const devices = useDevicesStore()
 const sessions = useSessionsStore()
 const conn = useConnStore()
@@ -400,6 +406,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  launchGeneration++
   dshPageActive = false
   unsubscribeControl?.()
   unsubscribeControl = null
@@ -425,6 +432,9 @@ function createdText(s: SessionSummary): string {
 }
 
 async function createSession(): Promise<void> {
+  if (creating.value || legacyPending.value) return
+  const owner = drafts.owner
+  const current = launchGeneration, deviceId = props.id, intentKey = legacyPendingKey.value
   createError.value = null
 
   if (!conn.isOpen) {
@@ -449,7 +459,7 @@ async function createSession(): Promise<void> {
   try {
     const size = estimateTerminalSize()
     const name = sessionName.value.trim()
-    const s = await sessions.create(props.id, {
+    const options = {
       commandId: preset.id,
       launchMode: launchMode.value,
       worktree: worktree.value,
@@ -458,7 +468,12 @@ async function createSession(): Promise<void> {
       rows: size.rows,
       ...(name === '' ? {} : { name }),
       // 新建始终是全新 CLI 对话；接回原会话请使用下方的会话列表。
-    })
+    }
+    const nonce = crypto.randomUUID()
+    drafts.set(intentKey, JSON.stringify({ nonce, options, task: '', ...(pendingFile.value ? {prompt:`请查看这个文件，并等待我的具体要求：${JSON.stringify(pendingFile.value)}`} : {}) }))
+    if (drafts.storageUnavailable) { createError.value = '无法保存启动标识，请允许此标签页存储后重试；尚未派发。'; drafts.set(intentKey, ''); return }
+    const s = await sessions.create(deviceId, { ...options, nonce })
+    if (owner !== drafts.owner || current !== launchGeneration || deviceId !== props.id) return
 
     localStorage.setItem(cwdKey.value, cwd.value.trim())
     sessionName.value = ''
@@ -467,7 +482,11 @@ async function createSession(): Promise<void> {
       pendingFile.value = ''
     }
     await router.push({ name: 'session', params: { id: s.session_id } })
+    if (owner === drafts.owner) drafts.set(intentKey, '')
   } catch (e) {
+    if (owner !== drafts.owner || current !== launchGeneration || deviceId !== props.id) return
+    const code = e && typeof e === 'object' && 'code' in e ? e.code : ''
+    if (code && !['timeout','request_outcome_unknown','internal'].includes(String(code))) drafts.set(intentKey, '')
     createError.value = humanizeError(e)
   } finally {
     creating.value = false
@@ -515,6 +534,10 @@ function showCreateForm(): void {
   const heading = document.getElementById('create-session-heading')
   heading?.focus({ preventScroll: true })
   heading?.scrollIntoView({ block: 'start' })
+}
+function closeCreateForm(): void {
+  const panel = document.getElementById('device-create') as HTMLDetailsElement | null
+  if (panel) panel.open = false
 }
 </script>
 
@@ -624,7 +647,8 @@ function showCreateForm(): void {
         <span v-if="!conn.isOpen" class="badge badge--warn">连接未就绪</span>
       </div>
 
-      <form class="stack" @submit.prevent="createSession">
+      <TaskLaunch v-if="legacyPending && !creating" :device-id="id" :cwd="cwd" :label="device?.name || '当前设备'" :command-id="presetId" :intent-key="'device:' + id" @close="closeCreateForm" />
+      <form v-else class="stack" @submit.prevent="createSession">
         <div v-if="shortcuts.length" class="field">
           <label for="launch-shortcut">常用启动组合</label>
           <div class="row">

@@ -38,22 +38,23 @@ const (
 	TypeConversationRestore Type = "conversation.restore"
 	TypeConversationBound   Type = "conversation.bound"
 
-	TypeSessionSync     Type = "session.sync"
-	TypeSessionCreate   Type = "session.create"
-	TypeSessionCreated  Type = "session.created"
-	TypeSessionList     Type = "session.list"
-	TypeSessionListed   Type = "session.list.result"
-	TypeSessionGet      Type = "session.get"
-	TypeSessionInfo     Type = "session.info"
-	TypeSessionAttach   Type = "session.attach"
-	TypeSessionAttached Type = "session.attached"
-	TypeSessionDetach   Type = "session.detach"
-	TypeSessionDetached Type = "session.detached"
-	TypeSessionClose    Type = "session.close"
-	TypeSessionClosed   Type = "session.closed"
-	TypeSessionResize   Type = "session.resize"
-	TypeSessionSignal   Type = "session.signal"
-	TypeSessionExit     Type = "session.exit"
+	TypeSessionSync       Type = "session.sync"
+	TypeSessionCreate     Type = "session.create"
+	TypeSessionCreated    Type = "session.created"
+	TypeSessionList       Type = "session.list"
+	TypeSessionListed     Type = "session.list.result"
+	TypeSessionGet        Type = "session.get"
+	TypeSessionInfo       Type = "session.info"
+	TypeSessionAttach     Type = "session.attach"
+	TypeSessionAttached   Type = "session.attached"
+	TypeSessionDetach     Type = "session.detach"
+	TypeSessionDetached   Type = "session.detached"
+	TypeSessionClose      Type = "session.close"
+	TypeSessionClosed     Type = "session.closed"
+	TypeSessionResize     Type = "session.resize"
+	TypeSessionSignal     Type = "session.signal"
+	TypeSessionExit       Type = "session.exit"
+	TypeSessionConnection Type = "session.connection"
 
 	// ---- 多客户端（§7.6）----
 	TypeSessionClaimControl Type = "session.claim_control"
@@ -179,6 +180,7 @@ var allowedSenders = map[Type]Sender{
 	TypeWebStopped:         SentByAgent,
 
 	// ---- 只有 Server 能发（对 Agent 的应答 / 对客户端的通知）----
+	TypeSessionConnection:  SentByServer,
 	TypeAgentChallenge:     SentByServer,
 	TypeAgentReady:         SentByServer,
 	TypeAgentPairCode:      SentByServer,

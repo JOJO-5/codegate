@@ -175,6 +175,47 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 201, row)
 }
+
+// Removal only changes visibility; it does not accept a delivery, erase evidence,
+// stop execution, or release the original nonce for reuse.
+func (s *Server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
+	user, _ := userIDFromContext(r.Context())
+	device := r.PathValue("id")
+	if _, err := s.authorizeDevice(r.Context(), user, device); err != nil {
+		writeProtoError(w, err)
+		return
+	}
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+	row, err := s.store.Workflow(r.Context(), r.PathValue("workflow"))
+	if err != nil || row.UserID != user || row.DeviceID != device {
+		writeProtoError(w, errNoAccess())
+		return
+	}
+	if row.State != "cancelled" && row.State != "failed" && row.State != "ready_for_review" {
+		writeError(w, 409, "task_not_finished", "执行或停止结果尚未确认，请先核对任务，不能移除记录")
+		return
+	}
+	deleted := s.now().UnixMilli()
+	if r.Method == "POST" {
+		deleted = 0
+	}
+	if (row.DeletedAt == 0) != (deleted == 0) {
+		expected := row.Revision
+		row.DeletedAt = deleted
+		row.Revision++
+		ok, e := s.store.UpdateWorkflow(r.Context(), row, expected)
+		if e != nil {
+			writeProtoError(w, e)
+			return
+		}
+		if !ok {
+			writeError(w, 409, "task_changed", "记录已变化，请刷新核对")
+			return
+		}
+	}
+	writeJSON(w, 200, row)
+}
 func (s *Server) handleWorkflowCancel(w http.ResponseWriter, r *http.Request) {
 	user, _ := userIDFromContext(r.Context())
 	device := r.PathValue("id")

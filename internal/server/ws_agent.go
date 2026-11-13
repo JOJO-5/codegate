@@ -637,6 +637,16 @@ func (s *agentSession) onAuthenticated(env *protocol.Envelope) error {
 // 「这条消息到底是响应还是自发推送」—— 见 onAuthenticated 里
 // session.closed 的分支。
 func (s *agentSession) routeToClient(env *protocol.Envelope) bool {
+	if env.Type == protocol.TypeError {
+		failure, decodeErr := protocol.DecodePayload[protocol.ErrorPayload](env)
+		if decodeErr == nil && failure.Code != "" && failure.Code != protocol.CodeRequestOutcomeUnknown {
+			ctx, cancel := s.dbCtx()
+			if err := s.srv.store.ResolveSessionCreation(ctx, s.ac.UserID, s.ac.DeviceID, env.ReplyTo, env); err != nil {
+				s.srv.log.Warn("保存启动失败回执失败", "err", err)
+			}
+			cancel()
+		}
+	}
 	p, ok := s.srv.pending.TakeFromAgent(env.ReplyTo, s.ac.DeviceID, s.ac.UserID)
 	if !ok {
 		// 找不到对应请求：可能已被超时清理，也可能是 Agent 主动推送。
@@ -645,6 +655,17 @@ func (s *agentSession) routeToClient(env *protocol.Envelope) bool {
 		s.srv.log.Debug("Agent 响应找不到待回请求",
 			"type", env.Type, "reply_to", env.ReplyTo, "device_id", s.ac.DeviceID)
 		return false
+	}
+	// Old Agents report not-found when detach follows close/reap/restart. The
+	// authorized reply proves there is no view left; finish the local cleanup as
+	// an idempotent detach. Offline/timeout/forbidden must not take this path.
+	if p.kind == protocol.TypeSessionDetach && env.Type == protocol.TypeError {
+		failure, err := protocol.DecodePayload[protocol.ErrorPayload](env)
+		if err == nil && failure.Code == protocol.CodeSessionNotFound {
+			env.Type = protocol.TypeSessionDetached
+			env.SessionID = p.sessionID
+			env.Payload, _ = json.Marshal(protocol.SessionDetachedPayload{SessionID: p.sessionID, Reason: "already_closed"})
+		}
 	}
 
 	// ★ 先做副作用，再转发。
@@ -801,6 +822,9 @@ func (s *agentSession) handleSessionSync(env *protocol.Envelope) error {
 	}
 
 	s.ac.SetSessions(ids)
+	// A completed sync establishes which old processes survived. Reattach can
+	// now succeed, or definitively discover an ended process after Agent restart.
+	s.srv.reg.NotifyAgentReady(s.ac)
 	s.srv.log.Info("会话对账完成", "device_id", s.ac.DeviceID, "sessions", len(ids))
 	return nil
 }
@@ -837,6 +861,9 @@ func (s *agentSession) handleSessionCreated(env *protocol.Envelope) error {
 	m := sessionMetaFromSummary(s.ac.DeviceID, s.ac.UserID, sum)
 	if err := s.srv.store.UpsertSession(ctx, m); err != nil {
 		s.srv.log.Warn("写入新会话失败", "session_id", sum.SessionID, "err", err)
+	}
+	if err := s.srv.store.ResolveSessionCreation(ctx, s.ac.UserID, s.ac.DeviceID, env.ReplyTo, env); err != nil {
+		s.srv.log.Warn("保存启动回执失败", "err", err)
 	}
 
 	s.ac.AddSession(sum.SessionID)

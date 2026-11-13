@@ -40,7 +40,7 @@ export interface TaskProgress {sequence:number;started_at:number;observed_at:num
 export interface ContinuationTask { id:string;device_id:string;session_id:string;source:SessionSummary;prompt:string;mode:string;due_at:number;state:string;attempt:number;detail?:string;output?:string;created_at?:number;updated_at?:number;deleted_at?:number;progress?:TaskProgress }
 export interface WorkflowProfile { id: string; label: string; command_id: string; tool: string; model?: string; provider?: string; free: boolean }
 export interface WorkflowStep { id: string; kind: string; profile_id?: string; profile_label?:string; native_id?: string; state: string; instruction?: string; output?: string }
-export interface Workflow { id: string; device_id: string; goal: string; cwd: string; master_id: string; master_label?:string; master_native_id?: string; free_workers: boolean; max_turns: number; max_minutes: number; state: string; detail?: string; worktree?: string; branch?: string; base_commit?: string; revision: number; steps: WorkflowStep[]; diff?: string; diff_truncated?: boolean; created_at: number; updated_at: number }
+export interface Workflow { id: string; device_id: string; goal: string; cwd: string; master_id: string; master_label?:string; master_native_id?: string; free_workers: boolean; max_turns: number; max_minutes: number; state: string; detail?: string; worktree?: string; branch?: string; base_commit?: string; revision: number; steps: WorkflowStep[]; diff?: string; diff_truncated?: boolean; created_at: number; updated_at: number; deleted_at?: number }
 export interface WorkflowInput { nonce: string; goal: string; cwd: string; master_id: string; free_workers: boolean; max_turns: number; max_minutes: number }
 const BASE = '/api/v1'
 
@@ -505,10 +505,13 @@ export const api = {
   workflows(id: string): Promise<{workflows: Workflow[]}> { return request('GET', `/devices/${encodeURIComponent(id)}/workflows`) },
   createWorkflow(id: string, body: WorkflowInput): Promise<Workflow> { return request('POST', `/devices/${encodeURIComponent(id)}/workflows`, body) },
   cancelWorkflow(id: string, workflow: string): Promise<Workflow> { return request('POST', `/devices/${encodeURIComponent(id)}/workflows/${encodeURIComponent(workflow)}/cancel`) },
+  deleteWorkflow(id: string, workflow: string): Promise<Workflow> { return request('DELETE', `/devices/${encodeURIComponent(id)}/workflows/${encodeURIComponent(workflow)}`) },
+  restoreWorkflow(id: string, workflow: string): Promise<Workflow> { return request('POST', `/devices/${encodeURIComponent(id)}/workflows/${encodeURIComponent(workflow)}/restore`) },
   continuations(id:string):Promise<{tasks:ContinuationTask[]}> {return request('GET',`/devices/${encodeURIComponent(id)}/continuations`)},
   createContinuation(id:string,body:{session_id:string;native_id:string;prompt:string;mode:string;due_at:number;max_run_minutes:number;nonce:string;max_retries?:number;retry_errors?:boolean;quota_wait_minutes?:number}):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations`,body)},
   cancelContinuation(id:string,task:string):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}/cancel`)},
   deleteContinuation(id:string,task:string):Promise<ContinuationTask> {return request('DELETE',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}`)},
+  sessionCreation(id: string, nonce: string): Promise<{ state: 'pending' | 'resolved' | 'not_received'; result?: { type: string; payload?: { session?: SessionSummary; message?: string; code?: string } } }> { return request('GET', `/devices/${encodeURIComponent(id)}/session-creations/${encodeURIComponent(nonce)}`) },
   restoreContinuation(id:string,task:string):Promise<ContinuationTask> {return request('POST',`/devices/${encodeURIComponent(id)}/continuations/${encodeURIComponent(task)}/restore`)},
   // ---- 配对（两阶段）----
 

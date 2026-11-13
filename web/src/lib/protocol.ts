@@ -137,6 +137,7 @@ export const MessageType = {
   SessionResize: 'session.resize',
   SessionSignal: 'session.signal',
   SessionExit: 'session.exit',
+  SessionConnection: 'session.connection',
 
   // ---- 多客户端（§7.6）----
   SessionClaimControl: 'session.claim_control',
@@ -304,6 +305,7 @@ export interface NativeLaunchMode { id: string; label: string; description: stri
 
 /** `protocol.SessionCreatePayload`。 */
 export interface SessionCreatePayload {
+  nonce?: string
   launch_mode?: string
   worktree?: boolean
   device_id: string

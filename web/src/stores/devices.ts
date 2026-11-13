@@ -9,16 +9,30 @@
  * 会让「连接中」变成「白屏」。
  */
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { api, type DeviceDTO, type PairPreview } from '../lib/api'
 import { humanizeError } from '../lib/format'
+import { useAuthStore } from './auth'
 
 export const useDevicesStore = defineStore('devices', () => {
   const items = ref<DeviceDTO[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
   const loaded = ref(false)
+  const checkedAt = ref<Record<string, number>>({})
+  const confirmed = ref<Record<string, boolean>>({})
+  let generation = 0, lastLoaded = 0
+  let pending: Promise<void> | undefined
+  const revisions = new Map<string, number>()
+  const auth = useAuthStore()
+  watch(() => auth.user?.id, reset, { flush: 'sync' })
+
+  function onlineState(id: string, now = Date.now()): 'online' | 'offline' | 'unknown' {
+    const device = byId(id)
+    if (!device || !confirmed.value[id] || now - (checkedAt.value[id] ?? 0) > 30000) return 'unknown'
+    return device.online ? 'online' : 'offline'
+  }
 
   const onlineCount = computed(() => items.value.filter((d) => d.online).length)
 
@@ -34,21 +48,32 @@ export const useDevicesStore = defineStore('devices', () => {
     return items.value.find((d) => d.id === id)
   }
 
-  async function load(force = false): Promise<void> {
-    if (loading.value) return
-    // 已有数据且不是强制刷新时直接返回：设备列表变化很慢，
-    // 每次进页面都重新拉一遍只会让界面闪。
-    if (loaded.value && !force) return
-
+  function load(force = false): Promise<void> {
+    if (pending) return pending
+    if (loaded.value && !force && Date.now() - lastLoaded < 15000) return Promise.resolve()
+    const current = generation
+    const request = loadDevices(current).finally(() => { if (current === generation) { pending = undefined; loading.value = false } })
+    pending = request
+    return request
+  }
+  async function loadDevices(current: number): Promise<void> {
+    const started = new Map(revisions)
     loading.value = true
     error.value = null
     try {
-      items.value = await api.listDevices()
+      const rows = await api.listDevices()
+      if (current !== generation) return
+      const changed = (id: string) => started.get(id) !== revisions.get(id)
+      const previous = new Map(items.value.map(d => [d.id, d]))
+      items.value = rows.flatMap(d => changed(d.id) ? previous.has(d.id) ? [previous.get(d.id)!] : [] : [d])
       loaded.value = true
+      lastLoaded = Date.now()
+      checkedAt.value = Object.fromEntries(items.value.map(d => [d.id, changed(d.id) ? checkedAt.value[d.id] ?? 0 : lastLoaded]))
+      confirmed.value = Object.fromEntries(items.value.map(d => [d.id, changed(d.id) ? confirmed.value[d.id] ?? false : true]))
     } catch (e) {
+      if (current !== generation) return
       error.value = humanizeError(e)
-    } finally {
-      loading.value = false
+      confirmed.value = Object.fromEntries(items.value.map(d => [d.id, started.get(d.id) !== revisions.get(d.id) && !!confirmed.value[d.id]]))
     }
   }
 
@@ -56,18 +81,25 @@ export const useDevicesStore = defineStore('devices', () => {
   function patch(id: string, changes: Partial<DeviceDTO>): void {
     const i = items.value.findIndex((d) => d.id === id)
     if (i >= 0) {
+      revisions.set(id, (revisions.get(id) ?? 0) + 1)
       items.value[i] = { ...items.value[i], ...changes }
+      if (changes.online !== undefined) { checkedAt.value[id] = Date.now(); confirmed.value[id] = true }
     }
   }
 
   async function rename(id: string, name: string): Promise<void> {
+    const current = generation
     const updated = await api.renameDevice(id, name)
+    if (current !== generation) return
     const i = items.value.findIndex((d) => d.id === id)
-    if (i >= 0) items.value[i] = updated
+    if (i >= 0) patch(id, { name: updated.name })
   }
 
   async function remove(id: string): Promise<void> {
+    const current = generation
     await api.deleteDevice(id)
+    if (current !== generation) return
+    revisions.set(id, (revisions.get(id) ?? 0) + 1)
     items.value = items.value.filter((d) => d.id !== id)
   }
 
@@ -85,6 +117,9 @@ export const useDevicesStore = defineStore('devices', () => {
   }
 
   function reset(): void {
+    generation++; pending = undefined; lastLoaded = 0; loading.value = false
+    revisions.clear()
+    checkedAt.value = {}; confirmed.value = {}
     items.value = []
     loaded.value = false
     error.value = null
@@ -98,6 +133,7 @@ export const useDevicesStore = defineStore('devices', () => {
     loaded,
     onlineCount,
     byId,
+    checkedAt, onlineState,
     load,
     patch,
     rename,

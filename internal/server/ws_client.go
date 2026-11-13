@@ -232,6 +232,9 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		return
 	}
 
+	if s.existingCreation(env, deviceID, false) {
+		return
+	}
 	agent, ok := s.srv.reg.Agent(deviceID)
 	if !ok {
 		// 可重试：设备可能正在重连。
@@ -328,6 +331,9 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 	}
 	// Replay frames precede session.attached on the Agent connection. Subscribe
 	// before forwarding attach so the initial screen is not silently dropped.
+	if s.existingCreation(env, deviceID, true) {
+		return
+	}
 	var release func()
 	if env.Type == protocol.TypeSessionAttach && !s.c.IsAttached(sessionID) {
 		s.srv.reg.Subscribe(sessionID, s.c)
@@ -382,6 +388,14 @@ func (s *clientSession) routeRequest(env *protocol.Envelope) {
 		}
 		s.srv.log.Warn("转发请求失败：Agent 发送队列已满",
 			"device_id", deviceID, "type", env.Type)
+		// The queue rejected the request before dispatch; persist a definitive
+		// failure so a reserved intention is not stuck waiting for an Agent reply.
+		if env.Type == protocol.TypeSessionCreate {
+			ctx, cancel := s.dbCtx()
+			receipt := protocol.NewErrorEnvelope(env.RequestID, protocol.NewRetryableError(protocol.CodeInternal, "设备繁忙，本次启动未派发，请重新提交"))
+			_ = s.srv.store.ResolveSessionCreation(ctx, s.c.UserID, deviceID, env.RequestID, receipt)
+			cancel()
+		}
 		sendErrorEnvelope(s.c.TrySendText, env,
 			protocol.NewRetryableError(protocol.CodeInternal, "设备繁忙，请稍后重试"))
 		return

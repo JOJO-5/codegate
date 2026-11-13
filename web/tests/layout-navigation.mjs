@@ -43,17 +43,23 @@ assert.ok(!projects.includes('移除入口'), 'project management stays inside i
 assert.ok(!projects.includes('class="repository-browser"'), 'repository scanning is requested explicitly')
 const scanningFailure = await render('../src/views/ProjectsView.vue', { ...projectState, adding: true, discoveryStarted: true, scanFailed: true })
 assert.match(scanningFailure, /<summary[^>]*>[\s\S]*?扫描有问题[\s\S]*?<\/summary>/, 'collapsed discovery still signals a scan failure')
-const workspaceState = { ...projectState, project, device: { online: true, platform: 'linux' }, reason: '', section: 'sessions', sections: [], search: '', records: [], shown: [], removed: false, launch: false, recovering: null, statusLabel: s => s, canRecoverConversation: () => false }
+const workspaceState = { ...projectState, sessions: {...projectState.sessions,sources:{device:'live'}}, project, presence: 'online', listState: undefined, liveConfirmed: false, toolName: () => 'Codex CLI', device: { online: true, platform: 'linux' }, reason: '', section: 'sessions', sections: [], search: '', records: [], shown: [], removed: false, launch: false, recovering: null, statusLabel: s => s, canRecoverConversation: () => false, absoluteTime: String }
 const projectSessionsFailed = await render('../src/views/ProjectView.vue', {
   ...workspaceState,
-  sessions: { ...projectState.sessions, error: '读取会话失败' },
+  listState: { error: '读取会话失败' },
 })
 assert.ok(!projectSessionsFailed.includes('此目录还没有会话'), 'failed project session reads must not claim an empty directory')
 const projectSessionsEmpty = await render('../src/views/ProjectView.vue', workspaceState)
 assert.match(projectSessionsEmpty, /此目录还没有会话/)
+const projectSessionsInitial = await render('../src/views/ProjectView.vue', {...workspaceState, sessions:{...projectState.sessions}})
+assert.match(projectSessionsInitial,/正在读取项目会话/)
+assert.ok(!projectSessionsInitial.includes('此目录还没有会话'),'initial context loading is not empty data')
 const staleRecord = { session_id: 'stale', name: 'Old live record', command: 'codex', status: 'running' }
-const failedRefresh = await render('../src/views/ProjectView.vue', { ...workspaceState, records: [staleRecord], shown: [staleRecord], isLiveStatus: () => true, sessions: { ...projectState.sessions, error: '刷新失败', sources: { device: 'live' } } })
+const failedRefresh = await render('../src/views/ProjectView.vue', { ...workspaceState, records: [staleRecord], shown: [staleRecord], isLiveStatus: () => true, listState: {error:'刷新失败'}, sessions: { ...projectState.sessions, sources: { device: 'cache' } } })
 assert.ok(!failedRefresh.includes('接回终端'), 'a failed refresh cannot reuse an old live-source flag as current confirmation')
+const refreshing = await render('../src/views/ProjectView.vue', { ...workspaceState, liveConfirmed: true, records: [staleRecord], shown: [staleRecord], isLiveStatus: () => true, listState: {refreshing:true, checkedAt:1}, sessions: { ...projectState.sessions, sources: {device:'live'} } })
+assert.match(refreshing,/接回终端/,'background refresh keeps confirmed live actions')
+assert.match(refreshing,/正在后台核对/)
 assert.ok(!projectSessionsFailed.includes('还没有最近会话'), 'recent session failure is not an empty state')
 const savedProjectsFailed = await render('../src/views/ProjectsView.vue', {
   ...projectState, visible: [], preferences: { projects: [], loading: false, error: '项目读取失败' },
@@ -63,7 +69,7 @@ assert.ok(!savedProjectsFailed.includes('还没有保存的项目'), 'project lo
 const launch = await render('../src/components/TaskLaunch.vue', {
   label: 'Demo', deviceId: 'device', mode: 'terminal', busy: false, tools: [], command: '', cwd: '/demo', name: '', isolated: false,
   task: '', launchMode: '', selected: null, reason: '请选择已安装并授权的工具', error: '', devices: { byId: () => ({ name: '电脑' }) },
-  TASK_TEMPLATES: [], launch: noop, emit: noop,
+  TASK_TEMPLATES: [], launch: noop, emit: noop, uncertain: false,
 })
 assert.equal((launch.match(/type="radio"/g) ?? []).length, 2, 'both execution methods are visible keyboard-operable radio choices')
 assert.match(launch, /<legend[^>]*>执行方式<\/legend>/)

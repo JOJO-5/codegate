@@ -496,10 +496,39 @@ func (r *Registry) RemoveAgent(c *AgentConn) {
 		return
 	}
 	delete(r.agents, c.DeviceID)
+	r.notifyTerminalConnectionLocked(c, "offline")
 	for sid := range r.sessionOwner {
 		if r.sessionOwner[sid] == c.DeviceID {
 			delete(r.sessionOwner, sid)
 		}
+	}
+}
+
+// The browser link and the Agent link are independent. Serialize notifications
+// with registry changes so cleanup from an evicted Agent cannot undo a newer
+// connection's ready event. Only authenticated views for this owner receive it.
+func (r *Registry) notifyTerminalConnectionLocked(c *AgentConn, state string) {
+	seen := make(map[string]bool)
+	for _, view := range r.terminalViews {
+		key := view.client.ID + ":" + view.sessionID
+		if view.deviceID != c.DeviceID || view.client.UserID != c.UserID || seen[key] {
+			continue
+		}
+		seen[key] = true
+		env, _ := protocol.NewEnvelope(protocol.TypeSessionConnection, map[string]string{"session_id": view.sessionID, "device_id": c.DeviceID, "state": state})
+		env.SessionID = view.sessionID
+		data, err := protocol.Encode(env)
+		if err == nil {
+			_ = view.client.TrySendText(data)
+		}
+	}
+}
+
+func (r *Registry) NotifyAgentReady(c *AgentConn) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.agents[c.DeviceID] == c {
+		r.notifyTerminalConnectionLocked(c, "ready")
 	}
 }
 
@@ -652,8 +681,14 @@ func (r *Registry) SessionOwner(sessionID string) (string, bool) {
 func (r *Registry) ForgetSession(sessionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Ending a process also releases the browser's attachment constraint. Its
+	// later detach may arrive after the Agent has already reaped the process.
+	for _, c := range r.sessionSubs[sessionID] {
+		c.Detach(sessionID)
+	}
 	for id, v := range r.terminalViews {
 		if v.sessionID == sessionID {
+			v.client.Detach(sessionID)
 			delete(r.terminalViews, id)
 		}
 	}

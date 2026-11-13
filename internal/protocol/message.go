@@ -337,17 +337,18 @@ type SessionSyncPayload struct {
 //   - 走白名单时只传 CommandID
 //   - 允许自定义命令时传 Command/Args（需 Agent 侧显式开启，§21.1）
 type SessionCreatePayload struct {
-	LaunchMode string `json:"launch_mode,omitempty"`
-	Recovery  *ConversationBinding `json:"recovery,omitempty"`
-	Worktree  bool                 `json:"worktree,omitempty"`
-	DeviceID  string               `json:"device_id"`
-	Name      string               `json:"name,omitempty"`
-	CommandID string               `json:"command_id,omitempty"`
-	Command   string               `json:"command,omitempty"`
-	Args      []string             `json:"args,omitempty"`
-	Cwd       string               `json:"cwd"`
-	Cols      uint16               `json:"cols"`
-	Rows      uint16               `json:"rows"`
+	Nonce      string               `json:"nonce,omitempty"`
+	LaunchMode string               `json:"launch_mode,omitempty"`
+	Recovery   *ConversationBinding `json:"recovery,omitempty"`
+	Worktree   bool                 `json:"worktree,omitempty"`
+	DeviceID   string               `json:"device_id"`
+	Name       string               `json:"name,omitempty"`
+	CommandID  string               `json:"command_id,omitempty"`
+	Command    string               `json:"command,omitempty"`
+	Args       []string             `json:"args,omitempty"`
+	Cwd        string               `json:"cwd"`
+	Cols       uint16               `json:"cols"`
+	Rows       uint16               `json:"rows"`
 	// Resume 表示"恢复上次对话"（§21.3）。
 	// Agent 据此把 allowed_commands 里的 resume_args 追加到命令行。
 	// CodeGate 不知道对话内容，只知道这个 CLI 支持 resume 标志。

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import ModalDialog from './ModalDialog.vue'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, isNavigationFailure, NavigationFailureType } from 'vue-router'
 import { useConnStore } from '../stores/conn'
 import { useSessionsStore } from '../stores/sessions'
 import { useDraftsStore } from '../stores/drafts'
@@ -25,9 +25,11 @@ const bound = computed(() => !!props.source.recovery?.native_id)
 const pendingKey = () => `recovery-pending:${props.source.device_id}:${props.source.session_id}`
 let pendingNativeID = ''
 onBeforeUnmount(() => { cancelled = true; generation++ })
-async function restore(id = ''): Promise<void> {
-  if (busy.value || cancelled || uncertain.value) return
+async function restore(id = '', confirmedRetry = false): Promise<void> {
+  if (busy.value || cancelled || (uncertain.value && !confirmedRetry)) return
+  const retrying = uncertain.value
   const current = generation, source = props.source
+  let restored = false
   verifiedMissing.value = false; retryConfirmation.value = false
   pendingNativeID = id || source.recovery?.native_id || ''
   // Store intent before dispatch so a refresh cannot silently start it again.
@@ -40,25 +42,29 @@ async function restore(id = ''): Promise<void> {
     if (cancelled || current !== generation) return
     const session = env.payload?.session
     if (!session) throw new Error('未收到恢复后的会话')
+    restored = true
     await openSession(session)
   } catch (e) {
     if (!cancelled && current === generation) {
       const code = e && typeof e === 'object' && 'code' in e ? e.code : ''
-      uncertain.value = code === 'timeout' || code === 'request_outcome_unknown' ||
+      uncertain.value = restored || retrying || code === 'timeout' || code === 'request_outcome_unknown' ||
         (e instanceof Error && /^连接已(断开|关闭)|未收到恢复后的会话/.test(e.message))
       if (!uncertain.value) drafts.set(pendingKey(), '')
-      error.value = uncertain.value ? '恢复结果尚未确认，请先检查已恢复的终端，不要重复恢复。' : humanizeError(e)
+      error.value = restored ? '对话已恢复，但未能打开终端；请检查恢复结果或从会话列表接回，不要重复恢复。'
+        : uncertain.value ? '恢复结果尚未确认，请先检查已恢复的终端，不要重复恢复。' : humanizeError(e)
     }
   }
   finally { if (!cancelled && current === generation) busy.value = false }
 }
 async function openSession(session: SessionSummary): Promise<void> {
-  drafts.set(pendingKey(), '')
+  const key = pendingKey(), owner = drafts.owner, current = generation
   const device = props.source.device_id.replace(/-/g, '')
   sessions.setFor(device, [session, ...(sessions.byDevice[device] ?? []).filter(s => s.session_id !== session.session_id)])
   void sessions.load(device, true)
-  emit('close')
-  await router.push({ name: 'session', params: { id: session.session_id }, query: props.projectKey ? { project: props.projectKey } : {} })
+  const failure = await router.push({ name: 'session', params: { id: session.session_id }, query: props.projectKey ? { project: props.projectKey } : {} })
+  if (failure && !isNavigationFailure(failure, NavigationFailureType.duplicated)) throw new Error('终端页面未能打开，请检查恢复结果或从会话列表接回。')
+  if (owner === drafts.owner) drafts.set(key, '')
+  if (!cancelled && current === generation) { uncertain.value = false; emit('close') }
 }
 async function checkResult(): Promise<void> {
   if (busy.value || cancelled || !uncertain.value) return
@@ -87,8 +93,7 @@ async function checkResult(): Promise<void> {
 }
 async function confirmRetry(): Promise<void> {
   if (busy.value || cancelled || !uncertain.value || !verifiedMissing.value || !retryConfirmation.value || !conn.isOpen) return
-  uncertain.value = false
-  await restore(pendingNativeID || selected.value)
+  await restore(pendingNativeID || selected.value, true)
 }
 async function loadConversations(): Promise<void> {
   if (busy.value || cancelled) return

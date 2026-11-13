@@ -9,6 +9,64 @@ import (
 	"github.com/jojo/codegate/internal/protocol"
 )
 
+func TestWorkflowHistoryRemovalIsReversibleAndNeverHidesUnresolvedExecution(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "history@example.com", "correct-horse-battery")
+	other := e.signup(t, "history-other@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, _ := e.seedPairedDevice(t, owner)
+	for _, state := range []string{"running", "cancelling", "needs_review", "cancelled", "failed", "ready_for_review"} {
+		t.Run(state, func(t *testing.T) {
+			nonce := uuid.NewString()
+			row := &protocol.Workflow{ID: uuid.NewString(), UserID: owner, DeviceID: device, State: state, Revision: 1, Goal: "retain evidence", Diff: "original diff"}
+			if err := e.store.InsertWorkflow(t.Context(), row, nonce); err != nil {
+				t.Fatal(err)
+			}
+			path := "/api/v1/devices/" + device + "/workflows/" + row.ID
+			if e.del(t, path, other).Status != 404 {
+				t.Fatal("cross-account removal")
+			}
+			allowed := state == "cancelled" || state == "failed" || state == "ready_for_review"
+			r := e.del(t, path, token)
+			if !allowed {
+				if r.Status != 409 {
+					t.Fatalf("unresolved record hidden: %d", r.Status)
+				}
+				return
+			}
+			if r.Status != 200 {
+				t.Fatalf("remove: %d %s", r.Status, r.Body)
+			}
+			rows, err := e.store.Workflows(t.Context(), owner, device)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range rows {
+				if got.ID == row.ID {
+					t.Fatal("removed record returned in list")
+				}
+			}
+			retained, err := e.store.WorkflowByNonce(t.Context(), owner, nonce)
+			if err != nil || retained.Diff != "original diff" || retained.State != state {
+				t.Fatal("evidence/idempotency lost")
+			}
+			if e.del(t, path, token).Status != 200 || e.post(t, path+"/restore", token, nil).Status != 200 {
+				t.Fatal("repeat/undo failed")
+			}
+			rows, _ = e.store.Workflows(t.Context(), owner, device)
+			found := false
+			for _, got := range rows {
+				if got.ID == row.ID {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("restored record missing")
+			}
+		})
+	}
+}
+
 func TestWorkflowHTTPAuthorizationPersistenceNonceAndOfflineCancellation(t *testing.T) {
 	e := newTestEnv(t)
 	token := e.signup(t, "workflow-owner@example.com", "correct-horse-battery")

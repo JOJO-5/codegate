@@ -21,6 +21,9 @@ export interface WorkItem {
   title: string; cwd: string; state: string; detail: string; updatedAt: number
   continuation?: ContinuationTask; workflow?: Workflow
 }
+export function canRemoveWork(item: Pick<WorkItem, 'kind' | 'state'>): boolean {
+  return item.kind === 'continuation' ? ['completed', 'cancelled', 'failed'].includes(item.state) : ['ready_for_review', 'cancelled', 'failed'].includes(item.state)
+}
 export function workItems(deviceId: string, continuations: ContinuationTask[], workflows: Workflow[]): WorkItem[] {
   return [
     ...continuations.filter(t => !t.deleted_at).map(t => ({
@@ -28,7 +31,7 @@ export function workItems(deviceId: string, continuations: ContinuationTask[], w
       group: taskGroup('continuation', t.state, t.mode), title: t.source.name || '原对话续跑', cwd: t.source.cwd,
       state: t.state, detail: t.detail || '', updatedAt: t.updated_at || t.created_at || 0, continuation: t,
     })),
-    ...workflows.map(t => ({
+    ...workflows.filter(t => !t.deleted_at).map(t => ({
       key: `${deviceId}:workflow:${t.id}`, id: t.id, deviceId, kind: 'workflow' as const,
       group: taskGroup('workflow', t.state), title: t.goal, cwd: t.cwd, state: t.state,
       detail: t.detail || '', updatedAt: t.updated_at, workflow: t,

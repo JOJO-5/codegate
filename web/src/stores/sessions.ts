@@ -9,8 +9,8 @@
  *     WS 会返回 `device_offline`，但用户仍然应该看到「上次有哪些会话、
  *     它们的退出码是多少」。
  *
- * 先 WS 再回落 REST 是刻意的顺序：反过来会先渲染一份可能过时的列表，
- * 再被实时数据覆盖，视觉上会闪一下。
+ * 首次显示 Server 历史，再用 WS 核对。后台刷新保留上次确认的列表；
+ * 只有核对失败、断线或过期才降为缓存，避免每次轮询都移走主要操作。
  */
 
 import { ref, watch } from 'vue'
@@ -37,11 +37,18 @@ export const useSessionsStore = defineStore('sessions', () => {
   /** 本次列表来自哪里，UI 可以据此提示「这是缓存」。 */
   const source = ref<'live' | 'cache' | null>(null)
   const sources = ref<Record<string, 'live' | 'cache'>>({})
+  const loadStates = ref<Record<string, { refreshing: boolean; checkedAt: number; error: string | null }>>({})
   const inflight = new Map<string, Promise<void>>()
+  const revisions = new Map<string, number>()
   const drafts = new Map<string, string>()
   let generation = 0
+  let transportEpoch = 0
   const auth = useAuthStore()
   watch(() => auth.user?.id, reset, { flush: 'sync' })
+  const connection = useConnStore()
+  watch(() => connection.isOpen, open => {
+    if (!open) { transportEpoch++; for (const id of Object.keys(sources.value)) sources.value[id] = 'cache'; source.value = 'cache' }
+  }, { flush: 'sync' })
   function setDraft(id: string, text: string): void { drafts.set(id, text) }
   function takeDraft(id: string): string { const text = drafts.get(id) ?? ''; drafts.delete(id); return text }
 
@@ -55,6 +62,10 @@ export const useSessionsStore = defineStore('sessions', () => {
   }
 
   function setFor(deviceId: string, list: SessionSummary[]): void {
+    revisions.set(deviceId, (revisions.get(deviceId) ?? 0) + 1)
+    replaceFor(deviceId, list)
+  }
+  function replaceFor(deviceId: string, list: SessionSummary[]): void {
     byDevice.value = { ...byDevice.value, [deviceId]: list }
   }
 
@@ -63,15 +74,23 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (pending) return pending
     const current = generation
     const request = loadDevice(deviceId, current).finally(() => {
-      if (current === generation) { inflight.delete(deviceId); loading.value = inflight.size > 0 }
+      if (current === generation) {
+        inflight.delete(deviceId); loading.value = inflight.size > 0
+        const state = loadStates.value[deviceId]
+        if (state) state.refreshing = false
+      }
     })
     inflight.set(deviceId, request)
     return request
   }
   async function loadDevice(deviceId: string, current: number): Promise<void> {
+    const revision = revisions.get(deviceId) ?? 0
+    const transport = transportEpoch
+    const stale = () => current !== generation || transport !== transportEpoch || revision !== (revisions.get(deviceId) ?? 0)
     loading.value = true
     error.value = null
-    source.value = null
+    loadStates.value[deviceId] = { refreshing: true, checkedAt: loadStates.value[deviceId]?.checkedAt ?? 0, error: null }
+    const hadLive = sources.value[deviceId] === 'live'
 
     const conn = useConnStore()
 
@@ -79,26 +98,24 @@ export const useSessionsStore = defineStore('sessions', () => {
     let saved: SessionSummary[] = []
     try {
       saved = await api.deviceSessions(deviceId)
-      if (current !== generation) return
-      setFor(deviceId, saved)
-      source.value = 'cache'
-      sources.value[deviceId] = 'cache'
+      if (stale()) return
+      if (!hadLive) { replaceFor(deviceId, saved); source.value = 'cache'; sources.value[deviceId] = 'cache' }
     } catch (e) {
-      if (current === generation) error.value = humanizeError(e)
+      if (!stale()) { error.value = humanizeError(e); loadStates.value[deviceId]!.error = error.value }
     }
 
-    if (current !== generation) return
+    if (stale()) return
     if (conn.isOpen) {
       try {
         const env = await conn.request<SessionListedPayload>(
           MessageType.SessionList,
           { device_id: deviceId },
         )
-        if (current !== generation) return
+        if (stale()) return
         const live = env.payload?.sessions ?? []
         const active = new Set(live.map(s => s.session_id))
         const archived = new Map(saved.map(s => [s.session_id, s.archived]))
-        setFor(deviceId, [
+        replaceFor(deviceId, [
           ...live.map(s => ({ ...s, archived: archived.get(s.session_id) ?? false })),
           ...saved.filter(s => !active.has(s.session_id)).map(s =>
             s.status === 'running' || s.status === 'starting' || s.status === 'detached'
@@ -108,13 +125,18 @@ export const useSessionsStore = defineStore('sessions', () => {
         ])
         source.value = 'live'
         sources.value[deviceId] = 'live'
+        error.value = null
+        loadStates.value[deviceId] = { refreshing: true, checkedAt: Date.now(), error: null }
         return
       } catch {
         // device_offline / timeout 都是预期情况，静默回落到缓存。
         // 这里**不**设 error —— 能拿到缓存就不是错误状态。
       }
     }
-
+    if (stale()) return
+    source.value = 'cache'; sources.value[deviceId] = 'cache'
+    // Preserve the visible records on failure, with honest stale provenance.
+    if (saved.length && !byDevice.value[deviceId]?.length) replaceFor(deviceId, saved)
   }
 
   /**
@@ -135,10 +157,12 @@ export const useSessionsStore = defineStore('sessions', () => {
       name?: string
       worktree?: boolean
       resume?: boolean
+      nonce?: string
     },
   ): Promise<SessionSummary> {
     const conn = useConnStore()
     const payload: SessionCreatePayload = {
+      nonce: opts.nonce ?? crypto.randomUUID(),
       device_id: deviceId,
       cwd: opts.cwd,
       cols: opts.cols,
@@ -152,7 +176,9 @@ export const useSessionsStore = defineStore('sessions', () => {
       ...(opts.resume === true ? { resume: true } : {}),
     }
 
+    const current = generation
     const env = await conn.request<SessionCreatedPayload>(MessageType.SessionCreate, payload)
+    if (current !== generation) throw new Error('账号已切换，请在原账号核对启动结果')
     const s = env.payload?.session
     if (s === undefined) {
       throw new Error('服务端未返回新建的会话')
@@ -203,6 +229,7 @@ export const useSessionsStore = defineStore('sessions', () => {
   function patch(sessionId: string, changes: Partial<SessionSummary>): void {
     const next: Record<string, SessionSummary[]> = {}
     for (const [dev, list] of Object.entries(byDevice.value)) {
+      if (list.some(s => s.session_id === sessionId)) revisions.set(dev, (revisions.get(dev) ?? 0) + 1)
       next[dev] = list.map((s) => (s.session_id === sessionId ? { ...s, ...changes } : s))
     }
     byDevice.value = next
@@ -211,13 +238,14 @@ export const useSessionsStore = defineStore('sessions', () => {
   function removeFromList(sessionId: string): void {
     const next: Record<string, SessionSummary[]> = {}
     for (const [dev, list] of Object.entries(byDevice.value)) {
+      if (list.some(s => s.session_id === sessionId)) revisions.set(dev, (revisions.get(dev) ?? 0) + 1)
       next[dev] = list.filter((s) => s.session_id !== sessionId)
     }
     byDevice.value = next
   }
 
   function reset(): void {
-    generation++; inflight.clear(); drafts.clear(); sources.value = {}; loading.value = false
+    generation++; inflight.clear(); revisions.clear(); drafts.clear(); sources.value = {}; loadStates.value = {}; loading.value = false
     byDevice.value = {}
     error.value = null
     source.value = null
@@ -227,7 +255,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     byDevice,
     loading,
     error,
-    source, sources, setDraft, takeDraft,
+    source, sources, loadStates, setDraft, takeDraft,
     forDevice, recordsFor,
     setFor,
     load,
