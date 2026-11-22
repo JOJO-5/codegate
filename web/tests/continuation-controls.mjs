@@ -67,9 +67,20 @@ const sourceSession={session_id:'source',status:'running',command:'codex',recove
 const createProps=reactive({deviceId:'device',source:sourceSession,compact:false})
 const emitted=[]
 const createCtx=component.setup(createProps,{expose:()=>{},emit:name=>emitted.push(name)})
+assert.equal(createCtx.mode.value,'time','an open conversation can be scheduled without enabling wall monitoring')
+createCtx.scheduleWhen.value='later'
+createProps.source={ ...sourceSession, status:'detached' }
+await nextTick()
+assert.equal(createCtx.scheduleWhen.value,'later','a status refresh must preserve the chosen schedule for the same conversation')
+createCtx.scheduleWhen.value='now'
 createCtx.prompt.value='保留我的续跑说明'
 let createCalls=0,finishCreate
-globalThis.__continuationTest.api.createContinuation=()=>{createCalls++;return new Promise(resolve=>{finishCreate=resolve})}
+globalThis.__continuationTest.api.createContinuation=(_,body)=>{
+  createCalls++
+  assert.equal(body.prefer_open_session, true)
+  assert.ok(Math.abs(body.due_at-Date.now())<1000,'immediate scheduling uses the current time')
+  return new Promise(resolve=>{finishCreate=resolve})
+}
 const pendingCreate=createCtx.create()
 const duplicateCreate=createCtx.create()
 assert.equal(createCalls,1,'duplicate clicks during preflight cannot issue another create')

@@ -48,13 +48,8 @@ func (a *Agent) checkLiveContinuation(ctx context.Context, p protocol.TaskRunPay
 		return errors.New("工作目录已不在授权范围")
 	}
 	if quotaProvider(current.Command, current.Args) == "codex" {
-		for i, arg := range current.Args {
-			if arg == "--no-daemon" {
-				return errors.New("此 Codex 终端使用独立进程，无法通过共享接口续跑；请结束原终端，再使用普通 Codex 命令恢复原对话")
-			}
-			if strings.HasPrefix(arg, "--remote=") && arg != "--remote=unix://" || arg == "--remote" && (i+1 >= len(current.Args) || current.Args[i+1] != "unix://") {
-				return errors.New("此 Codex 终端使用自定义控制地址，暂不支持自动续跑；原终端和对话保留")
-			}
+		if err := checkCodexLiveArgs(current.Args); err != nil {
+			return err
 		}
 	}
 	finish, err := a.beginActivity()
@@ -80,6 +75,18 @@ func (a *Agent) checkLiveContinuation(ctx context.Context, p protocol.TaskRunPay
 	}
 	if !isRecoverableLive(sess.Summary()) || !sameNativeTask(sess.Summary(), current) || sess.InputRevision() != revision {
 		return errors.New("核对期间原终端已有新输入、结束或切换对话，请重新打开自动续跑")
+	}
+	return nil
+}
+
+func checkCodexLiveArgs(args []string) error {
+	for i, arg := range args {
+		if arg == "--no-daemon" {
+			return errors.New("此 Codex 终端使用独立进程，无法通过共享接口续跑；请结束原终端，再使用普通 Codex 命令恢复原对话")
+		}
+		if strings.HasPrefix(arg, "--remote=") && arg != "--remote=unix://" || arg == "--remote" && (i+1 >= len(args) || args[i+1] != "unix://") {
+			return errors.New("此 Codex 终端使用自定义控制地址，暂不支持自动续跑；原终端和对话保留")
+		}
 	}
 	return nil
 }

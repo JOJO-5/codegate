@@ -320,6 +320,43 @@ func TestContinuationDispatchReceiptAndLateReply(t *testing.T) {
 		t.Fatal("late reply regressed terminal state", got)
 	}
 }
+func TestScheduledContinuationPersistsOpenSessionPreference(t *testing.T) {
+	e := newTestEnv(t)
+	token := e.signup(t, "scheduled-continuation@example.com", "correct-horse-battery")
+	owner := e.meUserID(t, token)
+	device, priv := e.seedPairedDevice(t, owner)
+	e.agentHandshake(t, device, priv, protocol.AgentCaps{BackgroundContinue: true})
+	meta := &storage.SessionMeta{ID: uuid.NewString(), UserID: owner, DeviceID: device, Command: "codex", Cwd: "/owned/work", Status: "running", Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: uuid.NewString()}, CreatedAt: e.clock.Now()}
+	if err := e.store.UpsertSession(t.Context(), meta); err != nil {
+		t.Fatal(err)
+	}
+	due := e.clock.Now().Add(time.Hour).UnixMilli()
+	path := "/api/v1/devices/" + device + "/continuations"
+	response := e.post(t, path, token, map[string]any{"session_id": meta.ID, "prompt": "continue", "mode": "time", "due_at": due, "nonce": uuid.NewString(), "prefer_open_session": true})
+	var saved map[string]any
+	if err := json.Unmarshal(response.Body, &saved); err != nil || response.Status != 201 || saved["prefer_open_session"] != true {
+		t.Fatalf("scheduled route was not saved: %d %s", response.Status, response.Body)
+	}
+	id := saved["id"].(string)
+	e.srv.dispatchContinuation(t.Context(), id)
+	get := func() *protocol.ContinuationTask {
+		t.Helper()
+		task, err := e.store.ContinuationByID(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	if task := get(); task.State != "queued" || task.Attempt != 0 || task.DueAt != due {
+		t.Fatal("future task dispatched early", task)
+	}
+	e.clock.Advance(time.Hour)
+	e.srv.dispatchContinuation(t.Context(), id)
+	if task := get(); task.State != "waiting_agent" || task.Attempt != 0 {
+		t.Fatal("old agent must not receive a task with unsupported routing", task)
+	}
+}
+
 func TestContinuationQuotaRetryBoundedAndCancellationWins(t *testing.T) {
 	e := newTestEnv(t)
 	token := e.signup(t, "task-retry@example.com", "correct-horse-battery")

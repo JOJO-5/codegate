@@ -68,16 +68,17 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, ok := decodeJSON[struct {
-		MaxRetries       int    `json:"max_retries,omitempty"`
-		RetryErrors      bool   `json:"retry_errors,omitempty"`
-		QuotaWaitMinutes int    `json:"quota_wait_minutes,omitempty"`
-		SessionID        string `json:"session_id"`
-		NativeID         string `json:"native_id"`
-		Prompt           string `json:"prompt"`
-		Mode             string `json:"mode"`
-		DueAt            int64  `json:"due_at"`
-		MaxRunMinutes    int    `json:"max_run_minutes"`
-		Nonce            string `json:"nonce"`
+		PreferOpenSession bool   `json:"prefer_open_session,omitempty"`
+		MaxRetries        int    `json:"max_retries,omitempty"`
+		RetryErrors       bool   `json:"retry_errors,omitempty"`
+		QuotaWaitMinutes  int    `json:"quota_wait_minutes,omitempty"`
+		SessionID         string `json:"session_id"`
+		NativeID          string `json:"native_id"`
+		Prompt            string `json:"prompt"`
+		Mode              string `json:"mode"`
+		DueAt             int64  `json:"due_at"`
+		MaxRunMinutes     int    `json:"max_run_minutes"`
+		Nonce             string `json:"nonce"`
 	}](w, r)
 	if !ok {
 		return
@@ -133,6 +134,15 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 	if (p.Mode != "time" && p.Mode != "quota" && p.Mode != "live_quota") || p.DueAt < now-60000 || p.DueAt > now+int64(30*24*time.Hour/time.Millisecond) || strings.TrimSpace(p.Prompt) == "" || len(p.Prompt) > 16<<10 || !utf8.ValidString(p.Prompt) || p.MaxRunMinutes < 1 || p.MaxRunMinutes > 360 || p.MaxRetries < 1 || p.MaxRetries > 10 {
 		writeError(w, 400, "invalid_payload", "请检查继续时间、任务内容和运行上限")
 		return
+	}
+	if p.PreferOpenSession {
+		provider := liveSessionProvider(meta.Command, meta.Args)
+		if p.Mode == "live_quota" || (provider != "codex" && provider != "claude" && provider != "opencode") {
+			writeError(w, 409, "unsupported_scheduled_continuation", "此 CLI 或继续方式暂不支持按时恢复并继续原对话")
+			return
+		}
+		p.MaxRetries = 1
+		p.RetryErrors = false
 	}
 	if p.Mode == "live_quota" {
 		provider := liveSessionProvider(meta.Command, meta.Args)
@@ -214,7 +224,7 @@ func (s *Server) handleContinuations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "task_limit", "每台设备最多保留20个未结束的续跑任务")
 		return
 	}
-	task := &protocol.ContinuationTask{ID: uuid.NewString(), UserID: user, DeviceID: device, SessionID: meta.ID, Source: source, Prompt: p.Prompt, Mode: p.Mode, DueAt: p.DueAt, State: "queued", MaxAttempts: p.MaxRetries + 1, QuotaWaitMinutes: p.QuotaWaitMinutes, MaxRetries: p.MaxRetries, RetryErrors: p.RetryErrors, MaxRunMinutes: p.MaxRunMinutes, CreatedAt: now, UpdatedAt: now}
+	task := &protocol.ContinuationTask{ID: uuid.NewString(), UserID: user, DeviceID: device, SessionID: meta.ID, Source: source, Prompt: p.Prompt, Mode: p.Mode, PreferOpenSession: p.PreferOpenSession, DueAt: p.DueAt, State: "queued", MaxAttempts: p.MaxRetries + 1, QuotaWaitMinutes: p.QuotaWaitMinutes, MaxRetries: p.MaxRetries, RetryErrors: p.RetryErrors, MaxRunMinutes: p.MaxRunMinutes, CreatedAt: now, UpdatedAt: now}
 	if err = s.store.InsertContinuation(r.Context(), task, p.Nonce); err != nil {
 		writeProtoError(w, err)
 		return
@@ -245,7 +255,7 @@ func (s *Server) handleCancelContinuation(w http.ResponseWriter, r *http.Request
 		}
 		if old == "running" || old == "dispatching" || old == "cancelling" {
 			task.State = "cancelling"
-			task.Detail = "正在停止后台进程"
+			task.Detail = "已请求停止续跑，等待执行设备确认"
 		}
 		task.DueAt = s.now().UnixMilli()
 		task.UpdatedAt = task.DueAt
@@ -399,12 +409,15 @@ func (s *Server) dispatchContinuation(ctx context.Context, id string) {
 		return
 	}
 	ac, err := s.requireAgent(ctx, t.UserID, t.DeviceID)
-	if err != nil || !ac.Caps().BackgroundContinue {
+	if err != nil || !ac.Caps().BackgroundContinue || t.PreferOpenSession && !ac.Caps().ScheduledContinue {
 		t.DueAt = s.now().Add(time.Minute).UnixMilli()
 		if old != "running" && old != "dispatching" && old != "cancelling" {
 			t.State = "waiting_agent"
 		}
 		t.Detail = "等待设备上线并支持后台续跑"
+		if err == nil && t.PreferOpenSession && !ac.Caps().ScheduledContinue {
+			t.Detail = "等待设备更新 Agent 后继续预约"
+		}
 		_, _ = s.store.UpdateContinuation(ctx, t, old)
 		s.tasksMu.Unlock()
 		return
@@ -449,7 +462,7 @@ func (s *Server) dispatchContinuation(ctx context.Context, id string) {
 	if e != nil || !changed {
 		return
 	}
-	p := protocol.TaskRunPayload{TaskID: t.ID, UserID: t.UserID, Attempt: t.Attempt, Source: t.Source, Prompt: t.Prompt, Mode: t.Mode, MaxRunMinutes: t.MaxRunMinutes, QuotaWaitMinutes: t.QuotaWaitMinutes, MaxRetries: t.MaxRetries, RetryErrors: t.RetryErrors}
+	p := protocol.TaskRunPayload{TaskID: t.ID, UserID: t.UserID, Attempt: t.Attempt, Source: t.Source, Prompt: t.Prompt, Mode: t.Mode, PreferOpenSession: t.PreferOpenSession, MaxRunMinutes: t.MaxRunMinutes, QuotaWaitMinutes: t.QuotaWaitMinutes, MaxRetries: t.MaxRetries, RetryErrors: t.RetryErrors}
 	response, e := s.taskRPC(ctx, ac, typ, p)
 	if e != nil {
 		// Keep the existing attempt for receipt inspection after reconnect. Neither

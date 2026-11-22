@@ -99,8 +99,8 @@ func sameNativeTask(a, b protocol.SessionSummary) bool {
 func (a *Agent) nativeTaskBusy(source protocol.SessionSummary) bool {
 	a.tasksMu.Lock()
 	defer a.tasksMu.Unlock()
-	for _, run := range a.tasks {
-		if sameNativeTask(source, run.receipt.Source) {
+	for _, running := range a.backgroundContinuationSourcesLocked() {
+		if sameNativeTask(source, running) {
 			return true
 		}
 	}
@@ -132,8 +132,17 @@ func (a *Agent) onTaskInspect(req *protocol.Envelope, cancel bool) {
 		a.reply(req, protocol.TypeTaskState, result)
 		return
 	}
+	if p.PreferOpenSession {
+		a.workspaceMu.Lock()
+		defer a.workspaceMu.Unlock()
+	}
+	a.inspectTask(req, p, cancel)
+}
+
+// The scheduled route shares workspaceMu with dispatch and conversation restore.
+func (a *Agent) inspectTask(req *protocol.Envelope, p protocol.TaskRunPayload, cancel bool) {
 	if p.Mode == "live_quota" {
-		a.onLiveQuota(req, p, cancel, true)
+		a.onLiveContinuation(req, p, cancel, true, "")
 		return
 	}
 	key := taskRunKey(p.TaskID, p.Attempt)
@@ -151,6 +160,19 @@ func (a *Agent) onTaskInspect(req *protocol.Envelope, cancel bool) {
 	}
 	a.tasksMu.Unlock()
 	r, err := a.taskReceipt(p.TaskID, p.Attempt, p.UserID)
+	if p.PreferOpenSession && err == nil && r.Live != nil {
+		a.onLiveContinuation(req, p, cancel, true, "")
+		return
+	}
+	if p.PreferOpenSession && cancel && os.IsNotExist(err) {
+		result := protocol.TaskStatePayload{TaskID: p.TaskID, Attempt: p.Attempt, State: "cancelled", Detail: "已取消续跑安排"}
+		if err := a.saveTaskReceipt(taskReceipt{UserID: p.UserID, Hash: continuationHash(p), Source: p.Source, Result: result}); err != nil {
+			result.State = "needs_review"
+			result.Detail = "无法保存取消回执，请核对执行设备"
+		}
+		a.reply(req, protocol.TypeTaskState, result)
+		return
+	}
 	if err != nil {
 		a.reply(req, protocol.TypeTaskState, protocol.TaskStatePayload{TaskID: p.TaskID, Attempt: p.Attempt, State: "needs_review", Detail: "没有可核对的执行回执，请确认原生历史后再安排"})
 		return
@@ -184,7 +206,7 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		return
 	}
 	if p.Mode == "live_quota" {
-		a.onLiveQuota(req, p, false, false)
+		a.onLiveContinuation(req, p, false, false, "")
 		return
 	}
 	key := taskRunKey(p.TaskID, p.Attempt)
@@ -199,18 +221,27 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 			fail("同一执行标识的任务内容不一致")
 			return
 		}
-		a.onTaskInspect(req, false)
+		a.inspectTask(req, p, false)
 		return
 	} else if !os.IsNotExist(e) {
 		fail("不能安全读取执行回执")
 		return
 	}
 	liveCount := 0
+	var openSessionID string
 	for _, s := range a.mgr.Snapshot() {
 		if isRecoverableLive(s) {
 			liveCount++
 		}
 		if isRecoverableLive(s) && (s.SessionID == p.Source.SessionID || sameNativeTask(s, p.Source)) {
+			if p.PreferOpenSession && sameNativeTask(s, p.Source) {
+				if openSessionID != "" {
+					fail("同一原生对话有多个打开的终端，请保留一个后重新安排")
+					return
+				}
+				openSessionID = s.SessionID
+				continue
+			}
 			result.State = "waiting_idle"
 			result.DueAt = time.Now().Add(time.Minute).UnixMilli()
 			result.Detail = "原对话仍有终端运行，请先结束进程"
@@ -218,8 +249,12 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 			return
 		}
 	}
+	if openSessionID != "" && !a.nativeTaskBusy(p.Source) {
+		a.onLiveContinuation(req, p, false, false, openSessionID)
+		return
+	}
 	a.tasksMu.Lock()
-	activeCount := len(a.tasks)
+	activeCount := len(a.backgroundContinuationSourcesLocked())
 	a.tasksMu.Unlock()
 	if a.cfg.MaxSessions > 0 && activeCount+liveCount >= a.cfg.MaxSessions {
 		result.State = "waiting_idle"
@@ -249,6 +284,10 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 	history, err := a.nativeCommandHistory(c, cwd, env, p.Source.Recovery.StoreKey, p.Source.Recovery.NativeID)
 	if err != nil || len(history) != 1 || history[0].ID != p.Source.Recovery.NativeID {
 		fail("原生对话不存在，不能创建新对话代替续跑")
+		return
+	}
+	if p.PreferOpenSession && quotaProvider(c.Command, c.Args) == "codex" && a.codexOwnsScheduledThread(p, env) {
+		a.onLiveContinuation(req, p, false, false, "")
 		return
 	}
 	var openCode *openCodeV2Client
@@ -429,7 +468,7 @@ func (a *Agent) onTaskRun(req *protocol.Envelope) {
 		} else if err != nil {
 			receipt.Result.State = "failed"
 			receipt.Result.Detail = "CLI执行失败，请查看原生对话；未自动重发指令"
-			if p.Mode == "quota" {
+			if p.Mode == "quota" && !p.PreferOpenSession {
 				provider := quotaProvider(c.Command, c.Args)
 				a.quotaMu.Lock()
 				delete(a.quotaCache, provider)
@@ -646,12 +685,7 @@ func blockedUntil(q protocol.QuotaResult, now time.Time) int64 {
 func (a *Agent) backgroundWorkspaceSessions() []protocol.SessionSummary {
 	a.tasksMu.Lock()
 	defer a.tasksMu.Unlock()
-	out := make([]protocol.SessionSummary, 0, len(a.tasks))
-	for _, run := range a.tasks {
-		source := run.receipt.Source
-		source.Status = "running"
-		out = append(out, source)
-	}
+	out := a.backgroundContinuationSourcesLocked()
 	for _, run := range a.workflowRuns {
 		w := run.receipt.Workflow
 		if w.Worktree != "" {
@@ -659,4 +693,21 @@ func (a *Agent) backgroundWorkspaceSessions() []protocol.SessionSummary {
 		}
 	}
 	return out
+}
+
+func (a *Agent) backgroundContinuationSourcesLocked() []protocol.SessionSummary {
+	sources := make([]protocol.SessionSummary, 0, len(a.tasks))
+	add := func(source protocol.SessionSummary) {
+		source.Status = "running"
+		sources = append(sources, source)
+	}
+	for _, run := range a.tasks {
+		add(run.receipt.Source)
+	}
+	for _, run := range a.liveRuns {
+		if run.detachedSource != nil {
+			add(*run.detachedSource)
+		}
+	}
+	return sources
 }

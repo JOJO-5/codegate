@@ -1188,7 +1188,7 @@ onUnmounted(() => {
       <button class="btn btn--sm" type="button" @click="openFiles">文件</button>
 
       <button class="btn btn--sm" type="button" @click="router.push({ name: 'session-git', params: { id: sessionId }, query: returnProject ? { project: returnProject.key } : {} })">Git</button>
-      <button v-if="summary?.recovery && summary && ['codex','claude','opencode','dsh'].includes(nativeCLI(summary.command,summary.args))" class="btn btn--sm" type="button" @click="continuing = true">{{ isLive ? '自动续跑' : '安排继续' }}</button>
+      <button v-if="summary?.recovery && (['codex','claude','opencode'].includes(nativeCLI(summary.command,summary.args)) || nativeCLI(summary.command,summary.args)==='dsh' && isLive)" class="btn btn--sm" type="button" @click="continuing = true">安排继续</button>
       <button v-if="canRestore" class="btn btn--primary btn--sm" type="button" :disabled="!!recoveryUnavailable" @click="recovering = true">恢复原对话</button>
       <span class="term__title" :title="summary?.name ?? sessionId">
         {{ summary?.name || summary?.command || sessionId }}

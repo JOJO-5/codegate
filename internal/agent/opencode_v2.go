@@ -753,7 +753,7 @@ func (a *Agent) startOpenCodeV2Task(req *protocol.Envelope, p protocol.TaskRunPa
 				case "interrupted":
 					complete("cancelled", "原生执行已中断")
 				default:
-					if p.Mode == "quota" && usageWall(turn) {
+					if p.Mode == "quota" && !p.PreferOpenSession && usageWall(turn) {
 						a.quotaMu.Lock()
 						delete(a.quotaCache, "opencode")
 						a.quotaMu.Unlock()

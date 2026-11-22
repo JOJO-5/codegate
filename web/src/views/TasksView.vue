@@ -57,7 +57,13 @@ watch([deviceId, cwd, group, query], () => { page.value = 1 })
 watch(() => filtered.value.length, length => { page.value = Math.min(page.value, Math.max(1, Math.ceil(length / 20))) })
 watch(deviceId, () => { cwd.value = ''; void refresh() })
 async function refresh(): Promise<void> { await devices.load(true); await Promise.all(scopedDevices.value.map(d => catalog.load(d.id))) }
-function label(t: WorkItem): string { return (t.kind === 'continuation' ? continuationLabels : workflowLabels)[t.state] || '状态待核对' }
+function label(t: WorkItem): string {
+  if (t.continuation?.prefer_open_session) {
+    if (t.state === 'waiting_idle') return '等待会话空闲'
+    if (t.state === 'running') return '续跑中'
+  }
+  return (t.kind === 'continuation' ? continuationLabels : workflowLabels)[t.state] || '状态待核对'
+}
 function canCancel(t: WorkItem): boolean { return t.kind === 'workflow' ? !workflowTerminal(t.state) : !['completed', 'cancelled', 'failed'].includes(t.state) }
 function projectFor(t: WorkItem) { return preferences.projects.find(p => p.device_id === t.deviceId && inProject(p.cwd, t.cwd, devices.byId(t.deviceId)?.platform)) }
 let timer: ReturnType<typeof setInterval> | undefined
@@ -86,8 +92,9 @@ const stepStates: Record<string, string> = { completed: '执行成功', failed: 
     <p v-else-if="!shown.length && !loading && !devices.loading && !incomplete && !devices.error && !missingDevice" class="empty">{{ query.trim() ? '没有匹配的任务。' : `暂无${groups.find(g => g.id === group)?.label}任务。` }}</p>
     <article v-for="t in shown" :key="t.key" class="task-row">
       <label v-if="canRemoveWork(t)" class="history-select"><input v-model="selected" type="checkbox" :value="t.key" :disabled="catalog.historyBusy" :aria-label="'选择记录：' + t.title" /><span>选择记录</span></label>
-      <div class="task-row__heading"><div><p class="small dim">{{ devices.byId(t.deviceId)?.name }} · {{ t.kind === 'workflow' ? '主 Agent 调度' : t.continuation?.mode === 'live_quota' ? '原终端自动续跑' : '后台预约与续跑' }}</p><h2>{{ t.title }}</h2></div><span class="badge" :class="t.group === 'review' ? 'badge--warn' : 'badge--idle'">{{ label(t) }}</span></div>
+      <div class="task-row__heading"><div><p class="small dim">{{ devices.byId(t.deviceId)?.name }} · {{ t.kind === 'workflow' ? '主 Agent 调度' : t.continuation?.mode === 'live_quota' ? '原终端自动续跑' : '预约继续原对话' }}</p><h2>{{ t.title }}</h2></div><span class="badge" :class="t.group === 'review' ? 'badge--warn' : 'badge--idle'">{{ label(t) }}</span></div>
       <p v-if="t.detail" class="task-reason">{{ t.detail }}</p>
+      <p v-if="t.continuation && (t.state === 'waiting_quota' || t.state === 'queued' && t.continuation.prefer_open_session)" class="small dim">{{ t.state === 'waiting_quota' ? '下次核对额度' : '最早继续时间' }} {{ absoluteTime(t.continuation.due_at) }}</p>
       <p class="small dim mono project-path--compact" :title="t.cwd">{{ t.cwd }}</p>
       <p v-if="t.state === 'ready_for_review'" class="notice small">自动执行已交付，仍需你核对改动和验证结果。</p>
       <p v-if="t.state === 'needs_review'" class="notice small">派发已暂停，请核对原因与原对话；不会自动重放。</p>

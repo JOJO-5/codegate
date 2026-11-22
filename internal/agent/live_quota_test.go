@@ -23,6 +23,7 @@ type nativeLiveFixture struct {
 	turn               nativeTurn
 	thread             nativeThread
 	allowed            any
+	rateLimits         map[string]any
 	starts, interrupts int
 	loseStart          bool
 	changeOnRecheck    bool
@@ -60,7 +61,7 @@ func (f *nativeLiveFixture) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			out = map[string]any{"data": []nativeTurn{f.turn}}
 		case "account/rateLimits/read":
-			out = map[string]any{"ordinaryUsageAllowed": f.allowed}
+			out = map[string]any{"ordinaryUsageAllowed": f.allowed, "rateLimits": f.rateLimits}
 		case "turn/start":
 			f.starts++
 			f.request = req.Params
@@ -146,6 +147,100 @@ func setWall(f *nativeLiveFixture) {
 	f.turn.Error = &struct {
 		Info json.RawMessage `json:"codexErrorInfo"`
 	}{json.RawMessage(`"usageLimitExceeded"`)}
+}
+
+func TestScheduledContinuationWaitsThenUsesReopenedTerminal(t *testing.T) {
+	a, sess, p, f := liveFixture(t)
+	// A historical terminal record can point to the same conversation in a new terminal.
+	p.Source.SessionID = uuid.NewString()
+	p.Mode = "time"
+	run := func(typ protocol.Type) {
+		t.Helper()
+		payload, _ := json.Marshal(p)
+		var wire map[string]any
+		_ = json.Unmarshal(payload, &wire)
+		wire["prefer_open_session"] = true
+		req, _ := protocol.NewRequest(uuid.NewString(), typ, "", wire)
+		if typ == protocol.TypeTaskRun {
+			a.onTaskRun(req)
+		} else {
+			a.onTaskInspect(req, typ == protocol.TypeTaskCancel)
+		}
+	}
+	run(protocol.TypeTaskRun)
+	if f.startCount() != 0 {
+		t.Fatal("scheduled continuation interrupted a busy conversation")
+	}
+	f.mu.Lock()
+	f.thread.Status.Type = "idle"
+	f.turn.Status = "completed"
+	f.mu.Unlock()
+	run(protocol.TypeTaskRun)
+	r, err := a.taskReceipt(p.TaskID, p.Attempt, p.UserID)
+	if err != nil || r.Result.State != "running" || r.Source.SessionID != sess.ID.String() || f.startCount() != 1 {
+		t.Fatalf("scheduled prompt did not use the idle reopened terminal: %+v, %v, starts=%d", r.Result, err, f.startCount())
+	}
+	run(protocol.TypeTaskInspect)
+	run(protocol.TypeTaskRun)
+	run(protocol.TypeTaskCancel)
+	r, err = a.taskReceipt(p.TaskID, p.Attempt, p.UserID)
+	if err != nil || r.Result.State != "cancelled" || f.startCount() != 1 || f.interruptCount() != 1 || !isRecoverableLive(sess.Summary()) {
+		t.Fatalf("scheduled cancellation did not stop only its own turn: %+v, %v", r.Result, err)
+	}
+}
+
+func TestScheduledQuotaUsesLastBlockingResetAndSubmitsOnce(t *testing.T) {
+	a, _, p, f := liveFixture(t)
+	p.Mode, p.PreferOpenSession = "quota", true
+	conn := &Conn{send: make(chan outbound, 8), closed: make(chan struct{})}
+	a.setConn(conn)
+	t.Cleanup(func() { a.setConn(nil) })
+	reset := time.Now().Add(24 * time.Hour).Unix()
+	setWall(f)
+	f.mu.Lock()
+	f.rateLimits = map[string]any{
+		"primary":   map[string]any{"usedPercent": 100, "resetsAt": reset - 3600},
+		"secondary": map[string]any{"usedPercent": 100, "resetsAt": reset},
+	}
+	f.mu.Unlock()
+	run := func(typ protocol.Type) protocol.TaskStatePayload {
+		t.Helper()
+		req, _ := protocol.NewRequest(uuid.NewString(), typ, "", p)
+		if typ == protocol.TypeTaskRun {
+			a.onTaskRun(req)
+		} else {
+			a.onTaskInspect(req, false)
+		}
+		select {
+		case reply := <-conn.send:
+			env, err := protocol.Decode(reply.data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := protocol.DecodePayload[protocol.TaskStatePayload](env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return state
+		default:
+			t.Fatal("no continuation reply")
+			return protocol.TaskStatePayload{}
+		}
+	}
+	if result := run(protocol.TypeTaskRun); result.State != "waiting_quota" || result.DueAt != (reset+30)*1000 || f.startCount() != 0 {
+		t.Fatal("did not schedule after both blocking windows reset", result)
+	}
+	f.mu.Lock()
+	f.rateLimits = nil
+	f.allowed = true
+	f.mu.Unlock()
+	if result := run(protocol.TypeTaskRun); result.State != "running" || f.startCount() != 1 {
+		t.Fatal("did not resume after quota was confirmed", result)
+	}
+	setWall(f)
+	if result := run(protocol.TypeTaskInspect); result.State != "failed" || f.startCount() != 1 {
+		t.Fatal("a second quota failure resent the scheduled prompt", result)
+	}
 }
 func TestLiveQuotaWaitsThenContinuesSameTerminalExactlyOnce(t *testing.T) {
 	a, sess, p, f := liveFixture(t)

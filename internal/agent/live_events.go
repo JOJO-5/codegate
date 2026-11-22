@@ -131,26 +131,39 @@ func (c *eventControl) readThread(id string) (nativeThread, nativeTurn, error) {
 	}
 	return thread, turn, nil
 }
-func (c *eventControl) usageAllowed() (bool, error) {
-	// Use native/local credentials only for the same CLI; unavailable usage is
-	// never advertised as recovered. A user-configured bounded retry is used
-	// only when the provider supplies no queryable subscription API.
+func (c *eventControl) subscriptionWindows() ([]protocol.QuotaWindow, error) {
 	if c.tool == "claude" && c.last.Subscription != nil && *c.last.Subscription && filepath.IsAbs(c.last.CredentialRoot) {
 		env := replaceEnv(BuildEnv(c.a.cfg, 80, 24), "CLAUDE_CONFIG_DIR", c.last.CredentialRoot)
 		windows, message := claudeQuota(c.ctx, env, quotaHTTPClient())
 		if message == "" && len(windows) > 0 {
-			q := protocol.QuotaResult{Providers: []protocol.ProviderQuota{{Status: "ok", Windows: windows}}}
-			return blockedUntil(q, time.Now()) == 0, nil
+			return windows, nil
 		}
-		return false, errors.New(message)
+		if message == "" {
+			message = "当前 Claude 账号未返回可查询的订阅额度"
+		}
+		return nil, errors.New(message)
 	}
 	if c.tool == "opencode" && c.last.Model.ProviderID == "opencode-go" {
 		q, e := c.a.readProviderQuota(c.ctx, c.tool)
 		if e == nil && len(q.Providers) == 1 && q.Providers[0].Status == "ok" && len(q.Providers[0].Windows) > 0 {
-			return blockedUntil(q, time.Now()) == 0, nil
+			return q.Providers[0].Windows, nil
 		}
-		return false, errors.New("当前订阅额度暂不可查询，继续等待，不会假定恢复")
+		return nil, errors.New("当前订阅额度暂不可查询，继续等待，不会假定恢复")
 	}
+	return nil, nil
+}
+
+func (c *eventControl) usageAllowed() (bool, error) {
+	windows, err := c.subscriptionWindows()
+	if err != nil {
+		return false, err
+	}
+	if len(windows) > 0 {
+		q := protocol.QuotaResult{Providers: []protocol.ProviderQuota{{Status: "ok", Windows: windows}}}
+		return blockedUntil(q, time.Now()) == 0, nil
+	}
+	// Providers without a subscription query use their own retry time or the
+	// delay the user explicitly set for live monitoring.
 	at := c.last.ResetAt
 	if at == 0 {
 		delay := c.p.QuotaWaitMinutes

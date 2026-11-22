@@ -26,6 +26,12 @@ func TestContinuationProgressProcessHelper(t *testing.T) {
 }
 
 func TestContinuationPublishesBeforeExitAndRetainsOnCancel(t *testing.T) {
+	t.Run("background", func(t *testing.T) { testContinuationPublishesBeforeExitAndRetainsOnCancel(t, false) })
+	t.Run("scheduled with closed terminal", func(t *testing.T) { testContinuationPublishesBeforeExitAndRetainsOnCancel(t, true) })
+}
+
+func testContinuationPublishesBeforeExitAndRetainsOnCancel(t *testing.T, preferOpen bool) {
+	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +72,7 @@ func TestContinuationPublishesBeforeExitAndRetainsOnCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.stopBackgroundTasks()
-	p := protocol.TaskRunPayload{TaskID: uuid.NewString(), UserID: "alice", Attempt: 1, Mode: "time", Prompt: "continue", MaxRunMinutes: 1, Source: protocol.SessionSummary{SessionID: uuid.NewString(), Command: executable, Args: args, Cwd: root, Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: native}}}
+	p := protocol.TaskRunPayload{TaskID: uuid.NewString(), UserID: "alice", Attempt: 1, Mode: "time", PreferOpenSession: preferOpen, Prompt: "continue", MaxRunMinutes: 1, Source: protocol.SessionSummary{SessionID: uuid.NewString(), Command: executable, Args: args, Cwd: root, Recovery: &protocol.ConversationBinding{CommandID: "codex", NativeID: native}}}
 	req, _ := protocol.NewRequest(uuid.NewString(), protocol.TypeTaskRun, "", p)
 	a.onTaskRun(req)
 	deadline := time.Now().Add(10 * time.Second)

@@ -17,7 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jojo/codegate/internal/processutil"
+	"github.com/jojo/codegate/internal/protocol"
 )
 
 type codexProbeFrame struct {
@@ -209,6 +211,137 @@ func (f *codexChatFixture) connect(t *testing.T) *codexProbe {
 	}
 	t.Cleanup(c.close)
 	return &codexProbe{t: t, control: c, next: 100}
+}
+
+func TestCodexScheduledContinuationNativeSmoke(t *testing.T) {
+	f := newCodexChatFixture(t)
+	t.Cleanup(f.a.stopBackgroundTasks)
+	p := f.connect(t)
+	var started codexProbeThread
+	p.call("thread/start", map[string]any{"cwd": f.root, "model": "fixture", "modelProvider": "fixture", "approvalPolicy": "never", "sandbox": "read-only", "historyMode": "paginated"}, &started)
+	nativeID := started.Thread.ID
+	if nativeID == "" {
+		t.Fatal("isolated conversation has no native identity")
+	}
+	var seed struct{ Turn nativeTurn }
+	p.call("turn/start", map[string]any{"threadId": nativeID, "input": []any{map[string]any{"type": "text", "text": "CodeGate isolated seed"}}}, &seed)
+	completed := p.event("turn/completed", nil)
+	if !strings.Contains(string(completed.Params), `"completed"`) || f.posts.Load() != 1 {
+		t.Fatal("the isolated conversation did not complete its original turn")
+	}
+	binding := &protocol.ConversationBinding{CommandID: "codex", NativeID: nativeID}
+	sess, err := f.a.createSession(protocol.SessionCreatePayload{CommandID: "codex", Cwd: f.root, Cols: 100, Rows: 30, Recovery: binding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := f.a
+	task := protocol.TaskRunPayload{TaskID: uuid.NewString(), UserID: uuid.NewString(), Attempt: 1, Mode: "time", PreferOpenSession: true, MaxRunMinutes: 1, Source: sess.Summary(), Prompt: "CodeGate isolated scheduled open turn"}
+	run := func(typ protocol.Type) {
+		t.Helper()
+		req, err := protocol.NewRequest(uuid.NewString(), typ, "", task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if typ == protocol.TypeTaskRun {
+			a.onTaskRun(req)
+		} else {
+			a.onTaskInspect(req, false)
+		}
+	}
+	awaitCompletion := func() taskReceipt {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			receipt, err := a.taskReceipt(task.TaskID, task.Attempt, task.UserID)
+			if err != nil {
+				t.Fatal("missing native execution receipt", err)
+			}
+			switch receipt.Result.State {
+			case "completed":
+				return receipt
+			case "failed", "needs_review", "cancelled":
+				t.Fatalf("native run ended in %s: %s", receipt.Result.State, receipt.Result.Detail)
+			}
+			time.Sleep(100 * time.Millisecond)
+			run(protocol.TypeTaskInspect)
+		}
+		t.Fatal("native scheduled execution did not complete")
+		return taskReceipt{}
+	}
+	run(protocol.TypeTaskRun)
+	open := awaitCompletion()
+	if open.Live == nil || open.Live.OwnTurnID == "" || open.Live.OwnTurnID == seed.Turn.ID || open.Source.SessionID != sess.ID.String() || len(a.mgr.Snapshot()) != 1 || !isRecoverableLive(sess.Summary()) {
+		t.Fatal("open route did not continue the original terminal and native conversation")
+	}
+	run(protocol.TypeTaskRun)
+	if f.posts.Load() != 2 {
+		t.Fatal("open route did not send exactly one model request")
+	}
+	t.Log("real Codex terminal: submitted and completed one turn through its existing native conversation; replay preserved the receipt")
+	// Release the seed probe's subscription before closing the only terminal.
+	p.control.close()
+	if err := a.mgr.Close(sess.ID, "isolated terminal closed"); err != nil {
+		t.Fatal(err)
+	}
+	task.TaskID = uuid.NewString()
+	task.Prompt = "CodeGate isolated scheduled closed turn"
+	run(protocol.TypeTaskRun)
+	workspaces := a.backgroundWorkspaceSessions()
+	if !a.nativeTaskBusy(task.Source) || len(workspaces) != 1 || workspaces[0].Cwd != task.Source.Cwd {
+		t.Fatal("background native turn did not reserve its conversation and workspace")
+	}
+	closed := awaitCompletion()
+	if closed.Live == nil || !closed.Live.Detached || closed.Live.OwnTurnID == "" || len(a.mgr.Snapshot()) != 0 {
+		t.Fatal("closed route did not reuse the daemon's native writer in the background")
+	}
+	run(protocol.TypeTaskRun)
+	if f.posts.Load() != 3 {
+		t.Fatal("closed route did not send exactly one model request")
+	}
+	if a.nativeTaskBusy(task.Source) {
+		t.Fatal("completed daemon continuation still holds its conversation")
+	}
+	t.Log("real Codex daemon: after closing the terminal, submitted once through the daemon still owning the thread")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	stop := exec.CommandContext(ctx, a.cfg.AllowedCommands[0].Command, "app-server", "daemon", "stop")
+	stop.Env = f.env
+	processutil.Background(stop)
+	if err := stop.Run(); err != nil {
+		t.Fatal("could not stop the isolated daemon for cold recovery", err)
+	}
+	closedPrompt := task.Prompt
+	task.TaskID = uuid.NewString()
+	task.Prompt = "CodeGate isolated scheduled cold turn"
+	run(protocol.TypeTaskRun)
+	cold := awaitCompletion()
+	if cold.Live != nil || !strings.Contains(cold.Result.Output, "CodeGate isolated native chat marker") || len(a.mgr.Snapshot()) != 0 {
+		t.Fatal("cold route did not restore persisted history with the background CLI")
+	}
+	run(protocol.TypeTaskRun)
+	if f.posts.Load() != 4 {
+		t.Fatal("cold route did not send exactly one model request")
+	}
+	rollouts := 0
+	if err := filepath.WalkDir(filepath.Join(f.home, "sessions"), func(filename string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(filename) != ".jsonl" {
+			return err
+		}
+		data, err := os.ReadFile(filename)
+		if err != nil {
+			return err
+		}
+		rollouts++
+		for _, want := range []string{nativeID, "CodeGate isolated seed", "CodeGate isolated scheduled open turn", closedPrompt, task.Prompt} {
+			if !strings.Contains(string(data), want) {
+				return fmt.Errorf("isolated native history is missing %q", want)
+			}
+		}
+		return nil
+	}); err != nil || rollouts != 1 {
+		t.Fatalf("background recovery did not append to the single original native history: histories=%d, err=%v", rollouts, err)
+	}
+	t.Log("real Codex exec resume: one completed turn appended to the original native history after stopping the isolated daemon; replays added zero requests")
 }
 
 type codexProbeThread struct {

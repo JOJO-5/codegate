@@ -7,8 +7,9 @@ import (
 )
 
 type liveNativeRun struct {
-	turnID string
-	cancel context.CancelFunc
+	turnID         string
+	cancel         context.CancelFunc
+	detachedSource *protocol.SessionSummary
 }
 
 // The local guard remains effective if Server/browser disconnect. Only the
@@ -27,6 +28,9 @@ func (a *Agent) trackLiveRun(p protocol.TaskRunPayload, receipt taskReceipt) {
 	ctx, cancel := context.WithCancel(parent)
 	key := taskRunKey(p.TaskID, p.Attempt)
 	run := &liveNativeRun{turnID: receipt.Live.OwnTurnID, cancel: cancel}
+	if receipt.Live.Detached {
+		run.detachedSource = &receipt.Source
+	}
 	a.tasksMu.Lock()
 	if a.tasksClosing {
 		a.tasksMu.Unlock()
@@ -75,6 +79,16 @@ func (a *Agent) trackLiveRun(p protocol.TaskRunPayload, receipt taskReceipt) {
 		}
 	}()
 }
+
+func (a *Agent) releaseDetachedRun(p protocol.TaskRunPayload) {
+	a.tasksMu.Lock()
+	defer a.tasksMu.Unlock()
+	key := taskRunKey(p.TaskID, p.Attempt)
+	if run := a.liveRuns[key]; run != nil && run.detachedSource != nil {
+		delete(a.liveRuns, key)
+		run.cancel()
+	}
+}
 func (a *Agent) inspectOwnedLiveRun(p protocol.TaskRunPayload, owned string, stopping bool) bool {
 	a.liveQuotaMu.Lock()
 	defer a.liveQuotaMu.Unlock()
@@ -82,22 +96,26 @@ func (a *Agent) inspectOwnedLiveRun(p protocol.TaskRunPayload, owned string, sto
 	if e != nil || r.Live == nil || r.Live.OwnTurnID != owned || r.Result.State != "running" {
 		return true
 	}
-	sess, ok := a.mgr.Get(parseUUID(p.Source.SessionID))
-	if !ok {
+	sess, ok := a.mgr.Get(parseUUID(r.Source.SessionID))
+	if !r.Live.Detached && !ok {
 		return true
 	}
 	// Any person typing takes responsibility for the native turn. Do not cancel it.
-	if sess.InputRevision() != r.Live.InputRevision {
+	if !r.Live.Detached && sess.InputRevision() != r.Live.InputRevision {
 		r.Result.State = "cancelled"
 		r.Result.Detail = "检测到手动输入，已让出自动续跑控制"
 		a.publishTask(r)
 		return true
 	}
-	ended := !isRecoverableLive(sess.Summary())
+	current := r.Source
+	if !r.Live.Detached {
+		current = sess.Summary()
+	}
+	ended := !r.Live.Detached && !isRecoverableLive(current)
 	expired := time.Now().UnixMilli() >= r.Live.StartedAt+int64(p.MaxRunMinutes)*60000
 	ctx, stop := context.WithTimeout(context.Background(), 4*time.Second)
 	defer stop()
-	native, e := a.openLiveControl(ctx, sess.Summary(), BuildEnv(a.cfg, 80, 24), p)
+	native, e := a.openLiveControl(ctx, current, BuildEnv(a.cfg, 80, 24), p)
 	if e != nil {
 		if stopping || ended || expired {
 			r.Result.State = "needs_review"
@@ -108,8 +126,8 @@ func (a *Agent) inspectOwnedLiveRun(p protocol.TaskRunPayload, owned string, sto
 		return false
 	}
 	defer native.close()
-	_, turn, e := native.readThread(p.Source.Recovery.NativeID)
-	if e != nil {
+	thread, turn, e := native.readThread(p.Source.Recovery.NativeID)
+	if e != nil || thread.ID != p.Source.Recovery.NativeID || !sameDirectory(thread.Cwd, current.Cwd) || thread.Status.Type == "notLoaded" {
 		if stopping || ended || expired {
 			r.Result.State = "needs_review"
 			r.Result.Detail = "无法连接原生控制接口确认本次回合停止，请核对原对话"

@@ -147,6 +147,7 @@ type AgentCaps struct {
 	CodexLiveContinue     bool     `json:"codex_live_continue,omitempty"`
 	LiveContinueCheck     bool     `json:"live_continue_check,omitempty"`
 	BackgroundContinue    bool     `json:"background_continue,omitempty"`
+	ScheduledContinue     bool     `json:"scheduled_continue,omitempty"`
 	ProjectCreate         bool     `json:"project_create,omitempty"`
 	DSHWebApproval        bool     `json:"dsh_web_approval,omitempty"`
 	DSHWebLifecycle       bool     `json:"dsh_web_lifecycle,omitempty"`
@@ -296,14 +297,14 @@ type AgentUpdateFailure struct {
 // checks allowed_commands when creating a session; a detected binary does not
 // grant execution rights.
 type CommandAvailability struct {
-	ID        string `json:"id"`
-	Label     string `json:"label"`
-	Kind      string `json:"kind"`
-	Installed bool   `json:"installed"`
-	Allowed   bool   `json:"allowed"`
-	Managed   bool   `json:"managed,omitempty"`
-	Resume    bool   `json:"resume,omitempty"`
-	WebURL    string `json:"web_url,omitempty"`
+	ID                string             `json:"id"`
+	Label             string             `json:"label"`
+	Kind              string             `json:"kind"`
+	Installed         bool               `json:"installed"`
+	Allowed           bool               `json:"allowed"`
+	Managed           bool               `json:"managed,omitempty"`
+	Resume            bool               `json:"resume,omitempty"`
+	WebURL            string             `json:"web_url,omitempty"`
 	NativeLaunchModes []NativeLaunchMode `json:"native_launch_modes,omitempty"`
 	NativeLaunchNote  string             `json:"native_launch_note,omitempty"`
 }

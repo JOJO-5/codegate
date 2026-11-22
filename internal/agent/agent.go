@@ -376,6 +376,7 @@ func (a *Agent) authenticate(ctx context.Context, conn *Conn, disp *dispatcher) 
 			WorkflowV1:            true,
 			NativeLaunchModes:     true,
 			LiveContinueProviders: []string{"codex", "claude", "opencode", "dsh"}, CodexLiveContinue: true, LiveContinueCheck: true, BackgroundContinue: true, ProjectCreate: true, TerminalViews: true, QuotaRead: true, ConversationRecovery: true, DSHWebApproval: true, DSHWebLifecycle: true,
+			ScheduledContinue:  true,
 			MaxSessions:        a.cfg.MaxSessions,
 			RepositoryScan:     true,
 			GitReview:          true,
